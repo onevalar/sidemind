@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+:root {
+  --anchor-1: #f472b6;
+  --anchor-2: #60a5fa;
+  --anchor-3: #34d399;
+  --anchor-4: #fbbf24;
+  --anchor-5: #a78bfa;
+}
+
+body {
+  @apply bg-zinc-950 text-zinc-100 antialiased;
+}
+
+/* ── Anchor highlight marks ── */
+mark[data-anchor-id] {
+  border-radius: 2px;
+  padding: 0 2px;
+  cursor: pointer;
+  transition: background-color 0.2s ease;
+}
+mark[data-anchor-id]:hover {
+  filter: brightness(1.3);
+}
+
+::selection {
+  background: rgba(99, 102, 241, 0.35);
+}
+
+/* ── React Flow overrides ── */
+
+/* Remove default white background from nodes */
+.react-flow__node {
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  cursor: default !important;
+}
+.react-flow__node [data-role="assistant"] {
+  cursor: text;
+  user-select: text;
+}
+
+/* Hide default node selection ring */
+.react-flow__node.selected {
+  box-shadow: none !important;
+}
+
+/* Streaming edge dash animation */
+@keyframes dash {
+  to {
+    stroke-dashoffset: -24;
+  }
+}
