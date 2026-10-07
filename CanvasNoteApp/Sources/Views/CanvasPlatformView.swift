@@ -65,6 +65,12 @@ class InternalCanvasView: NSView {
     
     override var isFlipped: Bool { return true } // Top-left origin
     
+    // Route every click to the canvas so card dragging works even over the text.
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        let local = convert(point, from: superview)
+        return bounds.contains(local) ? self : nil
+    }
+    
     // Approximate height calculation for a given width
     private func estimateHeight(for text: String, width: CGFloat) -> CGFloat {
         let constraintRect = CGSize(width: width, height: .greatestFiniteMagnitude)
@@ -81,19 +87,11 @@ class InternalCanvasView: NSView {
         self.currentBlocks = blocks
         self.currentPlacements = placements
         
-        // Sync missing placements (SwiftUI shouldn't mutate state during update)
-        var neededSave = false
-        var updatedPlacements = placements
-        for block in blocks {
-            if !updatedPlacements.contains(where: { $0.blockId == block.id }) {
-                updatedPlacements.append(Placement(blockId: block.id, groupIndex: 0, orderIndex: updatedPlacements.count))
-                neededSave = true
-            }
-        }
-        
-        if neededSave {
-            self.currentPlacements = updatedPlacements
-            onPlacementsChanged?(updatedPlacements)
+        // Sync placements with blocks (SwiftUI shouldn't mutate state during update)
+        let reconciled = NoteBoard.reconcile(placements, with: blocks)
+        if reconciled != placements {
+            self.currentPlacements = reconciled
+            onPlacementsChanged?(reconciled)
         }
         
         if draggedBlockId == nil {
@@ -180,7 +178,8 @@ class InternalCanvasView: NSView {
         
         let label = NSTextField(labelWithString: block.rawContent)
         label.isEditable = false
-        label.isSelectable = true
+        // Not selectable: a selectable text field swallows mouse-downs and blocks dragging the card.
+        label.isSelectable = false
         label.lineBreakMode = .byWordWrapping
         // Frame will be assigned dynamically in update()
         

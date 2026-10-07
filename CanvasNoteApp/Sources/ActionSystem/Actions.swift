@@ -1,6 +1,7 @@
 import Foundation
 
-class SummarizeBlockAction: CanvasAction {
+/// Appends an AI summary right after a block, as its own quote block.
+final class SummarizeBlockAction: CanvasAction {
     let id = UUID()
     var name: String { "AI Summarize Block" }
     
@@ -8,9 +9,9 @@ class SummarizeBlockAction: CanvasAction {
     let targetBlockId: String
     let provider: LLMProvider
     
-    // State backups
-    private var originalContent: String?
-    private var originalPlacements: [Placement]?
+    // Snapshots used to make undo safe
+    private var contentBefore: String?
+    private var contentAfter: String?
     
     init(noteFilename: String, blockId: String, provider: LLMProvider = MockLocalLLM()) {
         self.noteFilename = noteFilename
@@ -18,46 +19,37 @@ class SummarizeBlockAction: CanvasAction {
         self.provider = provider
     }
     
-    func execute() throws {
+    func execute() async throws {
         let wm = WorkspaceManager.shared
-        guard let text = wm.readNote(filename: noteFilename) else {
-            throw ActionExecutor.ActionError.transactionReverted
+        
+        // 1. Read the block and ask the model. Nothing is written yet.
+        guard let snapshot = wm.readNote(filename: noteFilename) else { throw ActionError.noteUnreadable }
+        guard let block = MarkdownEngine.parseToBlocks(from: snapshot).first(where: { $0.id == targetBlockId }) else {
+            throw ActionError.blockNotFound
+        }
+        let summary = try await provider.generateSummary(for: block.rawContent)
+        
+        // 2. The note may have been edited while the model was thinking: re-read and re-locate
+        //    the block in the *current* text instead of writing back a stale copy.
+        guard let current = wm.readNote(filename: noteFilename) else { throw ActionError.noteUnreadable }
+        guard let freshBlock = MarkdownEngine.parseToBlocks(from: current).first(where: { $0.id == targetBlockId }) else {
+            throw ActionError.blockNotFound
         }
         
-        let board = NoteBoard(noteFilename: noteFilename)
+        // 3. Insert exactly after that block (by line range), leaving every other block untouched.
+        let newText = MarkdownEngine.text(current, insertingAfter: freshBlock, content: "> \(summary)")
+        try wm.writeNote(filename: noteFilename, content: newText)
         
-        // Save backups
-        originalContent = text
-        originalPlacements = board.placements
-        
-        Task {
-            // Find block content by re-parsing
-            let blocks = MarkdownEngine.parseToBlocks(from: text)
-            guard let block = blocks.first(where: { $0.id == targetBlockId }) else { return }
-            
-            do {
-                let summary = try await provider.generateSummary(for: block.rawContent)
-                
-                // Pure string replacement for mockup purposes (In production, replace via AST source range)
-                let newText = text.replacingOccurrences(of: block.rawContent, with: block.rawContent + "\n\n> \(summary)")
-                
-                // Atomically Save (UI auto refreshes due to FS Watcher)
-                try wm.writeNote(filename: noteFilename, content: newText)
-                
-            } catch {
-                try? self.undo()
-            }
-        }
+        contentBefore = current
+        contentAfter = newText
     }
     
-    func undo() throws {
-        guard let content = originalContent, let placements = originalPlacements else { return }
-        
+    func undo() async throws {
+        guard let before = contentBefore, let after = contentAfter else { return }
         let wm = WorkspaceManager.shared
-        try wm.writeNote(filename: noteFilename, content: content)
         
-        let board = NoteBoard(noteFilename: noteFilename)
-        board.placements = placements
-        board.save()
+        // Only roll back if the file is still exactly what this action produced.
+        guard wm.readNote(filename: noteFilename) == after else { throw ActionError.externalEditConflict }
+        try wm.writeNote(filename: noteFilename, content: before)
     }
 }

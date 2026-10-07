@@ -37,8 +37,12 @@ struct AppView: View {
     }
     
     func createNewNote() {
-        let name = "Note-\(Int.random(in: 1000...9999)).md"
-        try? WorkspaceManager.shared.writeNote(filename: name, content: "# New Note\n\nStart writing!")
+        let wm = WorkspaceManager.shared
+        var name: String
+        repeat {
+            name = "Note-\(UUID().uuidString.prefix(8)).md"
+        } while wm.fm.fileExists(atPath: wm.notesDir.appendingPathComponent(name).path)
+        try? wm.writeNote(filename: name, content: "# New Note\n\nStart writing!")
         loadWorkspace()
         selectedNote = name
     }
@@ -47,6 +51,7 @@ struct AppView: View {
 /// Binds the Workspace files to the Canvas Engine
 struct WorkspaceEditorView: View {
     @StateObject private var viewModel: NoteViewModel
+    @ObservedObject private var executor = ActionExecutor.shared
     
     init(filename: String) {
         _viewModel = StateObject(wrappedValue: NoteViewModel(filename: filename))
@@ -64,17 +69,18 @@ struct WorkspaceEditorView: View {
                 Button(action: {
                     if let firstBlockId = viewModel.blocks.first?.id {
                         let action = SummarizeBlockAction(noteFilename: viewModel.filename, blockId: firstBlockId)
-                        ActionExecutor.shared.perform(action)
+                        Task { await executor.perform(action) }
                     }
                 }) {
                     Label("AI Summarize", systemImage: "sparkles")
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(executor.isRunning)
                 
                 Button("Undo AI") {
-                    ActionExecutor.shared.undoLast()
+                    Task { await executor.undoLast(note: viewModel.filename) }
                 }
-                .disabled(!ActionExecutor.shared.canUndo())
+                .disabled(executor.isRunning || !executor.canUndo(note: viewModel.filename))
                 
                 Spacer()
                 
@@ -89,6 +95,14 @@ struct WorkspaceEditorView: View {
             // The massive NSView Canvas
             CanvasPlatformView(noteBoard: viewModel.board, blocks: $viewModel.blocks)
                 .edgesIgnoringSafeArea(.all)
+        }
+        .alert("操作未完成", isPresented: Binding(
+            get: { executor.lastError != nil },
+            set: { if !$0 { executor.lastError = nil } }
+        )) {
+            Button("好") { executor.lastError = nil }
+        } message: {
+            Text(executor.lastError ?? "")
         }
     }
 }

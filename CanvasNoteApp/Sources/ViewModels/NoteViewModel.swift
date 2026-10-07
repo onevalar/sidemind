@@ -17,13 +17,19 @@ class NoteViewModel: ObservableObject {
         self.fileURL = WorkspaceManager.shared.notesDir.appendingPathComponent(filename)
         self.board = NoteBoard(noteFilename: filename)
         
-        loadNote()
+        // Load synchronously so the canvas never renders a blank first frame
+        // (an empty block list must not be mistaken for "the note was emptied").
+        if let text = WorkspaceManager.shared.readNote(filename: filename) {
+            self.content = text
+            self.blocks = MarkdownEngine.parseToBlocks(from: text)
+        }
         setupWatcher()
     }
     
     private func loadNote() {
         if let text = WorkspaceManager.shared.readNote(filename: filename) {
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.content != text else { return }
                 self.content = text
                 self.blocks = MarkdownEngine.parseToBlocks(from: text)
             }
