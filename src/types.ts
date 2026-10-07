@@ -41,14 +41,22 @@ export interface Anchor {
   intent: AnchorIntent;
   /** Visual color tag — derived from intent (blue/green/purple) */
   color: string;
-  /** Lifecycle: user created it → typed a question → got an answer */
-  status: 'pending' | 'queued' | 'streaming' | 'done' | 'error';
-  /** The user's question text attached to this anchor (before it becomes a message) */
-  pendingInput: string;
+  /** Lifecycle: question sent (streaming) → answered (done) or failed (error) */
+  status: 'streaming' | 'done' | 'error';
 }
 
 // --- Message ---
 export type MessageRole = 'user' | 'assistant' | 'system';
+
+/** The text a user quoted (by selecting it) when asking this question. */
+export interface MessageQuote {
+  /** Raw Markdown of the selected slice — this is what gets sent to the LLM */
+  raw: string;
+  /** Human-readable text of the selection — this is what the UI shows */
+  display: string;
+  /** The assistant message the text was selected from */
+  sourceMessageId: MessageId;
+}
 
 export interface Message {
   id: MessageId;
@@ -62,6 +70,10 @@ export interface Message {
   /** Anchor IDs created on this message (only meaningful for assistant msgs) */
   anchorIds: AnchorId[];
   createdAt: number;
+  /** Set on user messages that were asked about a selected passage */
+  quote?: MessageQuote;
+  /** Set when generating this (assistant) message failed or was interrupted */
+  error?: string;
 }
 
 // --- Branch ---
@@ -103,8 +115,6 @@ export interface BlackboardEntry {
 export interface UIState {
   /** Current view mode */
   viewMode: 'linear' | 'canvas';
-  /** Branch IDs currently expanded/visible in the side panel */
-  activeBranchIds: BranchId[];
   /** The anchor currently focused/highlighted (drives scroll-to + glow) */
   focusedAnchorId: AnchorId | null;
   /** Branch shown in the right side panel (linear mode) */
@@ -125,9 +135,6 @@ export interface CanvasState {
   nodes: Node[];
   /** React Flow edges (sequential + anchor) */
   edges: Edge[];
-  /** Monotonic version counter — bumped on every recompute so React Flow
-   *  can detect changes via reference equality on the arrays. */
-  version: number;
 }
 
 // --- Root Store Shape ---
@@ -155,29 +162,28 @@ export interface ChatState {
 }
 
 // --- Store Actions (signatures only; implementation in store.ts) ---
+
+/** Outcome of sending a message to a branch */
+export type SendResult = 'ok' | 'error' | 'busy';
+
+export interface AskFromSelectionArgs {
+  messageId: MessageId;
+  slice: TextSlice;
+  intent: AnchorIntent;
+  /** Required for 'existing-branch' */
+  targetBranchId?: BranchId;
+  question: string;
+}
+
 export interface ChatActions {
-  /** Append a message to a branch */
-  addMessage: (
-    branchId: BranchId,
-    role: MessageRole,
-    content: string,
-  ) => MessageId;
+  /**
+   * Create an anchor from a text selection and immediately send the user's
+   * question (with the selected passage attached) to the routed branch.
+   * Returns the branch the question went to, or null if that branch is busy.
+   */
+  askFromSelection: (args: AskFromSelectionArgs) => BranchId | null;
 
-  /** Create an anchor from a text selection with a routing intent */
-  createAnchor: (
-    messageId: MessageId,
-    slice: TextSlice,
-    intent: AnchorIntent,
-    targetBranchId?: BranchId,
-  ) => AnchorId;
-
-  /** Update the pending question text on an anchor */
-  updateAnchorInput: (anchorId: AnchorId, text: string) => void;
-
-  /** Fire all queued anchors concurrently */
-  submitQueuedAnchors: () => void;
-
-  /** Navigate: focus an anchor and expand its branch */
+  /** Navigate: focus an anchor and open its branch */
   focusAnchor: (anchorId: AnchorId | null) => void;
 
   /** Set/clear the transient text selection state */
@@ -190,17 +196,18 @@ export interface ChatActions {
     keyFacts?: string[],
   ) => void;
 
-  /** Read aggregated blackboard context (for prompt assembly) */
-  getBlackboardContext: () => string;
-
   /** Recompute canvas nodes/edges from the current normalized state */
   recomputeCanvas: () => void;
 
   /**
    * Send a user message to a branch and stream an AI response.
-   * Handles: adding messages, calling /api/chat, streaming content updates.
+   * Resolves with 'busy' (and does nothing) if the branch is still generating.
    */
-  sendMessage: (branchId: BranchId, userContent: string) => Promise<void>;
+  sendMessage: (
+    branchId: BranchId,
+    userContent: string,
+    quote?: MessageQuote,
+  ) => Promise<SendResult>;
 
   /** Switch between linear and canvas views */
   setViewMode: (mode: 'linear' | 'canvas') => void;

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useCallback } from 'react';
+import { useEffect } from 'react';
 import {
   ReactFlow,
   Background,
@@ -31,23 +31,18 @@ const edgeTypes: EdgeTypes = {
 function CanvasBoardInner() {
   const nodes = useChatStore((s) => s.canvas.nodes);
   const edges = useChatStore((s) => s.canvas.edges);
-  const version = useChatStore((s) => s.canvas.version);
   const messageCount = useChatStore((s) => Object.keys(s.messages).length);
   const { fitView } = useReactFlow();
 
+  // Re-fit only when cards/edges are added or removed — not on every
+  // streamed token, which would keep yanking the viewport around.
+  const structureKey = `${nodes.length}:${edges.length}`;
   useEffect(() => {
-    if (version > 0) {
+    if (nodes.length > 0) {
       requestAnimationFrame(() => fitView({ padding: 0.15, duration: 300 }));
     }
-  }, [version, fitView]);
-
-  // Prevent default node drag (dagre owns positions)
-  const onNodeDragStart = useCallback(
-    (_: unknown, __: unknown) => {
-      // no-op: suppress drag
-    },
-    [],
-  );
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structureKey, fitView]);
 
   return (
     <div className="w-screen h-screen bg-zinc-950">
@@ -69,7 +64,6 @@ function CanvasBoardInner() {
         fitView
         fitViewOptions={{ padding: 0.15 }}
         proOptions={{ hideAttribution: true }}
-        onNodeDragStart={onNodeDragStart}
       >
         {/* Dot-grid background */}
         <Background

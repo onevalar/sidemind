@@ -21,8 +21,8 @@ import type {
   BranchId,
   AnchorIntent,
 } from '../types';
-import { BUBBLE_WIDTH } from './typography';
-import { measureMessageHeight } from './measure';
+import { BUBBLE_WIDTH, BRANCH_LABEL_HEIGHT } from './typography';
+import { measureMessage } from './measure';
 import { applyDagreLayout } from './layout';
 
 // ─── Node Data ──────────────────────────────────────────────────────────
@@ -101,7 +101,8 @@ export function deriveCanvasElements(state: ChatState): {
 
       // ── Measure ──
       const measuredWidth = BUBBLE_WIDTH;
-      const measuredHeight = measureMessageHeight(msg.content);
+      const measuredHeight =
+        measureMessage(msg) + (i === 0 ? BRANCH_LABEL_HEIGHT : 0);
 
       // ── Create Node (position is 0,0 — dagre overwrites below) ──
       rawNodes.push({

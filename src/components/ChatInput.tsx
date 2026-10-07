@@ -13,10 +13,6 @@ export function ChatInput() {
   const sendMessage = useChatStore((s) => s.sendMessage);
   const viewMode = useChatStore((s) => s.ui.viewMode);
   const activeBranchPanelId = useChatStore((s) => s.ui.activeBranchPanelId);
-  const submitQueuedAnchors = useChatStore((s) => s.submitQueuedAnchors);
-  const queuedCount = useChatStore(
-    (s) => Object.values(s.anchors).filter((a) => a.status === 'queued').length,
-  );
 
   // In linear mode, offset from sidebar width
   const sidebarWidth =
@@ -28,9 +24,12 @@ export function ChatInput() {
     const trimmed = text.trim();
     if (!trimmed || isStreaming) return;
     setText('');
+    if (textareaRef.current) textareaRef.current.style.height = 'auto';
     setSending(true);
     try {
-      await sendMessage(rootBranchId, trimmed);
+      const result = await sendMessage(rootBranchId, trimmed);
+      // Give the text back if it wasn't actually sent
+      if (result === 'busy') setText(trimmed);
     } finally {
       setSending(false);
       textareaRef.current?.focus();
@@ -58,18 +57,6 @@ export function ChatInput() {
       style={{ right: sidebarWidth }}
     >
       <div className="w-full max-w-2xl pointer-events-auto">
-        {/* Queued anchors badge */}
-        {queuedCount > 0 && (
-          <div className="flex justify-end mb-2">
-            <button
-              onClick={submitQueuedAnchors}
-              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium transition-colors shadow-lg"
-            >
-              发送 {queuedCount} 个锚点问题 →
-            </button>
-          </div>
-        )}
-
         {/* Main input bar */}
         <div className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl shadow-black/50 flex items-end gap-2 px-4 py-3">
           <textarea

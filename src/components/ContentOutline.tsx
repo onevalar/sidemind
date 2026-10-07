@@ -39,21 +39,22 @@ export function ContentOutline() {
       const msg = messages[id];
       if (!msg || msg.role !== 'assistant') continue;
 
-      const lines = msg.content.split('\n');
-      for (const line of lines) {
-        if (line.startsWith('### ')) {
-          entries.push({
-            messageId: msg.id,
-            level: 3,
-            text: line.slice(4).trim(),
-          });
-        } else if (line.startsWith('## ')) {
-          entries.push({
-            messageId: msg.id,
-            level: 2,
-            text: line.slice(3).trim(),
-          });
+      let inFence = false;
+      for (const line of msg.content.split('\n')) {
+        // Lines inside ``` blocks (e.g. "## comment") are not headings
+        if (line.trimStart().startsWith('```')) {
+          inFence = !inFence;
+          continue;
         }
+        if (inFence) continue;
+
+        const m = /^(#{1,3})\s+(.+)$/.exec(line);
+        if (!m) continue;
+        entries.push({
+          messageId: msg.id,
+          level: m[1].length === 3 ? 3 : 2,
+          text: m[2].trim(),
+        });
       }
     }
     return entries;

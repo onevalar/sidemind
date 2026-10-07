@@ -9,9 +9,11 @@ import { ContentOutline } from '../components/ContentOutline';
 import { BranchPanel } from '../components/BranchPanel';
 import { useTextSelection } from '../hooks/useTextSelection';
 import { useChatStore } from '../store';
+import { useStoreHydrated } from '../hooks/useStoreHydrated';
 
 export default function Home() {
   useTextSelection();
+  const hydrated = useStoreHydrated();
 
   const viewMode = useChatStore((s) => s.ui.viewMode);
   const activeBranchPanelId = useChatStore(
@@ -30,6 +32,11 @@ export default function Home() {
       ).length,
   );
 
+  // Wait for the saved conversation to be restored (avoids a flash of the empty state)
+  if (!hydrated) {
+    return <main className="h-screen w-screen bg-zinc-950" />;
+  }
+
   // ── Canvas mode ──
   if (viewMode === 'canvas') {
     return (
@@ -37,7 +44,11 @@ export default function Home() {
         <CanvasBoard />
         <SelectionPopover />
         <ChatInput />
-        <SettingsButton />
+
+        {/* Settings (top-right) */}
+        <div className="fixed top-4 right-4 z-50">
+          <SettingsButton />
+        </div>
 
         {/* Top bar */}
         <div className="fixed top-4 left-4 z-50 flex items-center gap-2">

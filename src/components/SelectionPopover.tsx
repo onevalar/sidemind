@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback, useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useChatStore } from '../store';
 import { INTENT_COLORS } from '../lib/colors';
@@ -66,11 +67,17 @@ function SelectionPopoverContent({
   pendingSelection: NonNullable<UIState['pendingSelection']>;
   otherBranches: { id: BranchId; label: string }[];
 }) {
-  const createAnchor = useChatStore((s) => s.createAnchor);
+  const askFromSelection = useChatStore((s) => s.askFromSelection);
   const setPendingSelection = useChatStore((s) => s.setPendingSelection);
-  const sendMessage = useChatStore((s) => s.sendMessage);
   const setActiveBranchPanel = useChatStore((s) => s.setActiveBranchPanel);
   const rootBranchId = useChatStore((s) => s.rootBranchId);
+  const branchStatuses = useChatStore(
+    useShallow((s) =>
+      Object.fromEntries(
+        Object.values(s.branches).map((b) => [b.id, b.status]),
+      ),
+    ),
+  );
 
   const [activeIntent, setActiveIntent] = useState<ActiveIntent>(null);
   const [selectedBranchId, setSelectedBranchId] = useState<BranchId | null>(
@@ -92,49 +99,45 @@ function SelectionPopoverContent({
     window.getSelection()?.removeAllRanges();
   }, [setPendingSelection]);
 
+  // The branch this question would go to (null until one is chosen)
+  const targetBranchId: BranchId | null =
+    activeIntent === 'main'
+      ? rootBranchId
+      : activeIntent === 'existing-branch'
+        ? selectedBranchId
+        : null;
+  const targetBusy =
+    targetBranchId != null && branchStatuses[targetBranchId] === 'streaming';
+
   const handleSubmit = useCallback(() => {
-    if (!activeIntent || !input.trim()) return;
+    if (!activeIntent || !input.trim() || targetBusy) return;
 
     // For "existing-branch", a branch must be selected
     if (activeIntent === 'existing-branch' && !selectedBranchId) return;
 
-    const targetBranch =
-      activeIntent === 'main'
-        ? rootBranchId
-        : activeIntent === 'existing-branch'
-          ? selectedBranchId!
-          : undefined;
-
-    const anchorId = createAnchor(
-      pendingSelection.messageId,
-      pendingSelection.slice,
-      activeIntent,
-      targetBranch,
-    );
-
-    // Get the branch ID this anchor targets
-    const anchor = useChatStore.getState().anchors[anchorId];
-    const branchId = anchor?.branchId;
+    const branchId = askFromSelection({
+      messageId: pendingSelection.messageId,
+      slice: pendingSelection.slice,
+      intent: activeIntent,
+      targetBranchId: targetBranchId ?? undefined,
+      question: input.trim(),
+    });
 
     if (branchId) {
-      // Send the message immediately to the branch
-      sendMessage(branchId, input.trim());
-
       // Open the branch panel (for non-main intents in linear mode)
       if (activeIntent !== 'main') {
         setActiveBranchPanel(branchId);
       }
+      dismiss();
     }
-
-    dismiss();
   }, [
     pendingSelection,
     activeIntent,
     input,
     selectedBranchId,
-    rootBranchId,
-    createAnchor,
-    sendMessage,
+    targetBranchId,
+    targetBusy,
+    askFromSelection,
     setActiveBranchPanel,
     dismiss,
   ]);
@@ -164,7 +167,7 @@ function SelectionPopoverContent({
     const popoverWidth = 380;
     let left = rect.left + rect.width / 2 - popoverWidth / 2;
     left = Math.max(12, Math.min(left, window.innerWidth - popoverWidth - 12));
-    const top = rect.bottom + window.scrollY + 10;
+    const top = rect.bottom + 10;
     return { top, left };
   };
 
@@ -296,6 +299,12 @@ function SelectionPopoverContent({
                       </div>
                     )}
 
+                    {targetBusy && (
+                      <p className="text-[11px] text-amber-400/80 mb-2">
+                        该对话正在生成回复，请等它完成后再追问
+                      </p>
+                    )}
+
                     {/* Input row */}
                     {showInput && (
                       <motion.div
@@ -323,10 +332,10 @@ function SelectionPopoverContent({
                         />
                         <button
                           onClick={handleSubmit}
-                          disabled={!input.trim()}
+                          disabled={!input.trim() || targetBusy}
                           className="px-3 py-2 text-white text-sm font-medium rounded-lg transition-all shrink-0 disabled:bg-zinc-700 disabled:text-zinc-500"
                           style={
-                            input.trim()
+                            input.trim() && !targetBusy
                               ? {
                                   backgroundColor: INTENT_COLORS[activeIntent!],
                                 }

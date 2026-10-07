@@ -85,7 +85,6 @@ const anchors: Record<string, Anchor> = {
     intent: 'new-branch',
     color: '#34d399',
     status: 'done',
-    pendingInput: '能不能更详细地推导一下 Scaled Dot-Product Attention 的数学过程？',
   },
   [ANCHOR_B]: {
     id: ANCHOR_B,
@@ -95,7 +94,6 @@ const anchors: Record<string, Anchor> = {
     intent: 'new-branch',
     color: '#34d399',
     status: 'done',
-    pendingInput: 'RNN 和 Transformer 在不同任务上的性能对比数据有哪些？',
   },
 };
 
@@ -173,6 +171,7 @@ Flash Attention 的关键创新：
     branchId: BRANCH_A,
     anchorIds: [],
     createdAt: Date.now() - 50000,
+    quote: { raw: sliceA.selectedText, display: sliceA.selectedText, sourceMessageId: MSG_2 },
   },
   [MSG_A2]: {
     id: MSG_A2,
@@ -194,6 +193,7 @@ Flash Attention 的关键创新：
     branchId: BRANCH_B,
     anchorIds: [],
     createdAt: Date.now() - 45000,
+    quote: { raw: sliceB.selectedText, display: sliceB.selectedText, sourceMessageId: MSG_2 },
   },
   [MSG_B2]: {
     id: MSG_B2,
@@ -246,7 +246,6 @@ export const mockState: Pick<
   rootBranchId: ROOT_BRANCH,
   ui: {
     viewMode: 'linear',
-    activeBranchIds: [],
     focusedAnchorId: null,
     activeBranchPanelId: null,
     pendingSelection: null,
@@ -254,7 +253,6 @@ export const mockState: Pick<
   canvas: {
     nodes: [],
     edges: [],
-    version: 0,
   },
 };
 
@@ -278,7 +276,6 @@ export const emptyState: Pick<
   rootBranchId: ROOT_BRANCH,
   ui: {
     viewMode: 'linear',
-    activeBranchIds: [],
     focusedAnchorId: null,
     activeBranchPanelId: null,
     pendingSelection: null,
@@ -286,6 +283,5 @@ export const emptyState: Pick<
   canvas: {
     nodes: [],
     edges: [],
-    version: 0,
   },
 };

@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useChatStore } from '../store';
-import { MarkdownRenderer } from './MarkdownRenderer';
+import { MessageBody } from './MessageBody';
 import type { BranchId } from '../types';
 
 /**
@@ -19,10 +19,15 @@ export function BranchPanel({ branchId }: { branchId: BranchId }) {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   const msgIds = branch?.messageIds ?? [];
   const isStreaming = branch?.status === 'streaming';
+  const lastMsg = msgIds.length ? messages[msgIds[msgIds.length - 1]] : undefined;
+  const waitingForFirstToken =
+    isStreaming && lastMsg?.role === 'assistant' && !lastMsg.content;
+  const lastLength = lastMsg?.content.length ?? 0;
 
   // Source anchor info
   const sourceAnchor = branch?.sourceAnchorId
@@ -32,7 +37,16 @@ export function BranchPanel({ branchId }: { branchId: BranchId }) {
   // Auto-scroll on new messages
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [msgIds.length]);
+  }, [msgIds.length, branchId]);
+
+  // Follow streaming text while the user is near the bottom
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 120) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [lastLength]);
 
   // Focus input on mount
   useEffect(() => {
@@ -71,7 +85,8 @@ export function BranchPanel({ branchId }: { branchId: BranchId }) {
           </h3>
           {sourceAnchor && (
             <p className="text-[10px] text-zinc-600 truncate mt-0.5">
-              引用：&ldquo;{sourceAnchor.slice.selectedText.slice(0, 40)}…&rdquo;
+              引用：&ldquo;{sourceAnchor.slice.selectedText.slice(0, 40)}
+              {sourceAnchor.slice.selectedText.length > 40 ? '…' : ''}&rdquo;
             </p>
           )}
         </div>
@@ -85,7 +100,7 @@ export function BranchPanel({ branchId }: { branchId: BranchId }) {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-4">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
         {msgIds.length === 0 && !isStreaming && (
           <p className="text-xs text-zinc-600 italic text-center py-8">
             在下方输入框开始分支对话
@@ -95,6 +110,7 @@ export function BranchPanel({ branchId }: { branchId: BranchId }) {
         {msgIds.map((id) => {
           const msg = messages[id];
           if (!msg) return null;
+          if (waitingForFirstToken && id === lastMsg?.id) return null;
           const isUser = msg.role === 'user';
 
           return (
@@ -106,31 +122,19 @@ export function BranchPanel({ branchId }: { branchId: BranchId }) {
                 className={`rounded-xl px-4 py-3 ${
                   isUser
                     ? 'max-w-[85%] bg-emerald-600/70 text-white'
-                    : 'max-w-[95%] bg-zinc-800/60 border border-zinc-700/40 text-zinc-100'
+                    : 'max-w-[95%] min-w-0 bg-zinc-800/60 border border-zinc-700/40 text-zinc-100'
                 }`}
                 data-message-id={msg.id}
-                data-raw-md={msg.content}
                 data-role={msg.role}
               >
-                {isUser ? (
-                  <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                    {msg.content}
-                  </p>
-                ) : (
-                  <div className="prose prose-invert prose-sm max-w-none">
-                    <MarkdownRenderer
-                      content={msg.content}
-                      messageId={msg.id}
-                    />
-                  </div>
-                )}
+                <MessageBody message={msg} />
               </div>
             </div>
           );
         })}
 
-        {/* Streaming indicator */}
-        {isStreaming && (
+        {/* Typing indicator */}
+        {waitingForFirstToken && (
           <div className="flex justify-start mb-4">
             <div className="bg-zinc-800/60 border border-zinc-700/40 rounded-xl px-4 py-3">
               <div className="flex items-center gap-1.5">

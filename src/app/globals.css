@@ -1,15 +1,14 @@
 @import "tailwindcss";
 
 :root {
-  --anchor-1: #f472b6;
-  --anchor-2: #60a5fa;
-  --anchor-3: #34d399;
-  --anchor-4: #fbbf24;
-  --anchor-5: #a78bfa;
+  /* Keep these two stacks identical to lib/typography.ts (canvas layout measures with them) */
+  --font-sans: system-ui, -apple-system, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 }
 
 body {
   @apply bg-zinc-950 text-zinc-100 antialiased;
+  font-family: var(--font-sans);
 }
 
 /* ── Anchor highlight marks ── */
@@ -25,6 +24,115 @@ mark[data-anchor-id]:hover {
 
 ::selection {
   background: rgba(99, 102, 241, 0.35);
+}
+
+/* ── Markdown body ──
+   Sizes/line-heights/gaps mirror lib/typography.ts so the canvas can
+   predict card heights. Change both together. */
+.markdown-body {
+  font-size: 14px;
+  line-height: 22px;
+  overflow-wrap: anywhere;
+}
+.markdown-body > * + * {
+  margin-top: 12px; /* BLOCK_GAP */
+}
+.markdown-body :is(h1, h2, h3, h4, h5, h6) {
+  font-weight: 700;
+  color: #fafafa;
+}
+.markdown-body :is(h1, h2) {
+  font-size: 18px;
+  line-height: 28px;
+}
+.markdown-body :is(h3, h4, h5, h6) {
+  font-size: 16px;
+  line-height: 25px;
+}
+.markdown-body > :is(h1, h2, h3, h4, h5, h6):not(:first-child) {
+  margin-top: 20px; /* BLOCK_GAP + HEADING_GAP_ABOVE */
+}
+.markdown-body strong {
+  font-weight: 700;
+  color: #fafafa;
+}
+.markdown-body em {
+  font-style: italic;
+}
+.markdown-body a {
+  color: #818cf8;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.markdown-body ul,
+.markdown-body ol {
+  padding-left: 24px; /* LIST_INDENT */
+}
+.markdown-body ul {
+  list-style: disc;
+}
+.markdown-body ol {
+  list-style: decimal;
+}
+.markdown-body li + li {
+  margin-top: 4px; /* LIST_ITEM_GAP */
+}
+.markdown-body li > :is(ul, ol, p) {
+  margin-top: 4px;
+}
+.markdown-body li::marker {
+  color: #a1a1aa;
+}
+.markdown-body blockquote {
+  border-left: 3px solid #52525b;
+  padding-left: 12px; /* QUOTE_INDENT = 3 + 12 */
+  color: #a1a1aa;
+}
+.markdown-body hr {
+  border: 0;
+  border-top: 1px solid #3f3f46;
+}
+.markdown-body :not(pre) > code {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  background: rgba(63, 63, 70, 0.6);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.markdown-body pre {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px; /* LH_CODE */
+  background: #09090b;
+  border: 1px solid #27272a;
+  border-radius: 8px;
+  padding: 12px; /* CODE_BLOCK_PAD / 2 */
+  overflow-x: auto;
+  white-space: pre;
+}
+.markdown-body table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+.markdown-body :is(th, td) {
+  border: 1px solid #3f3f46;
+  padding: 6px 10px; /* TABLE_ROW_HEIGHT = 22 + 12 + 1 */
+  text-align: left;
+}
+.markdown-body th {
+  background: rgba(63, 63, 70, 0.4);
+  font-weight: 600;
+}
+.markdown-body .katex-display {
+  margin: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.markdown-body [data-atomic] {
+  max-width: 100%;
 }
 
 /* ── React Flow overrides ── */

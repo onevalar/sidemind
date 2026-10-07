@@ -3,8 +3,12 @@
 import { memo } from 'react';
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import type { MessageNodeData } from '../../lib/canvas-adapter';
-import { MarkdownRenderer } from '../MarkdownRenderer';
-import { BUBBLE_PAD_X, BUBBLE_PAD_Y } from '../../lib/typography';
+import { MessageBody } from '../MessageBody';
+import {
+  BUBBLE_PAD_X,
+  BUBBLE_PAD_Y,
+  BRANCH_LABEL_HEIGHT,
+} from '../../lib/typography';
 
 /**
  * Custom React Flow node for rendering a single message bubble.
@@ -12,7 +16,7 @@ import { BUBBLE_PAD_X, BUBBLE_PAD_Y } from '../../lib/typography';
  * - User messages: compact indigo card
  * - Assistant messages: dark card with Markdown rendering + anchor Handles
  *
- * The data-message-id / data-raw-md / data-role attributes are preserved
+ * The data-message-id / data-role attributes are preserved
  * so the global useTextSelection hook can detect selections inside
  * the canvas node — even through React Flow's CSS transforms.
  */
@@ -53,7 +57,6 @@ function MessageNodeInner({ data }: NodeProps) {
           cursor: isUser ? 'default' : 'text',
         }}
         data-message-id={message.id}
-        data-raw-md={message.content}
         data-role={message.role}
       >
         {/* Branch label badge (first message only) */}
@@ -68,18 +71,15 @@ function MessageNodeInner({ data }: NodeProps) {
         )}
 
         {/* Content */}
-        {isUser ? (
-          <p className="text-sm leading-relaxed whitespace-pre-wrap text-white/90">
-            {message.content}
-          </p>
-        ) : (
-          <div className="overflow-y-auto" style={{ maxHeight: measuredHeight - BUBBLE_PAD_Y * 2 - (isFirstInBranch ? 24 : 0) }}>
-            <MarkdownRenderer
-              content={message.content}
-              messageId={message.id}
-            />
-          </div>
-        )}
+        <div
+          className="overflow-y-auto"
+          style={{
+            maxHeight:
+              measuredHeight - BUBBLE_PAD_Y * 2 - (isFirstInBranch ? BRANCH_LABEL_HEIGHT : 0),
+          }}
+        >
+          <MessageBody message={message} />
+        </div>
       </div>
 
       {/* ── Default source Handle (right edge center) ── */}

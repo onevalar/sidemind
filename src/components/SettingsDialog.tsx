@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useChatStore } from '../store';
 import type { ChatState } from '../types';
@@ -38,18 +38,15 @@ const PROVIDERS: {
 ];
 
 export function SettingsButton() {
-  const [open, setOpen] = useState(false);
   const apiKey = useChatStore((s) => s.apiKey);
-
-  useEffect(() => {
-    if (!apiKey) setOpen(true);
-  }, [apiKey]);
+  // Mounted only after the saved settings are restored: no key yet → ask for one
+  const [open, setOpen] = useState(() => !useChatStore.getState().apiKey);
 
   return (
     <>
       <button
         onClick={() => setOpen(true)}
-        className="w-8 h-8 rounded-lg bg-zinc-800 border border-zinc-700/50 hover:bg-zinc-700 flex items-center justify-center transition-colors"
+        className="relative w-8 h-8 rounded-lg bg-zinc-800 border border-zinc-700/50 hover:bg-zinc-700 flex items-center justify-center transition-colors"
         title="设置"
       >
         <svg className="w-4 h-4 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -57,7 +54,7 @@ export function SettingsButton() {
           <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
         </svg>
         {!apiKey && (
-          <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-red-500" />
+          <span className="absolute -top-0.5 -right-0.5 w-2 h-2 rounded-full bg-red-500" />
         )}
       </button>
 
