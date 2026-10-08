@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import type { NoteDTO, NoteSummary } from '../shared/types'
+import type { CanvasGroup, NoteDTO, NoteSummary } from '../shared/types'
 import { applyPositions, emptyBoard, reconcile, type BoardFile } from './board'
 import { parseBlocks } from './markdown'
 
@@ -27,6 +27,7 @@ console.log('hello canvas')
 
 export class BadNameError extends Error {}
 export class NotFoundError extends Error {}
+export class ConflictError extends Error {}
 
 export class NoteStore {
   readonly root: string
@@ -83,7 +84,15 @@ export class NoteStore {
   async list(): Promise<NoteSummary[]> {
     const names = await this.listNames()
     const notes = await Promise.all(
-      names.map(async (name) => ({ name, mtime: (await fs.stat(path.join(this.root, name))).mtimeMs })),
+      names.map(async (name) => {
+        const content = await fs.readFile(path.join(this.root, name), 'utf8')
+        const board = await this.readBoard(name)
+        return { name, space: board.space ?? '个人灵感', mtime: (await fs.stat(path.join(this.root, name))).mtimeMs,
+          lastOpenedAt: typeof board.lastOpenedAt === 'number' && Number.isFinite(board.lastOpenedAt) && board.lastOpenedAt > 0 ? board.lastOpenedAt : 0,
+          title: /^#\s+(.+)$/m.exec(content)?.[1] ?? name.replace(/\.md$/, ''),
+          excerpt: content.replace(/^#+\s+.*$/gm, '').replace(/[`*>\[\]#_]/g, '').trim().replace(/\s+/g, ' ').slice(0, 160),
+          blockCount: parseBlocks(content).length }
+      }),
     )
     return notes.sort((a, b) => a.name.localeCompare(b.name, 'zh'))
   }
@@ -97,13 +106,13 @@ export class NoteStore {
   }
 
   /** Creates a new note without ever overwriting an existing file. */
-  async create(preferred?: string): Promise<string> {
+  async create(preferred?: string, content?: string): Promise<string> {
     const stem = (preferred ?? '新笔记').replace(/\.md$/i, '').replace(/[\\/\0]/g, '-').replace(/^\.+/, '').trim() || '新笔记'
     for (let i = 0; i < 1000; i++) {
       const name = `${stem}${i === 0 ? '' : ` ${i + 1}`}.md`
       const target = this.resolveName(name)
       try {
-        await fs.writeFile(target, `# ${stem}\n\n开始写作吧。\n`, { encoding: 'utf8', flag: 'wx' })
+        await fs.writeFile(target, content ?? `# ${stem}\n\n开始写作吧。\n`, { encoding: 'utf8', flag: 'wx' })
         return name
       } catch (e) {
         if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e
@@ -156,8 +165,71 @@ export class NoteStore {
           y: entry.y ?? null,
         }
       })
-      return { name, content, blocks }
+      return { name, content, blocks, groups: board.groups ?? [], space: board.space ?? '个人灵感' }
     })
+  }
+
+  /** Compare-and-swap: an external editor can never be overwritten by a stale browser. */
+  async saveContent(name: string, content: string, expectedContent: string): Promise<void> {
+    const file = this.resolveName(name)
+    await this.withLock(name, async () => {
+      let current: string
+      try { current = await fs.readFile(file, 'utf8') } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new NotFoundError(name)
+        throw e
+      }
+      if (current !== expectedContent) throw new ConflictError('笔记已在其他地方修改，请重新载入后再保存。')
+      await this.writeRaw(name, content)
+    })
+  }
+
+  /** Only explicit navigation records a visit; background loads never change recents. */
+  async recordOpen(name: string): Promise<void> {
+    const file = this.resolveName(name)
+    await this.withLock(name, async () => {
+      try { await fs.access(file) } catch (e) {
+        if ((e as NodeJS.ErrnoException).code === 'ENOENT') throw new NotFoundError(name)
+        throw e
+      }
+      const board = await this.readBoard(name)
+      await this.writeBoard(name, { ...board, lastOpenedAt: Date.now() })
+    })
+  }
+
+  async saveGroups(name: string, groups: CanvasGroup[]): Promise<void> {
+    this.resolveName(name)
+    await this.withLock(name, async () => {
+      const board = await this.readBoard(name)
+      const ids = new Set(board.entries.map((e) => e.id))
+      const seen = new Set<string>()
+      const groupIds = new Set<string>()
+      for (const g of groups) {
+        if (!g || typeof g.id !== 'string' || !g.id || ids.has(g.id) || groupIds.has(g.id) || typeof g.title !== 'string' || g.title.length > 120 || !Number.isFinite(g.x) || !Number.isFinite(g.y) || !Array.isArray(g.blockIds)) throw new BadNameError('Invalid group')
+        groupIds.add(g.id)
+        for (const id of g.blockIds) {
+          if (!ids.has(id) || seen.has(id)) throw new BadNameError('Each block can belong to one group')
+          seen.add(id)
+        }
+      }
+      await this.writeBoard(name, { ...board, groups })
+    })
+  }
+
+  async search(query: string): Promise<(NoteSummary & { snippet: string })[]> {
+    const q = query.trim().toLocaleLowerCase()
+    if (!q) return []
+    const matches = await Promise.all((await this.list()).map(async (n) => {
+      const content = await fs.readFile(this.resolveName(n.name), 'utf8')
+      const at = content.toLocaleLowerCase().indexOf(q)
+      return at >= 0 || n.title.toLocaleLowerCase().includes(q) ? { ...n, snippet: at < 0 ? n.excerpt : content.slice(Math.max(0, at - 45), at + 120).replace(/\s+/g, ' ') } : null
+    }))
+    return matches.filter((n) => n !== null)
+  }
+
+  async saveSpace(name: string, space: string): Promise<void> {
+    this.resolveName(name)
+    if (typeof space !== 'string' || !space.trim() || space.length > 80) throw new BadNameError('Invalid space')
+    await this.withLock(name, async () => { const board = await this.readBoard(name); await this.writeBoard(name, { ...board, space: space.trim() }) })
   }
 
   async savePositions(name: string, positions: Record<string, { x: number; y: number }>): Promise<void> {

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { ParsedBlock } from './markdown'
+import type { CanvasGroup } from '../shared/types'
 
 /** What we remember about one block between sessions (the "sidecar" metadata). */
 export interface BoardEntry {
@@ -15,6 +16,9 @@ export interface BoardEntry {
 export interface BoardFile {
   version: 1
   entries: BoardEntry[]
+  groups?: CanvasGroup[]
+  space?: string
+  lastOpenedAt?: number
 }
 
 export const emptyBoard = (): BoardFile => ({ version: 1, entries: [] })
@@ -73,7 +77,8 @@ export function reconcile(
     }
   })
 
-  const next: BoardFile = { version: 1, entries }
+  const ids = new Set(entries.map((e) => e.id))
+  const next: BoardFile = { ...board, version: 1, entries, ...(board.groups ? { groups: board.groups.map((g) => ({ ...g, blockIds: g.blockIds.filter((id) => ids.has(id)) })) } : {}) }
   const changed = JSON.stringify(next) !== JSON.stringify(board)
   return { board: changed ? next : board, changed }
 }
@@ -84,6 +89,7 @@ export function applyPositions(
   positions: Record<string, { x: number; y: number }>,
 ): BoardFile {
   return {
+    ...board,
     version: 1,
     entries: board.entries.map((e) => {
       const p = positions[e.id]

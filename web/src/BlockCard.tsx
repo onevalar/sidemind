@@ -1,9 +1,8 @@
 import { Handle, Position, type Node, type NodeProps } from '@xyflow/react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
+import { NoteMarkdown } from './NoteMarkdown'
 import type { BlockDTO } from '../shared/types'
 
-export type BlockNode = Node<{ block: BlockDTO; placed: boolean }, 'block'>
+export type BlockNode = Node<{ block: BlockDTO; placed: boolean; onOpenNote: (name: string) => void }, 'block'>
 
 const LABELS: Record<string, string> = {
   paragraph: '段落',
@@ -18,7 +17,7 @@ const LABELS: Record<string, string> = {
 export const labelFor = (type: string) =>
   type.startsWith('heading-') ? `标题 ${type.slice(8)}` : (LABELS[type] ?? type)
 
-export const CARD_WIDTH = 360
+export const CARD_WIDTH = 370
 
 export function BlockCard({ data, selected }: NodeProps<BlockNode>) {
   const { block } = data
@@ -31,9 +30,9 @@ export function BlockCard({ data, selected }: NodeProps<BlockNode>) {
           // Raw HTML from a note is shown as text, never executed.
           <pre>{block.raw}</pre>
         ) : (
-          <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
+          <NoteMarkdown onOpenNote={data.onOpenNote}>
             {block.raw}
-          </ReactMarkdown>
+          </NoteMarkdown>
         )}
       </div>
       <Handle type="source" position={Position.Bottom} className="handle" isConnectable={false} />

@@ -17,9 +17,40 @@ export interface NoteDTO {
   name: string
   content: string
   blocks: BlockDTO[]
+  groups: CanvasGroup[]
+  space: string
+}
+
+export interface CanvasGroup {
+  id: string
+  title: string
+  x: number
+  y: number
+  blockIds: string[]
 }
 
 export interface NoteSummary {
   name: string
   mtime: number
+  /** Explicit user visits, independent of file modification time. */
+  lastOpenedAt: number
+  title: string
+  excerpt: string
+  blockCount: number
+  space: string
+}
+
+export interface PublicAIConfig {
+  configured: boolean
+  keySaved: boolean
+  model: string
+  baseUrl: string
+  source: 'saved' | 'environment' | 'none'
+  /** Recoverable configuration error; never includes credentials. */
+  error?: string
+}
+export interface AIConnectionInput {
+  model: string
+  baseUrl: string
+  key?: string
 }

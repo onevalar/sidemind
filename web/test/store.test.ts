@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { BadNameError, NoteStore } from '../server/store'
+import { BadNameError, ConflictError, NoteStore } from '../server/store'
 
 let dir: string
 let store: NoteStore
@@ -56,5 +56,30 @@ describe('NoteStore', () => {
     await fs.writeFile(path.join(dir, 'z.md'), 'A', 'utf8')
     await fs.writeFile(path.join(dir, '.canvasnote', 'z.md.board.json'), '{not json', 'utf8')
     expect((await store.load('z.md')).blocks).toHaveLength(1)
+  })
+
+  it('saves and undoes content without accepting stale writes', async () => {
+    const first = await store.load('Welcome.md')
+    await store.saveContent(first.name, 'New\r\n\r\nText\r\n', first.content)
+    await expect(store.saveContent(first.name, 'Stale', first.content)).rejects.toBeInstanceOf(ConflictError)
+    const next = await store.load(first.name)
+    await store.saveContent(first.name, first.content, next.content)
+    expect((await store.load(first.name)).content).toBe(first.content)
+  })
+
+  it('preserves groups across edits and position writes, rejects duplicate membership', async () => {
+    const first = await store.load('Welcome.md')
+    const group = { id: 'g', title: 'Ideas', x: 1, y: 2, blockIds: [first.blocks[0]!.id] }
+    await store.saveGroups(first.name, [group])
+    await store.savePositions(first.name, { [first.blocks[0]!.id]: { x: 10, y: 20 } })
+    await store.saveContent(first.name, first.content.replace('欢迎', '你好'), first.content)
+    expect((await store.load(first.name)).groups).toEqual([group])
+    await expect(store.saveGroups(first.name, [group, { ...group, id: 'g2' }])).rejects.toBeInstanceOf(BadNameError)
+  })
+
+  it('searches content and returns snippets', async () => {
+    const name = await store.create('Travel', '# Travel\n\nA quiet botanical garden.')
+    expect((await store.search('BOTANICAL')).map((n) => n.name)).toEqual([name])
+    expect(await store.search('absent text')).toEqual([])
   })
 })

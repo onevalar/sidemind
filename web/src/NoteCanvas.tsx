@@ -1,169 +1,130 @@
+
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  applyNodeChanges,
-  Background,
-  Controls,
-  MiniMap,
-  ReactFlow,
-  ReactFlowProvider,
-  useNodesInitialized,
-  useReactFlow,
-  type Edge,
-  type NodeChange,
-  type NodeTypes,
-  type OnNodeDrag,
-} from '@xyflow/react'
-import type { NoteDTO } from '../shared/types'
-import { api, subscribeEvents } from './api'
-import { BlockCard, type BlockNode } from './BlockCard'
+import { applyNodeChanges, Controls, ReactFlow, ReactFlowProvider, useNodesInitialized, useReactFlow, type Node, type NodeChange, type NodeProps, type NodeTypes, type OnNodeDrag } from '@xyflow/react'
+import type { CanvasGroup, NoteDTO } from '../shared/types'
+import { api } from './api'
+import { BlockCard, CARD_WIDTH, type BlockNode } from './BlockCard'
+import { Button, Dialog, Icon, IconButton, Input } from './ui'
 
-const nodeTypes: NodeTypes = { block: BlockCard }
-const START_X = 80
-const START_Y = 60
-const GAP = 28
-const FALLBACK_HEIGHT = 90
-
-function toNodes(note: NoteDTO, previous: BlockNode[]): BlockNode[] {
-  const prevById = new Map(previous.map((n) => [n.id, n]))
-  return note.blocks.map((block) => {
-    const placed = block.x !== null && block.y !== null
-    const prev = prevById.get(block.id)
-    return {
-      // Keep the measured size of cards that already exist so they don't flash while re-measuring.
-      ...(prev ?? {}),
-      id: block.id,
-      type: 'block',
-      position: placed ? { x: block.x!, y: block.y! } : (prev?.position ?? { x: 0, y: 0 }),
-      data: { block, placed },
-      // Unplaced cards stay invisible until we know their height and have stacked them.
-      style: { visibility: placed ? 'visible' : 'hidden' },
-    } as BlockNode
-  })
+type StackNode = Node<{ title: string; count: number; dissolve: () => void }, 'stack'>
+type CanvasNode = BlockNode | StackNode
+function Stack({ data }: NodeProps<StackNode>) {
+  return <div className="stack-surface"><div className="stack-heading"><Icon name="folder"/><strong>{data.title}</strong><span className="count">{data.count}</span><IconButton icon="close" label="解散容器，保留内容" onPress={data.dissolve}/></div></div>
 }
+const nodeTypes: NodeTypes = { block: BlockCard, stack: Stack }
+const WIDTH = CARD_WIDTH + 36
 
-/** Faint arrows in reading order, so the document's sequence stays visible on the canvas. */
-function readingOrderEdges(nodes: BlockNode[]): Edge[] {
-  return nodes.slice(1).map((n, i) => ({
-    id: `e-${nodes[i]!.id}-${n.id}`,
-    source: nodes[i]!.id,
-    target: n.id,
-    selectable: false,
-    focusable: false,
-    className: 'reading-edge',
-  }))
-}
-
-function Canvas({ name }: { name: string }) {
-  const [nodes, setNodes] = useState<BlockNode[]>([])
-  const [edges, setEdges] = useState<Edge[]>([])
-  const [loaded, setLoaded] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const nodesRef = useRef<BlockNode[]>([])
-  const fitted = useRef(false)
-  const initialized = useNodesInitialized()
-  const { fitView } = useReactFlow<BlockNode>()
-
-  const apply = useCallback((next: BlockNode[]) => {
-    nodesRef.current = next
-    setNodes(next)
-    setEdges(readingOrderEdges(next))
-  }, [])
-
-  const load = useCallback(async () => {
-    try {
-      const note = await api.loadNote(name)
-      apply(toNodes(note, nodesRef.current))
-      setLoaded(true)
-      setError(null)
-    } catch (e) {
-      setError(`无法打开笔记：${(e as Error).message}`)
+/** Stacks own vertical layout; heights come from actual card measurements. */
+function arrange(nodes: CanvasNode[], groups: CanvasGroup[]): CanvasNode[] {
+  const next = nodes.map((n) => ({ ...n }))
+  for (const group of groups) {
+    let y = 62
+    for (const id of group.blockIds) {
+      const node = next.find((n) => n.id === id)
+      if (!node) continue
+      node.position = { x: 18, y }
+      y += (node.measured?.height ?? 110) + 14
     }
-  }, [name, apply])
+    const parent = next.find((n) => n.id === group.id)
+    if (parent) parent.style = { ...parent.style, width: WIDTH, height: Math.max(150, y + 8) }
+  }
+  return next
+}
+
+function Canvas({ note, onSelect, onEdit, onAdd, onChanged, theme, onOpenNote }: { note: NoteDTO; onOpenNote: (name: string) => void; theme: 'light' | 'dark'; onSelect: (id: string | null) => void; onEdit: (id: string) => void; onAdd: () => void; onChanged: () => void }) {
+  const [nodes, setNodes] = useState<CanvasNode[]>([])
+  const nodeRef = useRef<CanvasNode[]>([])
+  const groups = useRef<CanvasGroup[]>(note.groups)
+  const [error, setError] = useState<string | null>(null)
+  const [groupOpen, setGroupOpen] = useState(false)
+  const [groupTitle, setGroupTitle] = useState('新的内容组')
+  const { setViewport } = useReactFlow()
+  const nodesInitialized = useNodesInitialized()
+  const fitted = useRef(false)
+  const apply = useCallback((next: CanvasNode[]) => { nodeRef.current = next; setNodes(next) }, [])
+  const persistGroups = async (next: CanvasGroup[], positions: Record<string, { x: number; y: number }> = {}) => {
+    try {
+      if (Object.keys(positions).length) await api.savePositions(note.name, positions)
+      await api.saveGroups(note.name, next); groups.current = next; setError(null); onChanged()
+    } catch (e) { setError((e as Error).message) }
+  }
+  const dissolve = (id: string) => {
+    const g = groups.current.find((g) => g.id === id)
+    const positions: Record<string, { x: number; y: number }> = {}
+    if (g) for (const n of nodeRef.current.filter((n) => n.parentId === id)) positions[n.id] = { x: g.x + n.position.x, y: g.y + n.position.y }
+    void persistGroups(groups.current.filter((g) => g.id !== id), positions)
+  }
 
   useEffect(() => {
-    void load()
-    return subscribeEvents((e) => {
-      if (e.type === 'note-changed' && e.name === name) void load()
+    groups.current = note.groups
+    const previous = new Map(nodeRef.current.map((n) => [n.id, n]))
+    const membership = new Map(note.groups.flatMap((g) => g.blockIds.map((id) => [id, g.id] as const)))
+    const stacks: StackNode[] = note.groups.map((g) => ({ id: g.id, type: 'stack', position: { x: g.x, y: g.y }, dragHandle: '.stack-heading', data: { title: g.title, count: g.blockIds.length, dissolve: () => dissolve(g.id) }, style: { width: WIDTH, height: 160 }, zIndex: 0 }))
+    let y = 40
+    const cards = note.blocks.map((block): BlockNode => {
+      const old = previous.get(block.id)
+      const parentId = membership.get(block.id)
+      const pos = parentId ? { x: 18, y: 62 } : { x: block.x ?? 48, y: block.y ?? y }
+      y += (old?.measured?.height ?? 110) + 20
+      return { id: block.id, type: 'block', position: pos, ...(parentId ? { parentId } : {}), measured: old?.measured, selected: old?.selected, data: { block, placed: true, onOpenNote }, zIndex: 1 }
     })
-  }, [name, load])
+    apply(arrange([...stacks, ...cards], note.groups))
+  }, [note, apply])
 
-  // Once cards are measured, stack any unplaced ones below what is already on the canvas.
   useEffect(() => {
-    if (!initialized || !loaded) return
-    const current = nodesRef.current
-    const unplaced = current.filter((n) => !n.data.placed)
-    if (unplaced.length === 0) {
-      if (!fitted.current && current.length > 0) {
-        fitted.current = true
-        requestAnimationFrame(() => void fitView({ padding: 0.2, maxZoom: 1, duration: 250 }))
-      }
+    if (fitted.current || !nodesInitialized) return
+    const roots = nodeRef.current.filter((node) => !node.parentId)
+    if (!roots.length) return
+    fitted.current = true
+    // Keep text readable on long notes; Controls still offers an all-content overview.
+    void setViewport({ x: 40 - Math.min(...roots.map((node) => node.position.x)), y: 32 - Math.min(...roots.map((node) => node.position.y)), zoom: 1 })
+  }, [nodesInitialized, setViewport])
+
+  const onNodesChange = (changes: NodeChange<CanvasNode>[]) => {
+    let next = applyNodeChanges(changes, nodeRef.current)
+    if (changes.some((c) => c.type === 'dimensions')) next = arrange(next, groups.current)
+    apply(next)
+  }
+  const onDragStop: OnNodeDrag<CanvasNode> = (_, node, dragged) => {
+    if (node.type === 'stack') {
+      void persistGroups(groups.current.map((g) => { const n = dragged.find((d) => d.id === g.id); return n ? { ...g, ...n.position } : g }))
       return
     }
-
-    const placedNodes = current.filter((n) => n.data.placed)
-    let y = placedNodes.length
-      ? Math.max(...placedNodes.map((n) => n.position.y + (n.measured?.height ?? FALLBACK_HEIGHT))) + GAP
-      : START_Y
-    const x = placedNodes.length ? Math.min(...placedNodes.map((n) => n.position.x)) : START_X
-
-    const positions: Record<string, { x: number; y: number }> = {}
-    const laidOut = current.map((n) => {
-      if (n.data.placed) return n
-      const pos = { x, y }
-      positions[n.id] = pos
-      y += (n.measured?.height ?? FALLBACK_HEIGHT) + GAP
-      return { ...n, position: pos, data: { ...n.data, placed: true }, style: { visibility: 'visible' } } as BlockNode
+    const parent = groups.current.find((g) => g.id === node.parentId)
+    const absolute = { x: node.position.x + (parent?.x ?? 0), y: node.position.y + (parent?.y ?? 0) }
+    const target = groups.current.find((g) => {
+      const stack = nodeRef.current.find((n) => n.id === g.id)
+      return absolute.x + CARD_WIDTH / 2 >= g.x && absolute.x + CARD_WIDTH / 2 <= g.x + WIDTH && absolute.y + 20 >= g.y && absolute.y <= g.y + Number(stack?.style?.height ?? 160)
     })
-    apply(laidOut)
-    void api.savePositions(name, positions).catch((e) => setError(`保存位置失败：${(e as Error).message}`))
-  }, [initialized, loaded, name, apply, fitView])
-
-  // Let React Flow compute drags/selection/measurements, then mirror the result into our state.
-  const onNodesChange = useCallback((changes: NodeChange<BlockNode>[]) => {
-    const next = applyNodeChanges(changes, nodesRef.current)
-    nodesRef.current = next
-    setNodes(next)
-  }, [])
-
-  const onNodeDragStop: OnNodeDrag<BlockNode> = useCallback(
-    (_e, _node, dragged) => {
-      const positions: Record<string, { x: number; y: number }> = {}
-      for (const n of dragged) positions[n.id] = { x: n.position.x, y: n.position.y }
-      void api.savePositions(name, positions).catch((e) => setError(`保存位置失败：${(e as Error).message}`))
-    },
-    [name],
-  )
-
-  return (
-    <div className="canvas">
-      {error && <div className="banner">{error}</div>}
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        onNodesChange={onNodesChange}
-        onNodeDragStop={onNodeDragStop}
-        nodesConnectable={false}
-        edgesFocusable={false}
-        minZoom={0.1}
-        maxZoom={2}
-        panOnScroll
-        zoomOnPinch
-        proOptions={{ hideAttribution: true }}
-        defaultEdgeOptions={{ type: 'default' }}
-      >
-        <Background gap={24} />
-        <Controls showInteractive={false} />
-        <MiniMap pannable zoomable nodeStrokeWidth={2} />
-      </ReactFlow>
-    </div>
-  )
+    if (target || parent) {
+      const next = groups.current.map((g) => {
+        const ids = g.blockIds.filter((id) => id !== node.id)
+        if (target?.id === g.id) {
+          const at = ids.findIndex((id) => { const other = nodeRef.current.find((n) => n.id === id); return (other?.position.y ?? 0) + (other?.measured?.height ?? 110) / 2 > absolute.y - g.y })
+          ids.splice(at < 0 ? ids.length : at, 0, node.id)
+        }
+        return { ...g, blockIds: ids }
+      })
+      void persistGroups(next, { [node.id]: absolute })
+    } else {
+      void api.savePositions(note.name, Object.fromEntries(dragged.map((n) => [n.id, n.position]))).catch((e) => setError((e as Error).message))
+    }
+  }
+  const createGroup = () => {
+    const selected = nodeRef.current.filter((n) => n.type === 'block' && n.selected)
+    const ids = (selected.length ? selected : nodeRef.current.filter((n) => n.type === 'block' && !n.parentId)).map((n) => n.id)
+    if (!ids.length) { setError('先选择需要分组的内容块。'); return }
+    const next = groups.current.map((g) => ({ ...g, blockIds: g.blockIds.filter((id) => !ids.includes(id)) }))
+    next.push({ id: 'stack-' + crypto.randomUUID(), title: groupTitle.trim() || '内容组', x: 60 + next.length * (WIDTH + 50), y: 40, blockIds: ids })
+    void persistGroups(next); setGroupOpen(false)
+  }
+  return <div className="canvas">
+    {error && <div className="banner" role="alert">{error}</div>}
+    <ReactFlow colorMode={theme} data-theme={'linear-' + theme} nodes={nodes} nodeTypes={nodeTypes} onNodesChange={onNodesChange} onNodeDragStop={onDragStop} onNodeClick={(_, n) => { if (n.type === 'block') onSelect(n.id) }} onNodeDoubleClick={(_, n) => { if (n.type === 'block') onEdit(n.id) }} onPaneClick={() => onSelect(null)} nodesConnectable={false} deleteKeyCode={null} minZoom={.15} maxZoom={2} panOnScroll selectionOnDrag>
+      <Controls showInteractive={false}/>
+    </ReactFlow>
+    <div className="canvas-actions"><IconButton icon="plus" label="添加内容块" onPress={onAdd}/><Button variant="ghost" size="sm" onPress={() => setGroupOpen(true)}><Icon name="group"/>创建容器</Button><span>双击编辑 · 拖入分组 · Shift 多选</span></div>
+    <Dialog title="创建内容组" open={groupOpen} onClose={() => setGroupOpen(false)} footer={<><Button variant="ghost" onPress={() => setGroupOpen(false)}>取消</Button><Button onPress={createGroup}>创建分组</Button></>}><Input aria-label="分组名称" value={groupTitle} onChange={(e) => setGroupTitle(e.target.value)} autoFocus fullWidth/><p className="muted">已选卡片将组成纵向容器；没有选择时，收纳尚未分组的内容。</p></Dialog>
+  </div>
 }
-
-export function NoteCanvas({ name }: { name: string }) {
-  return (
-    <ReactFlowProvider>
-      <Canvas name={name} />
-    </ReactFlowProvider>
-  )
-}
+export function NoteCanvas(props: Parameters<typeof Canvas>[0]) { return <ReactFlowProvider><Canvas {...props}/></ReactFlowProvider> }
