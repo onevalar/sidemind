@@ -98,6 +98,8 @@ export async function POST(req: Request) {
     const problem = checkBaseUrl(customBaseUrl);
     if (problem) return jsonError(problem, 400);
   }
+  const model = req.headers.get('x-model')?.trim() || DEFAULT_MODELS[provider];
+  if (model.length > 200 || /[\r\n]/.test(model)) return jsonError('模型名称不正确', 400);
   const baseUrl = customBaseUrl || DEFAULT_BASE_URLS[provider];
 
   let body: { messages?: unknown; context?: unknown };
@@ -139,7 +141,7 @@ export async function POST(req: Request) {
         try {
           const anthropicStream = client.messages.stream(
             {
-              model: DEFAULT_MODELS.anthropic,
+              model,
               max_tokens: MAX_TOKENS,
               system: systemPrompt,
               messages,
@@ -193,7 +195,7 @@ export async function POST(req: Request) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: DEFAULT_MODELS[provider],
+        model,
         stream: true,
         messages: [{ role: 'system', content: systemPrompt }, ...messages],
       }),
@@ -253,7 +255,8 @@ export async function POST(req: Request) {
             }
           }
         }
-        if (!finished && buffer) handleLine(buffer);
+        if (!finished && buffer) finished = handleLine(buffer);
+        if (!finished) throw new Error('模型服务提前结束了响应，已保留部分内容。');
 
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();

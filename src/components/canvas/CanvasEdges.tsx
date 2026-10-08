@@ -30,7 +30,7 @@ function SequentialEdgeInner({
     <BaseEdge
       path={path}
       style={{
-        stroke: '#3f3f46',
+        stroke: 'var(--border)',
         strokeWidth: 1.5,
         strokeDasharray: '6 4',
       }}

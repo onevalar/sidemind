@@ -18,10 +18,15 @@ import type {
   SendResult,
   UIState,
 } from './types';
+import { settledConversation, snapshotConversation } from './history';
+import { restoreSpaces, withoutSpace } from './spaces';
+import { modelConnection, connectionKey, conversationConnection, conversationCredential, restoreModelState } from './connections';
 import { createMessageId, createAnchorId, createBranchId } from './lib/id';
 import { colorForIntent } from './lib/colors';
 import { mockState, emptyState } from './lib/mock';
 import { deriveCanvasElements } from './lib/canvas-adapter';
+import { branchCanvas, validCanvasPoint, restoreBranchPositions } from './lib/branch-canvas';
+import { applyNodeChanges } from '@xyflow/react';
 import {
   buildApiMessages,
   buildContext,
@@ -41,6 +46,16 @@ type PersistedSlice = Pick<
   | 'apiKey'
   | 'provider'
   | 'baseUrl'
+  | 'model'
+  | 'conversations'
+  | 'activeConversationId'
+  | 'spaces'
+  | 'conversationSpaces'
+  | 'activeSpaceId'
+  | 'conversationModels'
+  | 'connectionCredentials'
+  | 'providerConnections'
+  | 'branchPositions'
 >;
 
 const PROVIDERS: ChatState['provider'][] = ['anthropic', 'zhipu', 'openai'];
@@ -111,6 +126,14 @@ function sanitizePersisted(p: Partial<PersistedSlice>): Partial<PersistedSlice> 
   if (typeof p.apiKey === 'string') out.apiKey = p.apiKey;
   if (p.provider && PROVIDERS.includes(p.provider)) out.provider = p.provider;
   if (typeof p.baseUrl === 'string') out.baseUrl = p.baseUrl;
+  if (typeof p.model === 'string') out.model = p.model;
+  if (p.conversations && typeof p.conversations === 'object') out.conversations = p.conversations;
+  if (typeof p.activeConversationId === 'string') out.activeConversationId = p.activeConversationId;
+  const organization = restoreSpaces(p.spaces, p.conversationSpaces);
+  Object.assign(out, organization);
+  out.activeSpaceId = typeof p.activeSpaceId === 'string' && Object.hasOwn(organization.spaces, p.activeSpaceId) ? p.activeSpaceId : null;
+  Object.assign(out, restoreModelState(p, { provider: out.provider || 'zhipu', model: out.model || '', baseUrl: out.baseUrl || '' }));
+  out.branchPositions = restoreBranchPositions(p.branchPositions);
 
   const hasConversation =
     p.messages && p.branches && p.rootBranchId && p.branches[p.rootBranchId];
@@ -170,8 +193,14 @@ export const useChatStore = create<ChatStore>()(
 
       function runCanvas() {
         lastCanvasRun = Date.now();
-        const { nodes, edges } = deriveCanvasElements(get());
-        set({ canvas: { nodes, edges } });
+        const state = get();
+        if (state.ui.canvasMode === 'branches') {
+          const { nodes, edges, positions } = branchCanvas(state, state.branchPositions[state.activeConversationId]);
+          set({ canvas: { nodes, edges }, branchPositions: { ...state.branchPositions, [state.activeConversationId]: positions } });
+        } else {
+          const { nodes, edges } = deriveCanvasElements(state);
+          set({ canvas: { nodes, edges } });
+        }
       }
 
       function recompute(force = false) {
@@ -192,8 +221,10 @@ export const useChatStore = create<ChatStore>()(
       }
 
       // ── In-flight requests (so "new conversation" can cancel them) ──
+      let generationEpoch = 0;
       const controllers = new Set<AbortController>();
       function abortAll() {
+        generationEpoch++;
         controllers.forEach((c) => c.abort());
         controllers.clear();
       }
@@ -269,6 +300,7 @@ export const useChatStore = create<ChatStore>()(
         branchId: BranchId,
       ): Promise<'ok' | 'error'> {
         // Snapshot what the model should see BEFORE the empty reply is added
+        const epoch = generationEpoch;
         const apiMessages = buildApiMessages(get(), branchId);
         const context = buildContext(get(), branchId);
         const questionMsg = get().messages[
@@ -286,8 +318,10 @@ export const useChatStore = create<ChatStore>()(
         let failure: string | null = null;
 
         try {
-          const { apiKey, provider, baseUrl } = get();
-          if (!apiKey) throw new Error('未配置 API Key，请点击右上角⚙️设置');
+          const connection = conversationConnection(get());
+          const { provider, baseUrl, model } = connection;
+          const apiKey = conversationCredential(get(), connection);
+          if (!apiKey) throw new Error(`请先在模型设置中配置此对话使用的 ${provider} 连接密钥（${baseUrl}）。`);
 
           const response = await fetch('/api/chat', {
             method: 'POST',
@@ -297,6 +331,7 @@ export const useChatStore = create<ChatStore>()(
               'x-api-key': apiKey,
               'x-provider': provider,
               ...(baseUrl ? { 'x-base-url': baseUrl } : {}),
+              ...(model ? { 'x-model': model } : {}),
             },
             body: JSON.stringify({ messages: apiMessages, context }),
           });
@@ -314,6 +349,7 @@ export const useChatStore = create<ChatStore>()(
           let finished = false;
 
           const handle = (line: string) => {
+            if (controller.signal.aborted || epoch !== generationEpoch) return;
             const evt = parseSseLine(line);
             if (!evt) return;
             if (evt === 'done') {
@@ -342,6 +378,7 @@ export const useChatStore = create<ChatStore>()(
             }
           }
           if (!finished && buffer) handle(buffer);
+          if (!finished) throw new Error('连接提前结束，已保留收到的内容，请重试。');
 
           if (!accumulated.trim()) {
             throw new Error('AI 没有返回内容，请稍后重试');
@@ -357,6 +394,7 @@ export const useChatStore = create<ChatStore>()(
 
         controllers.delete(controller);
 
+        if (epoch !== generationEpoch) return 'error';
         patchMessage(assistantMsgId, failure ? { error: failure } : { error: undefined });
         patchBranch(branchId, { status: failure ? 'error' : 'done' });
 
@@ -366,7 +404,7 @@ export const useChatStore = create<ChatStore>()(
             questionMsg?.content ?? '',
             accumulated,
           );
-          get().publishToBlackboard(branchId, summary, keyFacts);
+          get().publishToBlackboard(branchId, summary, keyFacts, assistantMsgId);
         }
 
         recompute(true);
@@ -381,11 +419,50 @@ export const useChatStore = create<ChatStore>()(
         apiKey: '',
         provider: 'zhipu' as const,
         baseUrl: '',
+        model: '',
+        conversations: {},
+        activeConversationId: 'initial',
+        spaces: {},
+        conversationSpaces: {},
+        activeSpaceId: null,
+        branchPositions: {},
+        conversationModels: {},
+        connectionCredentials: {},
+        providerConnections: {},
+
+        createSpace: (name) => {
+          const title = name.trim().slice(0, 80);
+          if (!title) return;
+          const id = crypto.randomUUID();
+          set(s => ({ spaces: { ...s.spaces, [id]: { id, name: title } }, activeSpaceId: id }));
+        },
+        renameSpace: (id, name) => {
+          const title = name.trim().slice(0, 80);
+          if (!title || !get().spaces[id]) return;
+          set(s => ({ spaces: { ...s.spaces, [id]: { id, name: title } } }));
+        },
+        deleteSpace: (id) => set(s => ({ ...withoutSpace(s.spaces, s.conversationSpaces, id), activeSpaceId: s.activeSpaceId === id ? null : s.activeSpaceId })),
+        setActiveSpace: (id) => { if (id === null || Object.hasOwn(get().spaces, id)) set({ activeSpaceId: id }); },
+        moveConversation: (conversationId, spaceId) => {
+          if (spaceId !== null && !Object.hasOwn(get().spaces, spaceId)) return;
+          set(s => {
+            const conversationSpaces = { ...s.conversationSpaces };
+            if (spaceId) conversationSpaces[conversationId] = spaceId;
+            else delete conversationSpaces[conversationId];
+            return { conversationSpaces, activeSpaceId: spaceId };
+          });
+        },
 
         // ---- Settings ----
-        setApiKey: (key: string) => set({ apiKey: key.trim() }),
-        setProvider: (provider) => set({ provider }),
-        setBaseUrl: (url: string) => set({ baseUrl: url.trim() }),
+        saveConnection: (config, key) => {
+          const connection = modelConnection(config);
+          const apiKey = key.trim();
+          set(s => ({ ...connection, apiKey,
+            conversationModels: Object.keys(s.messages).length && !s.conversationModels[s.activeConversationId]
+              ? { ...s.conversationModels, [s.activeConversationId]: modelConnection(s) } : s.conversationModels,
+            connectionCredentials: { ...s.connectionCredentials, [connectionKey(connection)]: apiKey },
+            providerConnections: { ...s.providerConnections, [connection.provider]: connection } }));
+        },
 
         // ---- Actions ----
 
@@ -401,6 +478,11 @@ export const useChatStore = create<ChatStore>()(
           const text = userContent.trim();
           if (!text) return 'error';
 
+          // Bind once for the whole conversation, including every child branch.
+          if (!get().conversationModels[get().activeConversationId]) {
+            set(s => ({ conversationModels: { ...s.conversationModels, [s.activeConversationId]: modelConnection(s) } }));
+          }
+
           appendMessage(branchId, 'user', text, quote ? { quote } : {});
           patchBranch(branchId, { status: 'streaming' });
           recompute();
@@ -413,6 +495,7 @@ export const useChatStore = create<ChatStore>()(
           slice,
           intent,
           targetBranchId,
+          branchLabel,
           question,
         }) => {
           const s = get();
@@ -439,7 +522,7 @@ export const useChatStore = create<ChatStore>()(
               newBranch = {
                 [branchId]: {
                   id: branchId,
-                  label: `分支 · ${preview}${slice.selectedText.length > 20 ? '…' : ''}`,
+                  label: branchLabel?.trim().slice(0, 120) || `分支 · ${preview}${slice.selectedText.length > 20 ? '…' : ''}`,
                   sourceAnchorId: anchorId,
                   sourceMessageId: messageId,
                   messageIds: [],
@@ -482,9 +565,11 @@ export const useChatStore = create<ChatStore>()(
             sourceMessageId: messageId,
           };
 
+          const epoch = generationEpoch;
           void get()
             .sendMessage(branchId, text, quote)
             .then((result) => {
+              if (epoch !== generationEpoch) return;
               patchAnchor(anchorId, {
                 status: result === 'ok' ? 'done' : 'error',
               });
@@ -511,6 +596,7 @@ export const useChatStore = create<ChatStore>()(
               ui: {
                 ...s.ui,
                 focusedAnchorId: anchorId,
+                messageReveal: undefined,
                 // Jump to the branch this highlight leads to
                 activeBranchPanelId:
                   anchor.branchId !== s.rootBranchId
@@ -542,6 +628,7 @@ export const useChatStore = create<ChatStore>()(
           branchId: BranchId,
           summary: string,
           keyFacts: string[] = [],
+          sourceMessageId?: MessageId,
         ) => {
           set((s) => ({
             blackboard: {
@@ -550,6 +637,7 @@ export const useChatStore = create<ChatStore>()(
                 branchId,
                 summary,
                 keyFacts,
+                sourceMessageId,
                 updatedAt: Date.now(),
               },
             },
@@ -560,24 +648,100 @@ export const useChatStore = create<ChatStore>()(
           recompute(true);
         },
 
-        resetToEmpty: () => {
+        revealMessage: (messageId) => {
+          set((s) => {
+            const message = s.messages[messageId];
+            if (!message || !s.branches[message.branchId]?.messageIds.includes(messageId)) return s;
+            return { ui: { ...s.ui, viewMode: 'linear', pendingSelection: null,
+              activeBranchPanelId: message.branchId === s.rootBranchId ? null : message.branchId,
+              messageReveal: { messageId, request: (s.ui.messageReveal?.request ?? 0) + 1 } } };
+          });
+        },
+
+        stopGeneration: () => {
           abortAll();
-          set(emptyState);
+          set(settledConversation(get()));
           recompute(true);
         },
-        resetToMock: () => {
+        switchConversation: (id) => {
+          if (id === get().activeConversationId || !get().conversations[id]) return;
           abortAll();
-          set(mockState);
-          recompute(true);
+          const s = get();
+          const saved = snapshotConversation(s, s.activeConversationId);
+          const next = settledConversation(s.conversations[id]);
+          set({ ...next, activeConversationId: id,
+            activeSpaceId: s.conversationSpaces[id] || null,
+            conversations: { ...s.conversations, [saved.id]: saved },
+            ui: { ...emptyState.ui }, canvas: { nodes: [], edges: [] } });
+        },
+        deleteConversation: (id) => {
+          if (id === get().activeConversationId) abortAll();
+          const conversations = { ...get().conversations };
+          delete conversations[id];
+          const conversationSpaces = { ...get().conversationSpaces };
+          delete conversationSpaces[id];
+          const conversationModels = { ...get().conversationModels };
+          delete conversationModels[id];
+          const branchPositions = { ...get().branchPositions };
+          delete branchPositions[id];
+          const nextId = crypto.randomUUID();
+          if (id === get().activeConversationId && get().activeSpaceId) conversationSpaces[nextId] = get().activeSpaceId!;
+          set(id === get().activeConversationId
+            ? { ...emptyState, activeConversationId: nextId, conversations, conversationSpaces, conversationModels, branchPositions }
+            : { conversations, conversationSpaces, conversationModels, branchPositions });
+        },
+        resetToEmpty: () => {
+          abortAll();
+          const s = get();
+          const saved = snapshotConversation(s, s.activeConversationId);
+          const id = crypto.randomUUID();
+          const conversationSpaces = { ...s.conversationSpaces };
+          if (!Object.keys(saved.messages).length) delete conversationSpaces[s.activeConversationId];
+          if (s.activeSpaceId) conversationSpaces[id] = s.activeSpaceId;
+          set({ ...emptyState, activeConversationId: id,
+            conversationSpaces,
+            conversations: Object.keys(saved.messages).length ? { ...s.conversations, [saved.id]: saved } : s.conversations });
+        },
+        resetToMock: () => {
+          get().resetToEmpty();
+          set(s => ({ ...mockState, conversationModels: { ...s.conversationModels, [s.activeConversationId]: modelConnection(s) } }));
         },
 
         setViewMode: (mode: 'linear' | 'canvas') => {
-          set((s) => ({ ui: { ...s.ui, viewMode: mode } }));
+          set((s) => ({ ui: { ...s.ui, viewMode: mode, messageReveal: undefined } }));
           if (mode === 'canvas') recompute(true);
         },
 
+        renameBranch: (id, name) => {
+          const label = name.trim().slice(0, 120);
+          if (!label || !get().branches[id]) return;
+          patchBranch(id, { label }); recompute(true);
+        },
+        setCanvasMode: (canvasMode) => {
+          set(s => ({ ui: { ...s.ui, canvasMode }, canvas: { nodes: [], edges: [] } }));
+          recompute(true);
+        },
+        updateCanvasNodes: (changes) => {
+          if (get().ui.canvasMode !== 'branches') return;
+          set(s => {
+            const accepted = changes.filter(change => change.type === 'dimensions' || change.type === 'select' ||
+              (change.type === 'position' && (!change.position || validCanvasPoint(change.position))));
+            const points = { ...s.branchPositions[s.activeConversationId] };
+            let activeBranchPanelId = s.ui.activeBranchPanelId;
+            for (const change of accepted) if (change.type === 'position' && change.position && s.branches[change.id]) points[change.id] = change.position;
+            for (const change of accepted) if (change.type === 'select' && change.selected && s.branches[change.id]) activeBranchPanelId = change.id === s.rootBranchId ? null : change.id as BranchId;
+            return { canvas: { ...s.canvas, nodes: applyNodeChanges(accepted, s.canvas.nodes) },
+              branchPositions: { ...s.branchPositions, [s.activeConversationId]: points }, ui: { ...s.ui, activeBranchPanelId } };
+          });
+        },
+        arrangeBranchCanvas: () => {
+          const s = get();
+          const { nodes, edges, positions } = branchCanvas(s);
+          set({ canvas: { nodes, edges }, branchPositions: { ...s.branchPositions, [s.activeConversationId]: positions } });
+        },
+
         setActiveBranchPanel: (branchId: BranchId | null) => {
-          set((s) => ({ ui: { ...s.ui, activeBranchPanelId: branchId } }));
+          set((s) => ({ ui: { ...s.ui, activeBranchPanelId: branchId, messageReveal: undefined } }));
         },
       };
     },
@@ -597,6 +761,16 @@ export const useChatStore = create<ChatStore>()(
         apiKey: state.apiKey,
         provider: state.provider,
         baseUrl: state.baseUrl,
+        model: state.model,
+        conversations: state.conversations,
+        activeConversationId: state.activeConversationId,
+        spaces: state.spaces,
+        conversationSpaces: state.conversationSpaces,
+        activeSpaceId: state.activeSpaceId,
+        conversationModels: state.conversationModels,
+        connectionCredentials: state.connectionCredentials,
+        providerConnections: state.providerConnections,
+        branchPositions: state.branchPositions,
       }),
       merge: (persisted, current) => ({
         ...current,

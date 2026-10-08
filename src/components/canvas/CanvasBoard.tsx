@@ -1,116 +1,81 @@
 'use client';
-
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import {
-  ReactFlow,
-  Background,
-  Controls,
-  MiniMap,
-  BackgroundVariant,
-  useReactFlow,
-  ReactFlowProvider,
-  type NodeTypes,
-  type EdgeTypes,
+  ReactFlow, Background, BackgroundVariant, useReactFlow, ReactFlowProvider,
+  useNodesInitialized, useViewport, type NodeTypes, type EdgeTypes, type Node,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-
 import { useChatStore } from '../../store';
+import type { BranchId } from '../../types';
+import { canvasExcerpt } from '../../lib/branch-canvas';
 import { MessageNodeComponent } from './MessageNode';
+import { BranchNodeComponent } from './BranchNode';
 import { SequentialEdge, AnchorEdge } from './CanvasEdges';
+import { Button, Icon } from '../ui';
 
-// Register custom types (stable references — must not be created inside render)
-const nodeTypes: NodeTypes = {
-  message: MessageNodeComponent,
-};
+const nodeTypes: NodeTypes = { message: MessageNodeComponent, branch: BranchNodeComponent };
+const edgeTypes: EdgeTypes = { sequential: SequentialEdge, anchor: AnchorEdge };
 
-const edgeTypes: EdgeTypes = {
-  sequential: SequentialEdge,
-  anchor: AnchorEdge,
-};
-
-function CanvasBoardInner() {
-  const nodes = useChatStore((s) => s.canvas.nodes);
-  const edges = useChatStore((s) => s.canvas.edges);
-  const messageCount = useChatStore((s) => Object.keys(s.messages).length);
-  const { fitView } = useReactFlow();
-
-  // Re-fit only when cards/edges are added or removed — not on every
-  // streamed token, which would keep yanking the viewport around.
-  const structureKey = `${nodes.length}:${edges.length}`;
+function CanvasBoardInner({ theme }: { theme: 'light' | 'dark' }) {
+  const nodes = useChatStore(s => s.canvas.nodes);
+  const edges = useChatStore(s => s.canvas.edges);
+  const mode = useChatStore(s => s.ui.canvasMode);
+  const messages = useChatStore(s => s.messages);
+  const branches = useChatStore(s => s.branches);
+  const conclusionCount = useChatStore(s => Object.keys(s.blackboard).length);
+  const updateNodes = useChatStore(s => s.updateCanvasNodes);
+  const { fitView, zoomIn, zoomOut, zoomTo } = useReactFlow();
+  const { zoom } = useViewport();
+  const initialized = useNodesInitialized();
+  const fitted = useRef(false);
+  const messageCount = Object.keys(messages).length;
   useEffect(() => {
-    if (nodes.length > 0) {
-      requestAnimationFrame(() => fitView({ padding: 0.15, duration: 300 }));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [structureKey, fitView]);
+    if (!initialized || !nodes.length || fitted.current) return;
+    fitted.current = true;
+    void fitView({ padding: 0.18, minZoom: mode === 'branches' ? 0.5 : 0.2, maxZoom: 1 });
+  }, [initialized, nodes.length, fitView, mode]);
 
-  return (
-    <div className="w-screen h-screen bg-zinc-950">
-      <ReactFlow
-        nodes={nodes}
-        edges={edges}
-        nodeTypes={nodeTypes}
-        edgeTypes={edgeTypes}
-        nodesDraggable={false}
-        nodesConnectable={false}
-        elementsSelectable={false}
-        // Allow pan and zoom (middle + right button only, so left-click allows text selection)
-        panOnDrag={[1, 2]}
-        selectionOnDrag={false}
-        zoomOnScroll
-        zoomOnPinch
-        minZoom={0.1}
-        maxZoom={2}
-        fitView
-        fitViewOptions={{ padding: 0.15 }}
-        proOptions={{ hideAttribution: true }}
-      >
-        {/* Dot-grid background */}
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={24}
-          size={1}
-          color="#27272a"
-        />
+  const readNode = useCallback((event: React.MouseEvent, node: Node) => {
+    if (node.type !== 'branch' || (event.target as HTMLElement).closest('button')) return;
+    const store = useChatStore.getState();
+    store.setActiveBranchPanel(node.id === store.rootBranchId ? null : node.id as BranchId);
+    store.setViewMode('linear');
+  }, []);
 
-        {/* Zoom controls (bottom-left) */}
-        <Controls
-          showInteractive={false}
-          className="!bg-zinc-900 !border-zinc-700 !rounded-lg !shadow-xl [&>button]:!bg-zinc-800 [&>button]:!border-zinc-700 [&>button]:!text-zinc-400 [&>button:hover]:!bg-zinc-700"
-        />
+  function createBranch() {
+    const store = useChatStore.getState();
+    const branch = store.branches[store.ui.activeBranchPanelId || store.rootBranchId];
+    const reply = branch.messageIds.map(id => store.messages[id]).filter(message => message?.role === 'assistant' && message.content.trim()).at(-1);
+    if (!reply) { store.setViewMode('linear'); return; }
+    store.setPendingSelection({ messageId: reply.id, slice: { startOffset: 0, endOffset: reply.content.length,
+      selectedText: canvasExcerpt(reply.content, 500) }, rect: new DOMRect() });
+  }
 
-        {/* Mini-map (bottom-right) */}
-        <MiniMap
-          position="bottom-right"
-          nodeColor={(node) => {
-            const role = (node.data as { message?: { role?: string } })
-              ?.message?.role;
-            return role === 'user' ? '#6366f1' : '#3f3f46';
-          }}
-          maskColor="rgba(0, 0, 0, 0.7)"
-          className="!bg-zinc-900/80 !border-zinc-700 !rounded-lg"
-          pannable
-          zoomable
-        />
-
-        {messageCount === 0 && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="text-center">
-              <div className="text-4xl mb-3">💬</div>
-              <p className="text-sm text-zinc-500">在下方输入框开始对话</p>
-              <p className="text-xs text-zinc-600 mt-1">AI 回复后，划选文本即可创建分支</p>
-            </div>
-          </div>
-        )}
-      </ReactFlow>
+  return <div className="canvas-board" data-density={zoom < 0.6 ? 'compact' : zoom >= 1.1 ? 'expanded' : 'normal'}>
+    <header className="canvas-heading"><div><h2>对话的每一次展开，都有来处。</h2><p>{Math.max(0, Object.keys(branches).length - 1)} 条分支 · {messageCount} 条消息 · {conclusionCount} 条共享结论</p></div>
+      <Button variant="outline" size="sm" isDisabled={!messageCount} onPress={createBranch}><Icon name="plus" size={14}/>创建分支</Button>
+    </header>
+    <div className="canvas-graph"><ReactFlow
+      colorMode={theme} data-theme={'linear-' + theme} nodes={nodes} edges={edges}
+      nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={updateNodes}
+      onNodeDoubleClick={readNode} nodesDraggable={mode === 'branches'} nodeDragThreshold={6}
+      nodesConnectable={false} elementsSelectable={mode === 'branches'} nodesFocusable={mode === 'branches'} edgesFocusable={false} deleteKeyCode={null}
+      panOnDrag selectionOnDrag={false} zoomOnScroll zoomOnPinch minZoom={0.15} maxZoom={2}
+      ariaLabelConfig={{ 'node.a11yDescription.default': '拖动卡片顶部调整位置。聚焦卡片后按 Enter 选中，使用方向键移动；展开阅读按钮打开完整对话。', 'edge.a11yDescription.default': '分支引用关系' }}
+    >
+      <Background variant={BackgroundVariant.Dots} gap={24} size={1} color="var(--border)"/>
+      {!messageCount && <div className="canvas-empty"><Icon name="branch" size={26}/><h3>从一个问题开始，思路自然展开。</h3><p>回复中的文字可以成为新的分支，每一次探索都有迹可循。</p><Button variant="outline" onPress={() => useChatStore.getState().setViewMode('linear')}>开始对话</Button></div>}
+    </ReactFlow></div>
+    <div className="canvas-tools">
+      <div className="canvas-mode-switch"><Button size="sm" variant={mode === 'branches' ? 'secondary' : 'ghost'} onPress={() => useChatStore.getState().setCanvasMode('branches')}>分支概览</Button><Button size="sm" variant={mode === 'messages' ? 'secondary' : 'ghost'} onPress={() => useChatStore.getState().setCanvasMode('messages')}>消息详情</Button></div>
+      <div className="canvas-zoom"><Button size="sm" variant="ghost" isIconOnly aria-label="缩小画布" onPress={() => void zoomOut({ duration: 160 })}>−</Button><Button size="sm" variant="ghost" aria-label="重置缩放为 100%" onPress={() => void zoomTo(1, { duration: 160 })}>{Math.round(zoom * 100)}%</Button><Button size="sm" variant="ghost" isIconOnly aria-label="放大画布" onPress={() => void zoomIn({ duration: 160 })}>+</Button><Button size="sm" variant="ghost" aria-label="适应画布" onPress={() => void fitView({ padding: 0.18, maxZoom: 1, duration: 160 })}><Icon name="grid" size={14}/></Button></div>
+      {mode === 'branches' && <Button size="sm" variant="outline" className="canvas-arrange" isDisabled={!nodes.length} onPress={() => { useChatStore.getState().arrangeBranchCanvas(); requestAnimationFrame(() => void fitView({ padding: 0.18, maxZoom: 1, duration: 160 })); }}>重新排列</Button>}
     </div>
-  );
+    <p className="canvas-help">{mode === 'branches' ? '拖动卡片顶部调整位置 · 展开阅读完整对话 · 缩放查看不同层次' : '划选回复创建分支 · 拖动画布浏览 · 返回概览查看关系'}</p>
+  </div>;
 }
 
-export function CanvasBoard() {
-  return (
-    <ReactFlowProvider>
-      <CanvasBoardInner />
-    </ReactFlowProvider>
-  );
+export function CanvasBoard({ theme }: { theme: 'light' | 'dark' }) {
+  const id = useChatStore(s => s.activeConversationId + ':' + s.ui.canvasMode);
+  return <ReactFlowProvider key={id}><CanvasBoardInner theme={theme}/></ReactFlowProvider>;
 }

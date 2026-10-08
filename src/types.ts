@@ -59,6 +59,7 @@ export interface MessageQuote {
 }
 
 export interface Message {
+  example?: boolean;
   id: MessageId;
   role: MessageRole;
   /** Raw Markdown content */
@@ -103,7 +104,10 @@ export interface Branch {
  * cross-branch context without explicit user intervention.
  */
 export interface BlackboardEntry {
+  example?: boolean;
   branchId: BranchId;
+  /** Exact reply used to produce this conclusion; absent in older saved data. */
+  sourceMessageId?: MessageId;
   /** Auto-extracted or LLM-summarized conclusion from this branch */
   summary: string;
   /** Key facts / entities extracted */
@@ -113,8 +117,10 @@ export interface BlackboardEntry {
 
 // --- UI State (co-located in store but logically separate) ---
 export interface UIState {
+  messageReveal?: { messageId: MessageId; request: number };
   /** Current view mode */
   viewMode: 'linear' | 'canvas';
+  canvasMode: 'branches' | 'messages';
   /** The anchor currently focused/highlighted (drives scroll-to + glow) */
   focusedAnchorId: AnchorId | null;
   /** Branch shown in the right side panel (linear mode) */
@@ -139,6 +145,15 @@ export interface CanvasState {
 
 // --- Root Store Shape ---
 export interface ChatState {
+  branchPositions: Record<string, BranchPositions>;
+  conversationModels: Record<string, ModelConnection>;
+  connectionCredentials: Record<string, string>;
+  providerConnections: Partial<Record<Provider, ModelConnection>>;
+  spaces: Record<string, ConversationSpace>;
+  conversationSpaces: Record<string, string>;
+  activeSpaceId: string | null;
+  conversations: Record<string, ConversationSnapshot>;
+  activeConversationId: string;
   // ---- Normalized entity maps ----
   messages: Record<string, Message>;
   anchors: Record<string, Anchor>;
@@ -150,9 +165,10 @@ export interface ChatState {
 
   // ---- Settings ----
   apiKey: string;
-  provider: 'anthropic' | 'zhipu' | 'openai';
+  provider: Provider;
   /** Custom base URL (for providers with self-hosted or custom endpoints) */
   baseUrl: string;
+  model: string;
 
   // ---- UI ----
   ui: UIState;
@@ -167,6 +183,7 @@ export interface ChatState {
 export type SendResult = 'ok' | 'error' | 'busy';
 
 export interface AskFromSelectionArgs {
+  branchLabel?: string;
   messageId: MessageId;
   slice: TextSlice;
   intent: AnchorIntent;
@@ -176,6 +193,19 @@ export interface AskFromSelectionArgs {
 }
 
 export interface ChatActions {
+  renameBranch: (id: BranchId, name: string) => void;
+  setCanvasMode: (mode: UIState['canvasMode']) => void;
+  updateCanvasNodes: (changes: import('@xyflow/react').NodeChange[]) => void;
+  arrangeBranchCanvas: () => void;
+  createSpace: (name: string) => void;
+  renameSpace: (id: string, name: string) => void;
+  deleteSpace: (id: string) => void;
+  setActiveSpace: (id: string | null) => void;
+  moveConversation: (conversationId: string, spaceId: string | null) => void;
+  switchConversation: (id: string) => void;
+  deleteConversation: (id: string) => void;
+  stopGeneration: () => void;
+  saveConnection: (config: ModelConnection, apiKey: string) => void;
   /**
    * Create an anchor from a text selection and immediately send the user's
    * question (with the selected passage attached) to the routed branch.
@@ -194,7 +224,10 @@ export interface ChatActions {
     branchId: BranchId,
     summary: string,
     keyFacts?: string[],
+    sourceMessageId?: MessageId,
   ) => void;
+
+  revealMessage: (messageId: MessageId) => void;
 
   /** Recompute canvas nodes/edges from the current normalized state */
   recomputeCanvas: () => void;
@@ -214,10 +247,6 @@ export interface ChatActions {
   /** Open/close the branch side panel (linear mode) */
   setActiveBranchPanel: (branchId: BranchId | null) => void;
 
-  setApiKey: (key: string) => void;
-  setProvider: (provider: ChatState['provider']) => void;
-  setBaseUrl: (url: string) => void;
-
   /** Reset the entire conversation state to empty (new conversation) */
   resetToEmpty: () => void;
   /** Reset to mock/demo data */
@@ -225,3 +254,13 @@ export interface ChatActions {
 }
 
 export type ChatStore = ChatState & ChatActions;
+
+export type Provider = 'anthropic' | 'zhipu' | 'openai';
+export interface ModelConnection { provider: Provider; model: string; baseUrl: string }
+export interface CanvasPoint { x: number; y: number }
+export type BranchPositions = Record<string, CanvasPoint>;
+
+export interface ConversationSpace { id: string; name: string }
+
+export type ConversationData = Pick<ChatState, 'messages' | 'anchors' | 'branches' | 'blackboard' | 'rootBranchId'>;
+export type ConversationSnapshot = ConversationData & { id: string; title: string; updatedAt: number };

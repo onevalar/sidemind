@@ -14,7 +14,7 @@ export function MessageBody({ message }: { message: Message }) {
     return (
       <>
         {message.quote && (
-          <div className="mb-2 border-l-2 border-white/40 pl-2 text-xs leading-4 text-white/70 line-clamp-3">
+          <div className="message-quote">
             {message.quote.display}
           </div>
         )}
@@ -32,11 +32,9 @@ export function MessageBody({ message }: { message: Message }) {
       )}
       {message.error && (
         <div
-          className={`rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs leading-4 text-red-300 ${
-            message.content ? 'mt-3' : ''
-          }`}
+          className="error-note"
         >
-          ⚠️ {message.error}
+          {message.error}
         </div>
       )}
     </>

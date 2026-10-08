@@ -14,7 +14,9 @@
 /coverage
 
 # next.js
-/.next/
+/.next*/
+/.next-safe.lock
+/scripts/__pycache__/
 /out/
 
 # production

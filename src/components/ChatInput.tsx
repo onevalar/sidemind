@@ -1,109 +1,38 @@
 'use client';
-
-import { useState, useRef, useCallback } from 'react';
+import { useState, useRef } from 'react';
 import { useChatStore } from '../store';
+import { Button, TextArea, Icon } from './ui';
+import { conversationConnection } from '../connections';
+import type { BranchId } from '../types';
 
-export function ChatInput() {
+export function ChatInput({ branchId }: { branchId: BranchId }) {
   const [text, setText] = useState('');
-  const [sending, setSending] = useState(false);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const rootBranchId = useChatStore((s) => s.rootBranchId);
-  const rootStatus = useChatStore((s) => s.branches[s.rootBranchId]?.status);
-  const sendMessage = useChatStore((s) => s.sendMessage);
-  const viewMode = useChatStore((s) => s.ui.viewMode);
-  const activeBranchPanelId = useChatStore((s) => s.ui.activeBranchPanelId);
-
-  // In linear mode, offset from sidebar width
-  const sidebarWidth =
-    viewMode === 'linear' ? (activeBranchPanelId ? 420 : 224) : 0;
-
-  const isStreaming = rootStatus === 'streaming' || sending;
-
-  const handleSend = useCallback(async () => {
-    const trimmed = text.trim();
-    if (!trimmed || isStreaming) return;
+  const ref = useRef<HTMLTextAreaElement>(null);
+  const status = useChatStore(s => s.branches[branchId]?.status);
+  const model = useChatStore(s => conversationConnection(s).model);
+  const sendMessage = useChatStore(s => s.sendMessage);
+  const stop = useChatStore(s => s.stopGeneration);
+  const streaming = status === 'streaming';
+  async function send() {
+    const value = text.trim();
+    if (!value || streaming) return;
     setText('');
-    if (textareaRef.current) textareaRef.current.style.height = 'auto';
-    setSending(true);
-    try {
-      const result = await sendMessage(rootBranchId, trimmed);
-      // Give the text back if it wasn't actually sent
-      if (result === 'busy') setText(trimmed);
-    } finally {
-      setSending(false);
-      textareaRef.current?.focus();
-    }
-  }, [text, isStreaming, sendMessage, rootBranchId]);
-
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      handleSend();
-    }
-  };
-
-  // Auto-resize textarea
-  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setText(e.target.value);
-    const el = e.target;
-    el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
-  };
-
-  return (
-    <div
-      className="fixed bottom-0 left-0 flex justify-center pb-4 px-4 pointer-events-none z-40"
-      style={{ right: sidebarWidth }}
-    >
-      <div className="w-full max-w-2xl pointer-events-auto">
-        {/* Main input bar */}
-        <div className="bg-zinc-900 border border-zinc-700 rounded-2xl shadow-2xl shadow-black/50 flex items-end gap-2 px-4 py-3">
-          <textarea
-            ref={textareaRef}
-            value={text}
-            onChange={handleChange}
-            onKeyDown={handleKeyDown}
-            placeholder="向主干对话发送消息… (Enter 发送，Shift+Enter 换行)"
-            rows={1}
-            disabled={isStreaming}
-            className="flex-1 bg-transparent text-sm text-zinc-100 placeholder-zinc-500 resize-none outline-none leading-relaxed disabled:opacity-50"
-            style={{ minHeight: 24 }}
-          />
-
-          {/* Send button */}
-          <button
-            onClick={handleSend}
-            disabled={!text.trim() || isStreaming}
-            className="shrink-0 w-8 h-8 rounded-xl flex items-center justify-center transition-all disabled:opacity-30"
-            style={{
-              backgroundColor: text.trim() && !isStreaming ? '#6366f1' : '#3f3f46',
-            }}
-          >
-            {isStreaming ? (
-              <span className="w-3 h-3 rounded-full border-2 border-zinc-400 border-t-transparent animate-spin" />
-            ) : (
-              <svg
-                className="w-4 h-4 text-white"
-                fill="none"
-                viewBox="0 0 24 24"
-                stroke="currentColor"
-                strokeWidth={2}
-              >
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  d="M5 12h14M12 5l7 7-7 7"
-                />
-              </svg>
-            )}
-          </button>
-        </div>
-
-        <p className="text-center text-[10px] text-zinc-600 mt-1.5">
-          划选 AI 回复中的文字可创建分支对话
-        </p>
+    const result = await sendMessage(branchId, value);
+    if (result === 'busy') setText(value);
+    ref.current?.focus();
+  }
+  return <div className="composer-wrap">
+    <div className="composer">
+      <TextArea ref={ref} aria-label="消息" placeholder="把问题展开，思路留在这里…" rows={2} value={text}
+        onChange={event => setText(event.target.value)}
+        onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void send(); } }} />
+      <div className="composer-bottom"><span className="model-label"><span className="status-dot" />{model}</span>
+        <Button variant="primary" size="sm" isIconOnly aria-label={streaming ? '停止生成' : '发送消息'}
+          isDisabled={!streaming && !text.trim()} onPress={() => { if (streaming) stop(); else void send(); }}>
+          <Icon name={streaming ? 'stop' : 'arrow'} size={16} />
+        </Button>
       </div>
     </div>
-  );
+    <p className="composer-hint">划选回复中的文字，继续追问或开启分支 · Enter 发送，Shift + Enter 换行</p>
+  </div>;
 }

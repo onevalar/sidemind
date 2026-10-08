@@ -47,8 +47,8 @@ function MessageNodeInner({ data }: NodeProps) {
       <div
         className={`nopan nodrag nowheel rounded-xl border overflow-hidden ${
           isUser
-            ? 'bg-indigo-600/70 border-indigo-500/30'
-            : 'bg-zinc-900/90 border-zinc-700/50 select-text'
+            ? 'canvas-user-card'
+            : 'canvas-assistant-card select-text'
         }`}
         style={{
           width: measuredWidth,
@@ -63,7 +63,7 @@ function MessageNodeInner({ data }: NodeProps) {
         {isFirstInBranch && (
           <div
             className={`text-[10px] font-medium uppercase tracking-wider mb-2 ${
-              isRoot ? 'text-zinc-500' : 'text-indigo-400'
+              isRoot ? 'text-[var(--muted)]' : 'text-[var(--accent)]'
             }`}
           >
             {branch.label}

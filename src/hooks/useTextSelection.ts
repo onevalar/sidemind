@@ -186,7 +186,7 @@ export function useTextSelection() {
   const handleMouseDown = useCallback(
     (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      if (target.closest('[data-popover]')) return;
+      if (target.closest('[data-popover], [role=dialog]')) return;
       setPendingSelection(null);
     },
     [setPendingSelection],
