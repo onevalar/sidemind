@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events'
 
-export type ServerEvent = { type: 'note-changed'; name: string } | { type: 'notes-changed' }
+export type ServerEvent = { type: 'note-changed'; name: string } | { type: 'notes-changed' } | { type: 'canvas-changed'; folder: string }
 
 /** In-process pub/sub between the file watcher and open browser tabs (via SSE). */
 export class EventBus {

@@ -1,32 +1,30 @@
-/** A top-level Markdown block, as the client sees it. */
-export interface BlockDTO {
-  /** Stable across edits; assigned by the server, not derived from content. */
-  id: string
-  type: string
-  /** Exact source text of the block. */
-  raw: string
-  /** Character offsets into the note's content (end exclusive). */
-  start: number
-  end: number
-  /** Canvas position; null until the block has been placed. */
-  x: number | null
-  y: number | null
-}
-
 export interface NoteDTO {
   name: string
   content: string
-  blocks: BlockDTO[]
-  groups: CanvasGroup[]
+  /** Relative folder path; an empty string is the workspace root. */
   space: string
 }
 
-export interface CanvasGroup {
-  id: string
-  title: string
+export interface NotePosition {
   x: number
   y: number
-  blockIds: string[]
+}
+
+export interface CanvasFrame {
+  id: string
+  space: string
+  title: string
+  position: NotePosition
+  width: number
+  height: number
+  /** One article can belong to at most one frame, in its own folder. */
+  members: string[]
+}
+
+export interface CanvasLayout {
+  frames: CanvasFrame[]
+  /** Persisted world coordinates, including articles inside a frame. */
+  positions: Record<string, NotePosition>
 }
 
 export interface NoteSummary {
@@ -36,8 +34,9 @@ export interface NoteSummary {
   lastOpenedAt: number
   title: string
   excerpt: string
-  blockCount: number
   space: string
+  /** Article coordinates, unrelated to content or sorting. */
+  position: NotePosition
 }
 
 export interface PublicAIConfig {
@@ -53,4 +52,15 @@ export interface AIConnectionInput {
   model: string
   baseUrl: string
   key?: string
+}
+
+export interface PublicChatGPTConfig {
+  configured: boolean
+  accounts: { id: string; label: string; signedIn: boolean }[]
+  activeAccountId: string | null
+  model: string
+  loginStatus: 'idle' | 'waiting' | 'success' | 'error'
+  /** Cannot determine the selected provider safely; do not fall back to an API key. */
+  unavailable?: boolean
+  error?: string
 }
