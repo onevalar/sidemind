@@ -1,0 +1,17 @@
+services:
+  canvas-note-api:
+    cwd: web
+    command: npm run dev:server
+    port: 3001
+    health: /api/notes
+    env:
+      NOTES_DIR: ../.amp/preview-notes
+      CANVAS_CONFIG_DIR: ../.amp/preview-config
+  canvas-note-web:
+    cwd: web
+    command: npm run dev:web -- --host 127.0.0.1 --port "$PORT" --strictPort
+    port: 5173
+    health: /api/notes
+    portal:
+      title: 画布笔记
+      description: 独立的示例笔记工作区，不读取你电脑上的文件。ChatGPT 登录请在本机运行应用后使用。
