@@ -1,10 +1,19 @@
-"""Bound local Next.js development/build resources on macOS and Linux.
+"""Bound ChatGit local install/build/runtime resources on macOS and Linux.
 
-The October 7 incident spawned over 1,200 Node processes. Run through npm
-scripts so an independent supervisor can stop the entire owned process group.
+The October 7 incident spawned over 1,200 Node processes. Every heavy task
+runs through npm scripts so an independent supervisor owns a fresh process
+group per step, samples it, and stops the entire group on exit or when a limit
+is crossed. One project-wide lock keeps install, build and dev mutually
+exclusive. (The original Next.js-only copy lives in legacy/chatgit/scripts/.)
+
+  python3 scripts/next_safe.py --check            # npm run check:safety
+  python3 scripts/next_safe.py install [--force]  # npm run setup:app (npm ci)
+  python3 scripts/next_safe.py build              # npm run build
+  python3 scripts/next_safe.py dev [--port N]     # npm run dev -- --port N
 """
 
 import fcntl
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -14,10 +23,13 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from typing import Mapping, Optional, Sequence
 
 
 PROJECT = Path(__file__).resolve().parent.parent
-MIN_NODE = (22, 23, 1)
+APP = PROJECT / "app"
+HEAP_MIB = 2048
+INSTALL_STAMP = "node_modules/.chatgit-install.json"
 
 
 @dataclass(frozen=True)
@@ -27,29 +39,49 @@ class Limits:
     free_bytes: int = 10 * 1024**3
 
 
+@dataclass(frozen=True)
+class Step:
+    """One command run in its own process group under the shared lock."""
+    label: str
+    command: Sequence[str]
+    cwd: Optional[Path] = None
+    env: Optional[Mapping[str, str]] = None
+    log_file: Optional[Path] = None
+
+
+# Sequential, never turbo/parallel: each package build is a separate group.
+BUILD_STEPS = (
+    ("data-provider", "packages/data-provider", "build"),
+    ("data-schemas", "packages/data-schemas", "build"),
+    ("api", "packages/api", "build"),
+    ("client-package", "packages/client", "build"),
+    # build:file keeps the supervisor heap bound; `build` forces 8 GiB.
+    ("client", "client", "build:file"),
+)
+BUILD_OUTPUTS = (
+    "packages/data-provider/dist",
+    "packages/data-schemas/dist",
+    "packages/api/dist",
+    "packages/client/dist",
+    "client/dist/index.html",
+)
+
+
 def node_runtime():
-    """Use the pinned installed LTS, never silently select Node 26 or old 22."""
-    pinned = (PROJECT / ".nvmrc").read_text().strip()
-    candidates = [Path.home() / ".nvm/versions/node" / f"v{pinned}" / "bin/node"]
-    if os.environ.get("NVM_BIN"):
-        candidates.append(Path(os.environ["NVM_BIN"]) / "node")
-    found = shutil.which("node")
-    if found:
-        candidates.append(Path(found))
-    for candidate in candidates:
-        if not candidate.is_file():
-            continue
-        try:
-            version = subprocess.check_output(
-                [str(candidate), "-p", "process.versions.node"],
-                text=True, timeout=3, stderr=subprocess.DEVNULL,
-            ).strip()
-            parsed = tuple(int(x) for x in version.split("."))
-            if parsed[0] == 22 and parsed >= MIN_NODE:
-                return str(candidate), version
-        except (OSError, ValueError, subprocess.SubprocessError):
-            continue
-    raise RuntimeError(f"需要 Node {pinned} LTS；请先运行 nvm install && nvm use。")
+    """Use the exact pinned Node (app/.nvmrc), never silently Node 26 or 22."""
+    import chatgit_toolchain as toolchain
+    version = toolchain.pinned_node_version(PROJECT)
+    found = toolchain.find_node(version)
+    if not found:
+        raise RuntimeError(f"需要 Node {version}；请先运行 .agents/setup（或 nvm install）。")
+    return found
+
+
+def npm_command(node):
+    cli = Path(node).resolve().parent.parent / "lib/node_modules/npm/bin/npm-cli.js"
+    if not cli.is_file():
+        raise RuntimeError(f"找不到与 {node} 配套的 npm。")
+    return [node, str(cli)]
 
 
 def group_snapshot(pgid):
@@ -95,9 +127,32 @@ def stop_group(child):
     child.wait(timeout=3)
 
 
-def supervise(command, project=PROJECT, limits=Limits(), sample_interval=0.5):
+def step_env(step, path_dir):
+    env = os.environ.copy()
+    env.update(step.env or {})
+    env["PATH"] = str(path_dir) + os.pathsep + env.get("PATH", "")
+    # This is a per-process JS heap bound, not a substitute for group RSS.
+    # Appended last so it wins over any inherited --max-old-space-size.
+    env["NODE_OPTIONS"] = (env.get("NODE_OPTIONS", "") + f" --max-old-space-size={HEAP_MIB}").strip()
+    env["npm_config_update_notifier"] = "false"
+    env["npm_config_fund"] = "false"
+    env["npm_config_audit"] = "false"
+    return env
+
+
+def tail(path, lines=40):
+    try:
+        content = Path(path).read_text(errors="replace").splitlines()
+    except OSError:
+        return
+    print(f"[next-safe] {path} 最后 {min(lines, len(content))} 行：", file=sys.stderr)
+    for line in content[-lines:]:
+        print(f"  {line}", file=sys.stderr)
+
+
+def supervise_steps(steps, project=PROJECT, limits=Limits(), sample_interval=0.5, path_dir=None):
+    """Run steps one at a time; stop at the first failure, signal or breach."""
     lock = open(project / ".next-safe.lock", "a+")
-    child = None
     old_handlers = {}
     requested_signal = []
     parent_pid = os.getppid()
@@ -105,23 +160,41 @@ def supervise(command, project=PROJECT, limits=Limits(), sample_interval=0.5):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            print("[next-safe] 已有开发/构建任务在运行，请先停止它。", file=sys.stderr)
+            print("[next-safe] 已有安装/开发/构建任务在运行，请先停止它。", file=sys.stderr)
             return 2
         problem = resource_problem([], shutil.disk_usage(project).free, limits)
         if problem:
             print(f"[next-safe] 拒绝启动：{problem}", file=sys.stderr)
             return 2
-        env = os.environ.copy()
-        env["PATH"] = str(Path(command[0]).parent) + os.pathsep + env.get("PATH", "")
-        # This is a per-process JS heap bound, not a substitute for group RSS.
-        env["NODE_OPTIONS"] = env.get("NODE_OPTIONS", "") + " --max-old-space-size=2048"
-        env["NEXT_TELEMETRY_DISABLED"] = "1"
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             old_handlers[sig] = signal.signal(sig, lambda number, _frame: requested_signal.append(number))
-        child = subprocess.Popen(command, cwd=project, env=env, start_new_session=True)
+        for index, step in enumerate(steps, 1):
+            if len(steps) > 1:
+                print(f"[next-safe] 步骤 {index}/{len(steps)}：{step.label}", flush=True)
+            code = _run_step(step, project, limits, sample_interval, path_dir,
+                             requested_signal, parent_pid)
+            if code != 0:
+                if step.log_file and not requested_signal:
+                    tail(step.log_file)
+                return code
+        return 0
+    finally:
+        for sig, handler in old_handlers.items():
+            signal.signal(sig, handler)
+        lock.close()
+
+
+def _run_step(step, project, limits, sample_interval, path_dir, requested_signal, parent_pid):
+    child = None
+    try:
+        if requested_signal:
+            return 128 + requested_signal[0]
+        env = step_env(step, path_dir or Path(step.command[0]).parent)
+        child = subprocess.Popen(list(step.command), cwd=step.cwd or project, env=env,
+                                 start_new_session=True)
         print(f"[next-safe] PGID={child.pid}; 上限 {limits.processes} 个进程 / "
               f"{limits.rss_kib / 1024**2:g} GiB RSS；磁盘保护线 "
-              f"{limits.free_bytes / 1024**3:g} GiB", flush=True)
+              f"{limits.free_bytes / 1024**3:g} GiB；Node 堆 {HEAP_MIB} MiB", flush=True)
         while True:
             if requested_signal:
                 return 128 + requested_signal[0]
@@ -141,37 +214,137 @@ def supervise(command, project=PROJECT, limits=Limits(), sample_interval=0.5):
     except (OSError, subprocess.SubprocessError) as error:
         if requested_signal:
             return 128 + requested_signal[0]
-        print(f"[next-safe] 监测失败，停止本次服务：{error}", file=sys.stderr)
+        print(f"[next-safe] 监测失败，停止本次任务：{error}", file=sys.stderr)
         return 2
     finally:
+        # Also reaps stragglers (e.g. esbuild services) after a normal exit.
         if child is not None:
             stop_group(child)
-        for sig, handler in old_handlers.items():
-            signal.signal(sig, handler)
-        lock.close()
+
+
+def supervise(command, project=PROJECT, limits=Limits(), sample_interval=0.5):
+    return supervise_steps([Step("command", list(command))], project, limits, sample_interval)
+
+
+def lock_digest(node_version):
+    digest = hashlib.sha256((APP / "package-lock.json").read_bytes()).hexdigest()
+    return {"package_lock_sha256": digest, "node": node_version}
+
+
+def install_current(node_version):
+    try:
+        stamp = json.loads((APP / INSTALL_STAMP).read_text())
+    except (OSError, ValueError):
+        return False
+    return stamp == lock_digest(node_version)
+
+
+def heap_override(script):
+    return "max-old-space-size" in (script or "")
+
+
+def parse_dev_args(args):
+    port = os.environ.get("PORT") or "3080"
+    rest = list(args)
+    while rest:
+        arg = rest.pop(0)
+        if arg == "--port" and rest:
+            port = rest.pop(0)
+        elif arg.startswith("--port="):
+            port = arg.split("=", 1)[1]
+        else:
+            raise RuntimeError(f"dev 不支持参数 {arg}；用法：npm run dev -- --port <端口>")
+    if not port.isdigit() or not 0 < int(port) < 65536:
+        raise RuntimeError(f"无效端口：{port}")
+    return int(port)
+
+
+def check(node, version):
+    import chatgit_toolchain as toolchain
+    free = shutil.disk_usage(PROJECT).free
+    mongod = toolchain.find_mongod()
+    report = {
+        "node": node, "version": version, "app": str(APP),
+        "max_processes": Limits.processes, "max_rss_gib": Limits.rss_kib / 1024**2,
+        "min_free_gib": Limits.free_bytes / 1024**3, "node_heap_mib": HEAP_MIB,
+        "free_gib": round(free / 1024**3, 1),
+        "deps_installed": install_current(version),
+        "build_outputs_present": all((APP / item).exists() for item in BUILD_OUTPUTS),
+        "mongod": mongod[0] if mongod else None,
+        "state_dir_exists": (PROJECT / ".chatgit").is_dir(),
+    }
+    print(json.dumps(report, ensure_ascii=False), flush=True)
+    if resource_problem([], free):
+        return 2
+    if not report["deps_installed"]:
+        print("[next-safe] app 依赖未安装或与 package-lock.json 不一致：运行 .agents/setup 或 npm run setup:app。",
+              file=sys.stderr)
+        return 2
+    return 0
+
+
+def install(node, version, force=False):
+    if not force and install_current(version):
+        print("[next-safe] app 依赖已与 package-lock.json 一致，跳过 npm ci。", flush=True)
+        return 0
+    stamp = APP / INSTALL_STAMP
+    if stamp.exists():
+        stamp.unlink()
+    step = Step("npm ci", [*npm_command(node), "ci", "--no-audit", "--no-fund"], APP,
+                {"HUSKY": "0"})
+    code = supervise_steps([step], path_dir=Path(node).parent)
+    if code == 0:
+        stamp.write_text(json.dumps(lock_digest(version)))
+    return code
+
+
+def build(node, version):
+    if not install_current(version):
+        raise RuntimeError("app 依赖未安装或已过期：先运行 .agents/setup 或 npm run setup:app。")
+    npm = npm_command(node)
+    steps = []
+    for label, directory, script in BUILD_STEPS:
+        scripts = json.loads((APP / directory / "package.json").read_text()).get("scripts", {})
+        if script not in scripts:
+            raise RuntimeError(f"{directory} 缺少 {script} 脚本")
+        if heap_override(scripts[script]):
+            raise RuntimeError(f"{directory} 的 {script} 会覆盖 Node 堆上限，拒绝运行。")
+        log = APP / "client/vite-output.log" if script == "build:file" else None
+        steps.append(Step(label, [*npm, "run", script], APP / directory, log_file=log))
+    print("[next-safe] client 构建日志写入 app/client/vite-output.log", flush=True)
+    return supervise_steps(steps, path_dir=Path(node).parent)
+
+
+def dev(node, args):
+    import chatgit_toolchain as toolchain
+    port = parse_dev_args(args)
+    missing = [item for item in BUILD_OUTPUTS if not (APP / item).exists()]
+    if missing:
+        raise RuntimeError(f"缺少构建产物 {', '.join(missing)}；先运行 npm run build。")
+    mongod = toolchain.find_mongod()
+    command = [sys.executable, str(PROJECT / "scripts/chatgit_runtime.py"),
+               "--port", str(port), "--node", node, "--mongod", mongod[0] if mongod else ""]
+    return supervise_steps([Step("runtime", command, PROJECT)], path_dir=Path(node).parent)
 
 
 def main(args=None):
     args = sys.argv[1:] if args is None else args
     try:
         node, version = node_runtime()
-        cli = PROJECT / "node_modules/next/dist/bin/next"
-        if not cli.is_file():
-            raise RuntimeError("缺少 Next.js 依赖，请先运行 npm ci。")
+        if not (APP / "package.json").is_file():
+            raise RuntimeError("缺少 app/（LibreChat 源码）。")
         if args == ["--check"]:
-            free = shutil.disk_usage(PROJECT).free
-            print(json.dumps({"node": node, "version": version, "bundler": "webpack",
-                              "max_processes": 32, "max_rss_gib": 6, "min_free_gib": 10,
-                              "free_gib": round(free / 1024**3, 1)}, ensure_ascii=False))
-            return 2 if resource_problem([], free) else 0
-        if not args or args[0] not in ("dev", "build"):
-            raise RuntimeError("用法：next_safe.py dev|build [Next 参数]，或 --check")
-        if any(arg.split("=", 1)[0] in ("--turbo", "--turbopack") for arg in args[1:]):
-            raise RuntimeError("本项目已停用 Turbopack，以避免编译子进程失控。")
-        command = [node, str(cli), args[0], "--webpack", *args[1:]]
-        print(f"[next-safe] 使用 Node {version} / Webpack", flush=True)
-        return supervise(command)
-    except (OSError, RuntimeError) as error:
+            return check(node, version)
+        if args and args[0] == "install" and set(args[1:]) <= {"--force"}:
+            return install(node, version, force="--force" in args[1:])
+        if args == ["build"]:
+            print(f"[next-safe] 使用 Node {version}；按顺序构建 {len(BUILD_STEPS)} 个步骤", flush=True)
+            return build(node, version)
+        if args and args[0] == "dev":
+            print(f"[next-safe] 使用 Node {version}；Express 服务已构建的前端", flush=True)
+            return dev(node, args[1:])
+        raise RuntimeError("用法：next_safe.py --check | install [--force] | build | dev [--port N]")
+    except (OSError, RuntimeError, ValueError) as error:
         print(f"[next-safe] {error}", file=sys.stderr)
         return 2
 

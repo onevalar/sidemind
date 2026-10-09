@@ -1,7 +1,7 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+# ChatGit workspace. app/ (LibreChat) keeps its own app/.gitignore.
 
-# dependencies
-/node_modules
+# dependencies (root, app/ and legacy/)
+node_modules/
 /.pnp
 .pnp.*
 .yarn/*
@@ -10,21 +10,36 @@
 !.yarn/releases
 !.yarn/versions
 
-# testing
-/coverage
+# local runtime state: generated secrets, MongoDB data, logs, overrides
+/.chatgit/
 
-# next.js
-/.next*/
+# app runtime/build artifacts not covered by app/.gitignore
+/app/uploads/
+/app/logs/
+/app/api/logs/
+/app/client/vite-output.log
+
+# protected task supervisor
 /.next-safe.lock
 /scripts/__pycache__/
-/out/
 
-# production
-/build
+# Amp orb generated portal state
+.amp/portals/
+.amp/in/
+
+# legacy Next.js reference app
+/legacy/chatgit/.next*/
+/legacy/chatgit/out/
+/legacy/chatgit/build/
+next-env.d.ts
+
+# testing
+/coverage
 
 # misc
 .DS_Store
 *.pem
+*.tsbuildinfo
 
 # debug
 npm-debug.log*
@@ -34,10 +49,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel
-
-# typescript
-*.tsbuildinfo
-next-env.d.ts

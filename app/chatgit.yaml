@@ -1,0 +1,66 @@
+# ChatGit application config (LibreChat librechat.yaml schema).
+# Loaded through CONFIG_PATH by `npm run dev` (scripts/chatgit_runtime.py).
+# The app title comes from APP_TITLE=ChatGit in the runtime environment; the
+# yaml schema has no appTitle field. Local overrides (e.g. a verification
+# fixture) belong in an ignored file referenced from .chatgit/local.env.
+version: 1.3.17
+cache: true
+
+interface:
+  customWelcome: 'Welcome to ChatGit'
+  # Keep conversations and model/endpoint selection.
+  modelSelect: true
+  parameters: true
+  presets: true
+  # Features outside ChatGit's scope.
+  agents: false
+  prompts: false
+  memories: false
+  bookmarks: false
+  multiConvo: false
+  webSearch: false
+  runCode: false
+  fileSearch: false
+  skills: false
+  marketplace:
+    use: false
+  remoteAgents:
+    use: false
+    create: false
+    share: false
+    public: false
+  mcpServers:
+    use: false
+    create: false
+    share: false
+    public: false
+
+endpoints:
+  # Plain chats with a custom endpoint run as ephemeral agents, so the agents
+  # endpoint stays enabled server-side but only offers "Upload as Text".
+  agents:
+    disableBuilder: true
+    capabilities:
+      - context
+  custom:
+    # Real OpenAI-compatible provider. Each user enters their own API key and
+    # base URL (e.g. https://api.openai.com/v1) in the UI; stored keys are
+    # encrypted with CREDS_KEY/CREDS_IV. No mock model is configured here.
+    - name: 'OpenAI-Compatible'
+      apiKey: 'user_provided'
+      baseURL: 'user_provided'
+      models:
+        default:
+          - 'gpt-4.1-mini'
+          - 'gpt-4.1'
+        # Fetched from <baseURL>/models with the user's key once provided.
+        fetch: true
+      titleConvo: true
+      titleModel: 'current_model'
+      modelDisplayLabel: 'OpenAI-compatible'
+    # Official ChatGPT plan authorization. Disabled at the credential boundary in
+    # remote preview mode; no API-key fallback and no hardcoded available models.
+    - name: 'ChatGPT'
+      authMode: 'chatgpt'
+      titleConvo: false
+      modelDisplayLabel: 'ChatGPT'

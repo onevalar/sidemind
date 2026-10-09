@@ -1,0 +1,10 @@
+services:
+  chatgit:
+    # Protected runtime: persistent local mongod + LibreChat Express serving the
+    # built client. Requires a prior `npm run build`; it never builds itself.
+    # Remote preview is separate from the account-free device-local launcher.
+    command: CHATGIT_LOCAL_MODE=false npm run dev -- --port "$PORT"
+    health: /health
+    portal:
+      title: ChatGit
+      description: Protected orb preview. The local app opens without registration via npm run open; ChatGPT plan authorization is available only in device-local mode.

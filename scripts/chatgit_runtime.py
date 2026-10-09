@@ -1,0 +1,383 @@
+"""ChatGit local runtime: persistent mongod plus the LibreChat Express server.
+
+This process is started by `next_safe.py dev` inside the supervised process
+group. It never starts its own session, so the supervisor's process, RSS and
+cleanup protections cover mongod and Node too.
+
+Environment layering (later wins):
+  built-in defaults < .chatgit/secrets.env (generated once) < .chatgit/local.env
+  < process environment < --port < local-mode enforcement
+Secret values are never printed; only key names and file paths are reported.
+
+CHATGIT_LOCAL_MODE (default "true") selects the account-free personal app:
+  - binds 127.0.0.1 only, origin http://127.0.0.1:<port>; an explicit other HOST,
+    DOMAIN_CLIENT/DOMAIN_SERVER or any MONGO_URI is refused (managed mongod only);
+  - email/password, registration, social, passkey, LDAP sign-in are forced off;
+  - .chatgit/launch.key (0600, generated once, never printed) authorizes
+    `npm run open` (scripts/chatgit_open.py) to ask the loopback-only endpoint
+    for a single-use browser ticket; .chatgit/local-owner.json records the one
+    passwordless owner the backend creates on an empty database;
+  - .chatgit/runtime.json (no secret) records the origin while running.
+CHATGIT_LOCAL_MODE=false keeps the account-protected preview (e.g. the orb
+portal service): previous defaults, registration and external MONGO_URI allowed.
+"""
+
+import argparse
+import json
+import os
+from pathlib import Path
+import re
+import secrets
+import signal
+import socket
+import subprocess
+import sys
+import time
+
+
+PROJECT = Path(__file__).resolve().parent.parent
+DEFAULT_MONGO_PORT = 27017
+MONGO_DB = "ChatGit"
+SECRET_SPECS = {
+    # LibreChat expects hex: CREDS_KEY is 32 bytes, CREDS_IV is 16 bytes.
+    "CREDS_KEY": 32,
+    "CREDS_IV": 16,
+    "JWT_SECRET": 32,
+    "JWT_REFRESH_SECRET": 32,
+}
+KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+LOOPBACK = "127.0.0.1"
+LAUNCH_KEY_FILE = "launch.key"
+OWNER_FILE = "local-owner.json"
+RUNTIME_FILE = "runtime.json"
+# Sign-in methods that would let anything other than the launcher create a session.
+LOCAL_DISABLED_AUTH = (
+    "ALLOW_EMAIL_LOGIN",
+    "ALLOW_EMAIL_LOGIN_OVERRIDE",
+    "ALLOW_REGISTRATION",
+    "ALLOW_SOCIAL_LOGIN",
+    "ALLOW_SOCIAL_REGISTRATION",
+    "ALLOW_PASSWORD_RESET",
+    "ALLOW_PASSKEY_LOGIN",
+)
+LOCAL_REMOVED = ("LDAP_URL", "LDAP_USER_SEARCH_BASE")
+LOCAL_RUNTIME_KEYS = ("CHATGIT_LOCAL_ORIGIN", "CHATGIT_LAUNCH_KEY_FILE", "CHATGIT_LOCAL_OWNER_FILE")
+
+
+def state_dir(project=PROJECT):
+    return Path(os.environ.get("CHATGIT_STATE_DIR") or project / ".chatgit")
+
+
+def defaults(project=PROJECT):
+    return {
+        "NODE_ENV": "production",
+        "CHATGIT_LOCAL_MODE": "true",
+        "HOST": "127.0.0.1",
+        "APP_TITLE": "ChatGit",
+        "CONFIG_PATH": str(project / "app" / "chatgit.yaml"),
+        # Only the agents endpoint is built in: ephemeral chats with the custom
+        # endpoint in chatgit.yaml run through it. Ambient provider keys in the
+        # environment therefore do not silently add OpenAI/Anthropic/Google.
+        "ENDPOINTS": "agents",
+        "SEARCH": "false",
+        "NO_INDEX": "true",
+        "USE_REDIS": "false",
+        "TRUST_PROXY": "1",
+        "CONSOLE_JSON": "false",
+        "ALLOW_EMAIL_LOGIN": "true",
+        "ALLOW_REGISTRATION": "true",
+        "ALLOW_SOCIAL_LOGIN": "false",
+        "ALLOW_SOCIAL_REGISTRATION": "false",
+        "ALLOW_PASSWORD_RESET": "false",
+        "ALLOW_UNVERIFIED_EMAIL_LOGIN": "true",
+    }
+
+
+def parse_env_file(path):
+    """Minimal KEY=VALUE parser: comments, `export`, matching quotes; no expansion."""
+    values = {}
+    path = Path(path)
+    if not path.is_file():
+        return values
+    for number, raw in enumerate(path.read_text().splitlines(), 1):
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        key, sep, value = line.partition("=")
+        key = key.strip()
+        if not sep or not KEY_RE.match(key):
+            raise ValueError(f"{path}:{number} 不是 KEY=VALUE 格式")
+        value = value.strip()
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in "'\"":
+            value = value[1:-1]
+        values[key] = value
+    return values
+
+
+def ensure_secrets(directory):
+    """Create missing local secrets once; never rotate existing values."""
+    directory = Path(directory)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = directory / "secrets.env"
+    existing = parse_env_file(path)
+    missing = [key for key in SECRET_SPECS if not existing.get(key)]
+    if missing:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+        fd = os.open(path, flags, 0o600)
+        with os.fdopen(fd, "a") as handle:
+            if not existing:
+                handle.write("# Generated by scripts/chatgit_runtime.py. Private; never commit.\n"
+                             "# Rotating CREDS_KEY/CREDS_IV makes stored user API keys unreadable.\n")
+            for key in missing:
+                handle.write(f"{key}={secrets.token_hex(SECRET_SPECS[key])}\n")
+                existing[key] = "generated"
+        print(f"[runtime] 已生成本地密钥：{', '.join(missing)}（{path}）", flush=True)
+    os.chmod(path, 0o600)
+    return path, missing
+
+
+def ensure_launch_key(directory):
+    """Create the persistent launcher key once (owner-only); never print or rotate it."""
+    directory = Path(directory)
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = directory / LAUNCH_KEY_FILE
+    created = False
+    try:
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        if not path.is_file() or path.is_symlink():
+            raise ValueError(f"{path} 不是普通文件")
+    else:
+        with os.fdopen(fd, "w") as handle:
+            handle.write(secrets.token_urlsafe(32) + "\n")
+        created = True
+        print(f"[runtime] 已生成本地启动密钥（{path}）", flush=True)
+    os.chmod(path, 0o600)
+    if len(path.read_text().strip()) < 32:
+        raise ValueError(f"{path} 内容无效；删除它后重新启动会生成新的启动密钥")
+    return path, created
+
+
+def local_mode(env):
+    value = env.get("CHATGIT_LOCAL_MODE", "true").strip().lower()
+    if value not in ("true", "false"):
+        raise ValueError("CHATGIT_LOCAL_MODE 只能是 true 或 false")
+    return value == "true"
+
+
+def local_origin(port):
+    return f"http://{LOOPBACK}:{port}"
+
+
+def apply_local_mode(env, explicit, port, directory):
+    """Enforce the account-free local boundary; refuse settings that would widen it."""
+    if port == 80:
+        raise ValueError("本地模式需要显式非 80 端口")
+    if explicit.get("MONGO_URI"):
+        raise ValueError("本地模式只使用 .chatgit/ 中受管理的 MongoDB，不接受 MONGO_URI；"
+                         "要用外部数据库请设置 CHATGIT_LOCAL_MODE=false")
+    if (explicit.get("HOST") or LOOPBACK) != LOOPBACK:
+        raise ValueError("本地模式只监听 127.0.0.1，不接受其他 HOST")
+    origin = local_origin(port)
+    for key in ("DOMAIN_CLIENT", "DOMAIN_SERVER"):
+        if explicit.get(key) and explicit[key].rstrip("/") != origin:
+            raise ValueError(f"本地模式的 {key} 固定为 {origin}")
+        env[key] = origin
+    env["HOST"] = LOOPBACK
+    env["CHATGIT_LOCAL_MODE"] = "true"
+    for key in LOCAL_DISABLED_AUTH:
+        env[key] = "false"
+    # Empty rather than unset: app/.env (dotenv) only fills variables that are unset.
+    for key in LOCAL_REMOVED:
+        env[key] = ""
+    env["CHATGIT_LOCAL_ORIGIN"] = origin
+    env["CHATGIT_LAUNCH_KEY_FILE"] = str(Path(directory).resolve() / LAUNCH_KEY_FILE)
+    env["CHATGIT_LOCAL_OWNER_FILE"] = str(Path(directory).resolve() / OWNER_FILE)
+
+
+def write_runtime_metadata(directory, origin):
+    """Record where the running local app listens. Contains no secret."""
+    path = Path(directory) / RUNTIME_FILE
+    temp = path.with_name(f".{RUNTIME_FILE}.{os.getpid()}.tmp")
+    body = {"version": 1, "localMode": True, "origin": origin, "pid": os.getpid(),
+            "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+    fd = os.open(temp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as handle:
+        json.dump(body, handle)
+    os.replace(temp, path)
+    return path
+
+
+def remove_runtime_metadata(directory):
+    path = Path(directory) / RUNTIME_FILE
+    try:
+        if json.loads(path.read_text()).get("pid") == os.getpid():
+            path.unlink()
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
+def validate_secrets(env):
+    for key, size in SECRET_SPECS.items():
+        value = env.get(key, "")
+        if not value:
+            raise ValueError(f"缺少 {key}")
+        if key in ("CREDS_KEY", "CREDS_IV") and not re.fullmatch(f"[0-9a-fA-F]{{{size * 2}}}", value):
+            raise ValueError(f"{key} 必须是 {size * 2} 位十六进制字符串")
+
+
+def compose_env(base_env, port, project=PROJECT, directory=None):
+    """Return (env, managed_mongo_port or None). Does not create files."""
+    directory = Path(directory) if directory else state_dir(project)
+    env = defaults(project)
+    env.update(parse_env_file(directory / "secrets.env"))
+    explicit = dict(parse_env_file(directory / "local.env"))
+    explicit.update(base_env)
+    env.update(explicit)
+    env["PORT"] = str(port)
+    if local_mode(env):
+        apply_local_mode(env, explicit, port, directory)
+    else:
+        env["CHATGIT_LOCAL_MODE"] = "false"
+        for key in LOCAL_RUNTIME_KEYS:
+            env.pop(key, None)
+        for key in ("DOMAIN_CLIENT", "DOMAIN_SERVER"):
+            if not explicit.get(key):
+                env[key] = f"http://localhost:{port}"
+    config = Path(env["CONFIG_PATH"])
+    if not config.is_absolute():
+        config = (project / config).resolve()
+    if not config.is_file():
+        raise ValueError(f"找不到应用配置 CONFIG_PATH={config}")
+    env["CONFIG_PATH"] = str(config)
+    managed_port = None
+    if not explicit.get("MONGO_URI"):
+        managed_port = int(explicit.get("CHATGIT_MONGO_PORT") or DEFAULT_MONGO_PORT)
+        env["MONGO_URI"] = f"mongodb://127.0.0.1:{managed_port}/{MONGO_DB}"
+    validate_secrets(env)
+    return env, managed_port
+
+
+def port_in_use(port, host="127.0.0.1"):
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.settimeout(0.5)
+        return probe.connect_ex((host, port)) == 0
+
+
+def wait_for_port(port, process, timeout=60.0, stop=lambda: False):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if stop() or process.poll() is not None:
+            return False
+        if port_in_use(port):
+            return True
+        time.sleep(0.2)
+    return False
+
+
+def terminate_all(processes, grace=2.5):
+    live = [p for p in processes if p is not None and p.poll() is None]
+    for process in live:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+    deadline = time.monotonic() + grace
+    for process in live:
+        try:
+            process.wait(timeout=max(0.0, deadline - time.monotonic()))
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout=3)
+
+
+def run(port, node, mongod, project=PROJECT):
+    directory = state_dir(project)
+    stop = []
+    for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
+        signal.signal(sig, lambda number, _frame: stop.append(number))
+    ensure_secrets(directory)
+    env, managed_port = compose_env(dict(os.environ), port, project, directory)
+    is_local = env["CHATGIT_LOCAL_MODE"] == "true"
+    if is_local:
+        ensure_launch_key(directory)
+    if (project / "app" / ".env").exists():
+        print("[runtime] 注意：app/.env 存在，LibreChat 会用它补充未设置的变量。", flush=True)
+    if port_in_use(port):
+        print(f"[runtime] 端口 {port} 已被占用，拒绝启动。", file=sys.stderr)
+        return 2
+    print(f"[runtime] 配置：{env['CONFIG_PATH']}", flush=True)
+    database = None
+    backend = None
+    try:
+        if managed_port is not None:
+            if not mongod:
+                print("[runtime] 找不到 mongod；先运行 .agents/setup，或设置 CHATGIT_MONGOD / MONGO_URI。",
+                      file=sys.stderr)
+                return 2
+            if port_in_use(managed_port):
+                print(f"[runtime] MongoDB 端口 {managed_port} 已被占用；设置 CHATGIT_MONGO_PORT 或 MONGO_URI。",
+                      file=sys.stderr)
+                return 2
+            data = directory / "mongodb"
+            logs = directory / "logs"
+            data.mkdir(mode=0o700, parents=True, exist_ok=True)
+            logs.mkdir(mode=0o700, parents=True, exist_ok=True)
+            database = subprocess.Popen([
+                mongod, "--dbpath", str(data), "--port", str(managed_port),
+                "--bind_ip", "127.0.0.1", "--wiredTigerCacheSizeGB", "0.25",
+                "--setParameter", "diagnosticDataCollectionEnabled=false",
+                "--logpath", str(logs / "mongod.log"), "--logappend",
+            ], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL)
+            if not wait_for_port(managed_port, database, stop=lambda: bool(stop)):
+                if stop:
+                    return 128 + stop[0]
+                print(f"[runtime] mongod 未就绪，查看 {logs / 'mongod.log'}", file=sys.stderr)
+                return 2
+            print(f"[runtime] MongoDB 就绪：127.0.0.1:{managed_port}，数据目录 {data}", flush=True)
+        else:
+            print("[runtime] 使用外部 MONGO_URI（不启动本地 mongod）", flush=True)
+        backend = subprocess.Popen([node, "api/server/index.js"], cwd=project / "app", env=env,
+                                   stdin=subprocess.DEVNULL)
+        if is_local:
+            write_runtime_metadata(directory, env["CHATGIT_LOCAL_ORIGIN"])
+            print(f"[runtime] 本地免账号模式：仅监听 {env['CHATGIT_LOCAL_ORIGIN']}；"
+                  "在本机另开终端运行 npm run open 打开 ChatGit（无需注册或密码）。", flush=True)
+        else:
+            print(f"[runtime] ChatGit 服务：http://localhost:{port}（{env['HOST']}:{port}，账号模式）",
+                  flush=True)
+        while True:
+            if stop:
+                return 128 + stop[0]
+            code = backend.poll()
+            if code is not None:
+                print(f"[runtime] 应用进程退出，代码 {code}", file=sys.stderr)
+                return code if code > 0 else (2 if code else 0)
+            if database is not None and database.poll() is not None:
+                print("[runtime] mongod 意外退出，停止应用。", file=sys.stderr)
+                return 2
+            time.sleep(0.2)
+    finally:
+        if is_local:
+            remove_runtime_metadata(directory)
+        terminate_all([backend, database])
+
+
+def main(args=None):
+    parser = argparse.ArgumentParser(description="ChatGit runtime (use npm run dev)")
+    parser.add_argument("--port", type=int, required=True)
+    parser.add_argument("--node", required=True)
+    parser.add_argument("--mongod", default="")
+    parser.add_argument("--project", default=str(PROJECT))
+    options = parser.parse_args(args)
+    try:
+        return run(options.port, options.node, options.mongod or None, Path(options.project))
+    except (OSError, ValueError) as error:
+        print(f"[runtime] {error}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())
