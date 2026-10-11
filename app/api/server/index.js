@@ -31,6 +31,8 @@ const {
   GenerationJobManager,
   QUERY_DEVTOOLS_HEADER,
   createStreamServices,
+  resolveLocalAccessConfig,
+  createPortalAccessMiddleware,
   agentStartupIngressMiddleware,
   agentStartupTelemetryMiddleware,
   initializeFileStorage,
@@ -359,6 +361,7 @@ const startServer = async () => {
   app.use(mongoSanitize());
   app.use(cors());
   app.use(cookieParser());
+  app.use(createPortalAccessMiddleware(resolveLocalAccessConfig(process.env)));
 
   if (!isEnabled(DISABLE_COMPRESSION)) {
     app.use(compression());

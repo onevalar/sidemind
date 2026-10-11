@@ -14,6 +14,7 @@ import {
 import { sanitizeUserForAuthResponse } from '~/auth/localRefresh';
 import { createLaunchTicketStore } from './tickets';
 import { createLocalOwnerBinding } from './owner';
+import { isOwnerPortalRequest } from './portal';
 
 export interface LocalAccessRouterDeps<U extends LocalOwnerRecord, B = unknown>
   extends Omit<LocalOwnerDeps<U, B>, 'ownerFile'> {
@@ -151,6 +152,29 @@ export function createLocalAccessRouter<U extends LocalOwnerRecord, B = unknown>
     logger.warn(`[localAccess] Refused: ${code}`);
     refuse(res, 409, OWNER_CODES[code]);
   };
+
+  router.get('/portal', async (req, res) => {
+    if (!config.portal) {
+      return refuse(res, 404, LocalAccessCodes.DISABLED);
+    }
+    if (!isOwnerPortalRequest(req, config)) {
+      return refuse(res, 403, 'PORTAL_ACCESS_DENIED');
+    }
+    try {
+      const resolved = await owner.ensureOwner();
+      if (!resolved.ok) {
+        return ownerRefusal(res, resolved.error.code);
+      }
+      await deps.setAuthTokens(resolved.value.userId, res, null, req);
+      noStore(res);
+      return res.redirect('/c/new');
+    } catch (error) {
+      logger.error('[localAccess] Portal entry failed', {
+        name: error instanceof Error ? error.name : typeof error,
+      });
+      return refuse(res, 500, LocalAccessCodes.FAILED);
+    }
+  });
 
   router.post('/launch', async (req, res) => {
     if (!isFixedLoopbackRequest(req, host) || hasBrowserMetadata(req)) {

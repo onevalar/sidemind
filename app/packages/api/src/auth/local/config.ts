@@ -20,6 +20,8 @@ export type LocalAccessConfig =
       launchKeyFile: string;
       /** File recording the id of the single local owner. */
       ownerFile: string;
+      /** Opt-in orb preview; the Amp proxy authenticates this exact workspace owner. */
+      portal?: { origin: string; host: string; userId: string; frameOrigin: string };
     };
 
 type LocalAccessEnv = Partial<Record<string, string | undefined>>;
@@ -79,5 +81,49 @@ export function resolveLocalAccessConfig(env: LocalAccessEnv): LocalAccessConfig
       reason: 'CHATGIT_LAUNCH_KEY_FILE and CHATGIT_LOCAL_OWNER_FILE must be absolute paths',
     };
   }
-  return { enabled: true, ok: true, origin: url.origin, host: url.host, launchKeyFile, ownerFile };
+  let portal: Extract<LocalAccessConfig, { ok: true }>['portal'];
+  if (env.CHATGIT_PORTAL_MODE === 'true') {
+    try {
+      const publicUrl = new URL(env.PUBLIC_URL ?? '');
+      const ampUrl = new URL(env.AMP_URL ?? '');
+      const userId = env.AMP_USER_ID ?? '';
+      if (
+        env.AMP_ORB !== '1' ||
+        !env.AMP_THREAD_ID ||
+        !/^user_[a-zA-Z0-9]+$/.test(userId) ||
+        ampUrl.protocol !== 'https:' ||
+        ampUrl.username ||
+        ampUrl.password ||
+        publicUrl.protocol !== 'https:' ||
+        publicUrl.username ||
+        publicUrl.password ||
+        publicUrl.pathname !== '/' ||
+        publicUrl.search ||
+        publicUrl.hash
+      ) {
+        throw new Error('Invalid portal configuration');
+      }
+      portal = {
+        origin: publicUrl.origin,
+        host: publicUrl.host,
+        userId,
+        frameOrigin: ampUrl.origin,
+      };
+    } catch {
+      return {
+        enabled: true,
+        ok: false,
+        reason: 'Portal preview requires an Amp orb, its owner identity and an HTTPS PUBLIC_URL',
+      };
+    }
+  }
+  return {
+    enabled: true,
+    ok: true,
+    origin: url.origin,
+    host: url.host,
+    launchKeyFile,
+    ownerFile,
+    ...(portal ? { portal } : {}),
+  };
 }

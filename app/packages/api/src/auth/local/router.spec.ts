@@ -12,6 +12,7 @@ import type { NewUserData, ISession } from '@librechat/data-schemas';
 import type { Request, Response } from 'express';
 import type { LocalAccessConfig } from './config';
 import { createLocalRefreshHandler } from '~/auth/localRefresh';
+import { createPortalAccessMiddleware } from './portal';
 import { createLaunchTicketStore } from './tickets';
 import { resolveLocalAccessConfig } from './config';
 import { createLocalAccessRouter } from './router';
@@ -20,6 +21,13 @@ const ORIGIN = 'http://127.0.0.1:3080';
 const HOST = '127.0.0.1:3080';
 const LAUNCH_KEY = 'k'.repeat(43);
 const REFRESH_PROJECTION = '-password -__v -totpSecret -backupCodes -federatedTokens';
+const PORTAL_ORIGIN = 'https://chatgit-preview.onamp.dev';
+const PORTAL_HEADERS = {
+  Host: 'chatgit-preview.onamp.dev',
+  'X-Forwarded-Proto': 'https',
+  'X-Amp-Authenticated': 'amp-user=yes, workspace-member=no, collaborator=yes',
+  'X-Amp-User-ID': 'user_previewOwner',
+};
 
 let mongoServer: MongoMemoryServer;
 let methods: ReturnType<typeof createMethods>;
@@ -109,6 +117,7 @@ function buildApp(overrides: { config?: LocalAccessConfig; peer?: string } = {})
       next();
     });
   }
+  app.use(createPortalAccessMiddleware(overrides.config ?? config));
   const tickets = createLaunchTicketStore({ now: () => now });
   app.use(
     '/api/local',
@@ -161,6 +170,115 @@ const refreshCookie = (res: request.Response): string | undefined => {
   const header = res.headers['set-cookie'] as unknown as string[] | undefined;
   return header?.find((cookie) => cookie.startsWith('refreshToken='))?.split(';')[0];
 };
+
+describe('orb portal access', () => {
+  const portalConfig = (): LocalAccessConfig => ({
+    ...config,
+    portal: {
+      origin: PORTAL_ORIGIN,
+      host: 'chatgit-preview.onamp.dev',
+      userId: 'user_previewOwner',
+      frameOrigin: 'https://ampcode.com',
+    },
+  });
+
+  it('enters the same passwordless workspace and refreshes with iframe-safe cookies', async () => {
+    const app = buildApp({ config: portalConfig() });
+    await issueTicket(app);
+    const ownerId = JSON.parse(await fs.readFile(config.ownerFile, 'utf8')).userId;
+    const entered = await request(app).get('/api/local/portal').set(PORTAL_HEADERS);
+    expect(entered.status).toBe(302);
+    expect(entered.headers.location).toBe('/c/new');
+    expect(entered.headers['cache-control']).toBe('no-store');
+    expect(entered.headers['content-security-policy']).toBe(
+      "frame-ancestors 'self' https://ampcode.com",
+    );
+    const cookie = refreshCookie(entered)!;
+    const refreshed = await request(app)
+      .post('/api/auth/refresh')
+      .set(PORTAL_HEADERS)
+      .set('Origin', PORTAL_ORIGIN)
+      .set('Cookie', cookie);
+    expect(refreshed.status).toBe(200);
+    expect(String(refreshed.body.user._id)).toBe(ownerId);
+    for (const response of [entered, refreshed]) {
+      const header = response.headers['set-cookie'][0];
+      for (const attribute of ['HttpOnly', 'Secure', 'SameSite=None', 'Partitioned']) {
+        expect(header).toContain(attribute);
+      }
+    }
+    expect(await methods.countUsers()).toBe(1);
+  });
+
+  it.each([
+    ['missing Amp authentication', { 'X-Amp-Authenticated': '' }],
+    ['an unauthenticated visitor', { 'X-Amp-Authenticated': 'amp-user=no, collaborator=no' }],
+    ['a viewer, not a collaborator', { 'X-Amp-Authenticated': 'amp-user=yes, collaborator=no' }],
+    ['another collaborator', { 'X-Amp-User-ID': 'user_someoneElse' }],
+    ['a missing identity', { 'X-Amp-User-ID': '' }],
+    ['another portal Host', { Host: 'other-preview.onamp.dev' }],
+    ['plain HTTP', { 'X-Forwarded-Proto': 'http' }],
+    ['a foreign browser Origin', { Origin: 'https://evil.example' }],
+  ])('refuses %s without creating a user or session', async (_label, headers) => {
+    const app = buildApp({ config: portalConfig() });
+    const res = await request(app).get('/api/local/portal').set(PORTAL_HEADERS).set(headers);
+    expect(res.status).toBe(403);
+    expect(res.body).toEqual({ code: 'PORTAL_ACCESS_DENIED' });
+    expect(res.headers['set-cookie']).toBeUndefined();
+    expect(await methods.countUsers()).toBe(0);
+    expect(await mongoose.models.Session.countDocuments()).toBe(0);
+  });
+
+  it('refuses forged portal identity from a non-loopback peer', async () => {
+    const app = buildApp({ config: portalConfig(), peer: '203.0.113.18' });
+    const res = await request(app).get('/api/local/portal').set(PORTAL_HEADERS);
+    expect(res.status).toBe(403);
+    expect(res.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('checks portal identity even when the request already carries a valid session', async () => {
+    const app = buildApp({ config: portalConfig() });
+    const entered = await request(app).get('/api/local/portal').set(PORTAL_HEADERS);
+    const denied = await request(app)
+      .post('/api/auth/refresh')
+      .set(PORTAL_HEADERS)
+      .set('X-Amp-User-ID', 'user_someoneElse')
+      .set('Cookie', refreshCookie(entered)!);
+    expect(denied.status).toBe(403);
+    expect(denied.headers['set-cookie']).toBeUndefined();
+  });
+
+  it('keeps launcher endpoints private and leaves the portal entry off outside preview', async () => {
+    const app = buildApp({ config: portalConfig() });
+    const launched = await launch(app).set(PORTAL_HEADERS);
+    expect(launched.status).toBe(403);
+    expect(launched.body).toEqual({ code: 'LOCAL_ACCESS_DENIED' });
+    const ordinary = await request(buildApp()).get('/api/local/portal').set(PORTAL_HEADERS);
+    expect(ordinary.status).toBe(404);
+  });
+
+  it('deletes portal cookies in the same partition without changing local cookies', async () => {
+    const app = buildApp({ config: portalConfig() });
+    app.get('/close', (_req, res) => {
+      res.clearCookie('refreshToken');
+      res.clearCookie('token_provider');
+      res.sendStatus(204);
+    });
+    const portal = await request(app).get('/close').set(PORTAL_HEADERS);
+    expect(portal.status).toBe(204);
+    for (const header of portal.headers['set-cookie']) {
+      expect(header).toContain('Partitioned');
+      expect(header).toContain('Secure');
+      expect(header).toContain('SameSite=None');
+      expect(header).toContain('Expires=Thu, 01 Jan 1970');
+    }
+    const local = await request(app).get('/close').set('Host', HOST);
+    for (const header of local.headers['set-cookie']) {
+      expect(header).not.toContain('Partitioned');
+      expect(header).not.toContain('SameSite=None');
+    }
+  });
+});
 
 describe('local access: launcher to session', () => {
   it('creates one passwordless USER owner, persists its id, and issues a refreshable session', async () => {
@@ -487,6 +605,48 @@ describe('resolveLocalAccessConfig', () => {
       host: HOST,
       launchKeyFile: '/state/launch.key',
       ownerFile: '/state/local-owner.json',
+    });
+  });
+
+  const portalEnv = {
+    ...valid,
+    CHATGIT_PORTAL_MODE: 'true',
+    AMP_ORB: '1',
+    AMP_THREAD_ID: 'T-preview',
+    AMP_USER_ID: 'user_previewOwner',
+    AMP_URL: 'https://ampcode.com',
+    PUBLIC_URL: PORTAL_ORIGIN,
+  };
+
+  it('accepts an explicitly enabled HTTPS orb portal without changing the local origin', () => {
+    expect(resolveLocalAccessConfig(portalEnv)).toMatchObject({
+      enabled: true,
+      ok: true,
+      origin: ORIGIN,
+      host: HOST,
+      portal: {
+        origin: PORTAL_ORIGIN,
+        host: 'chatgit-preview.onamp.dev',
+        userId: 'user_previewOwner',
+        frameOrigin: 'https://ampcode.com',
+      },
+    });
+  });
+
+  it.each([
+    { AMP_ORB: '' },
+    { AMP_THREAD_ID: '' },
+    { AMP_USER_ID: '' },
+    { AMP_URL: '' },
+    { AMP_URL: 'http://ampcode.com' },
+    { PUBLIC_URL: '' },
+    { PUBLIC_URL: 'http://chatgit-preview.onamp.dev' },
+    { PUBLIC_URL: 'https://user:password@chatgit-preview.onamp.dev' },
+    { PUBLIC_URL: 'https://chatgit-preview.onamp.dev/other' },
+  ])('refuses an incomplete or unsafe portal configuration %o', (override) => {
+    expect(resolveLocalAccessConfig({ ...portalEnv, ...override })).toMatchObject({
+      enabled: true,
+      ok: false,
     });
   });
 
