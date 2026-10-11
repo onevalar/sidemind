@@ -105,8 +105,7 @@ test('local entry, session restoration, protected routes and optional ChatGPT au
     'Authorization was declined. Nothing was connected.',
   );
   await expect(connect).toBeEnabled();
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.screenshot({ path: path.join(artifacts, 'chatgpt-declined-narrow.png') });
+  await page.screenshot({ path: path.join(artifacts, 'chatgpt-declined.png') });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );

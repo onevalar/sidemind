@@ -1,0 +1,22 @@
+/* React Flow owns these controls, so bridge its CSS API to the existing theme.
+   Tailwind's inline --color-* tokens are not runtime CSS variables. */
+.chatgit-canvas {
+  --xy-background-color: rgb(var(--surface-canvas));
+  --xy-background-pattern-dots-color: rgb(var(--border-heavy) / var(--border-heavy-alpha, 0.2));
+  --xy-controls-button-background-color: rgb(var(--surface-primary));
+  --xy-controls-button-background-color-hover: rgb(var(--surface-hover));
+  --xy-controls-button-color: rgb(var(--text-primary));
+  --xy-controls-button-color-hover: rgb(var(--text-primary));
+  --xy-controls-button-border-color: rgb(var(--border-light) / var(--border-light-alpha, 0.2));
+  --xy-attribution-background-color: rgb(var(--surface-primary));
+}
+
+/* React Flow's unlayered CSS overrides Tailwind's layered sizing utilities. */
+.chatgit-canvas .react-flow__controls-button {
+  width: 2.75rem;
+  height: 2.75rem;
+}
+
+.chatgit-canvas .react-flow__attribution a {
+  color: rgb(var(--text-secondary));
+}

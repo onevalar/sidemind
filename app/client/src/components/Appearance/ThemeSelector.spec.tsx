@@ -1,7 +1,7 @@
 // ThemeSelector.spec.tsx
 import 'test/matchMedia.mock';
 import React from 'react';
-import { fireEvent, render, waitFor } from '@testing-library/react';
+import { render, waitFor } from '@testing-library/react';
 import { clickDropdown, flushDropdownEffects } from 'test/dropdown';
 import '@testing-library/jest-dom/extend-expect';
 import { RecoilRoot } from 'recoil';
@@ -59,29 +59,30 @@ describe('ThemeSelector', () => {
     });
   });
 
-  it('offers both high contrast options and reports the selected one', async () => {
+  it('offers only system, dark and light', async () => {
     global.ResizeObserver = class MockedResizeObserver {
       observe = jest.fn();
       unobserve = jest.fn();
       disconnect = jest.fn();
     };
-    const { getByText, getByTestId } = render(
+    const { getAllByRole, getByTestId, queryByText } = render(
       <RecoilRoot>
         <ThemeSelector theme="system" onChange={mockOnChange} />
       </RecoilRoot>,
     );
 
-    fireEvent.click(getByTestId('theme-selector'));
-
-    expect(getByText('High contrast light')).toBeInTheDocument();
-    fireEvent.click(getByText('High contrast dark'));
-
-    await waitFor(() => {
-      expect(mockOnChange).toHaveBeenCalledWith('high-contrast-dark');
-    });
+    await clickDropdown(getByTestId('theme-selector'));
+    expect(getAllByRole('option').map((option) => option.textContent)).toEqual([
+      'System',
+      'Dark',
+      'Light',
+    ]);
+    expect(queryByText('High contrast light')).not.toBeInTheDocument();
+    expect(queryByText('High contrast dark')).not.toBeInTheDocument();
+    await flushDropdownEffects();
   });
 
-  it('shows the active high contrast mode as the current value', () => {
+  it('shows the active light mode as the current value', async () => {
     global.ResizeObserver = class MockedResizeObserver {
       observe = jest.fn();
       unobserve = jest.fn();
@@ -89,10 +90,11 @@ describe('ThemeSelector', () => {
     };
     const { getByRole } = render(
       <RecoilRoot>
-        <ThemeSelector theme="high-contrast-light" onChange={mockOnChange} />
+        <ThemeSelector theme="light" onChange={mockOnChange} />
       </RecoilRoot>,
     );
 
-    expect(getByRole('combobox')).toHaveTextContent('High contrast light');
+    expect(getByRole('combobox')).toHaveTextContent('Light');
+    await flushDropdownEffects();
   });
 });

@@ -3437,6 +3437,10 @@
   "com_canvas_text_only": "Selected text branches include their earlier history. Shared text is sent once; unselected sibling branches are excluded. File and tool branches are not supported yet.",
   "com_canvas_brand": "ChatGit",
   "com_canvas_welcome_hint": "Start a conversation, then open the message canvas to explore branches and bring their context together.",
+  "com_canvas_reading_now": "Reading",
+  "com_canvas_select_hint": "Select messages on the canvas to use as context, or choose “Ask from this node” while reading.",
+  "com_canvas_keyboard_hint": "Enter for a new line · Ctrl / ⌘ + Enter to send",
+  "com_canvas_context_help": "How context works",
   "com_auth_local_title": "Open ChatGit on this device",
   "com_auth_local_description": "No ChatGit account or password is needed. Open your private local workspace from the ChatGit launcher.",
   "com_auth_local_hint": "Run this command in the ChatGit folder on the device running the app. It opens a private session without exposing your conversations to other websites.",
@@ -3462,5 +3466,14 @@
   "com_ui_chatgpt_error_usage_limit": "ChatGit has reached your ChatGPT plan usage limit. Check usage or wait for the limit to reset; API billing will not be used automatically.",
   "com_ui_chatgpt_error_unavailable": "ChatGPT plan usage is temporarily unavailable. Try again later.",
   "com_ui_chatgpt_error_not_eligible": "ChatGPT plan usage is not available for this account or workspace.",
-  "com_ui_chatgpt_error_generic": "Could not complete the ChatGPT connection. Try again."
+  "com_ui_chatgpt_error_generic": "Could not complete the ChatGPT connection. Try again.",
+  "com_endpoint_config_api_url": "API URL",
+  "com_endpoint_config_expiry_30m": "in 30 minutes",
+  "com_endpoint_config_expiry_2h": "in 2 hours",
+  "com_endpoint_config_expiry_12h": "in 12 hours",
+  "com_endpoint_config_expiry_1d": "in 1 day",
+  "com_endpoint_config_expiry_7d": "in 7 days",
+  "com_endpoint_config_expiry_30d": "in 30 days",
+  "com_canvas_controls": "Canvas controls",
+  "com_canvas_fit_view": "Fit all messages in view"
 }

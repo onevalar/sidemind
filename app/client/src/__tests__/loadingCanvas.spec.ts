@@ -40,7 +40,7 @@ const FORCED_COLORS = '(forced-colors: active)';
 
 describe('loading canvas', () => {
   it.each([
-    ['high-contrast-dark', [], '#000000'],
+    ['high-contrast-dark', [], '#0d0d0d'],
     ['high-contrast-light', [], '#ffffff'],
     ['dark', [], '#0d0d0d'],
     ['light', [], '#ffffff'],
@@ -48,29 +48,23 @@ describe('loading canvas', () => {
     expect(canvasFor(stored, matching as string[])).toBe(expected);
   });
 
-  /** The mismatch this guards: `system` plus `prefers-contrast: more` resolves to
-   *  the pure-black palette, so the standard-dark canvas would flash behind it
-   *  for the whole application load. */
-  it('follows both OS preferences under system', () => {
-    expect(canvasFor('system', [DARK_SCHEME, MORE_CONTRAST])).toBe('#000000');
+  it('follows only the OS color scheme under system', () => {
+    expect(canvasFor('system', [DARK_SCHEME, MORE_CONTRAST])).toBe('#0d0d0d');
     expect(canvasFor('system', [DARK_SCHEME])).toBe('#0d0d0d');
     expect(canvasFor('system', [MORE_CONTRAST])).toBe('#ffffff');
     expect(canvasFor('system', [])).toBe('#ffffff');
   });
 
-  /** A Windows Contrast Theme reports `forced-colors: active` with
-   *  `prefers-contrast: custom`, never `more`, so keying the canvas off `more`
-   *  alone flashes #0d0d0d on the platform the theme README names. */
-  it('treats a forced-colors palette as a contrast request', () => {
-    expect(canvasFor('system', [DARK_SCHEME, CUSTOM_CONTRAST, FORCED_COLORS])).toBe('#000000');
-    expect(canvasFor('system', [DARK_SCHEME, FORCED_COLORS])).toBe('#000000');
+  it('leaves forced colors to the browser instead of selecting an app palette', () => {
+    expect(canvasFor('system', [DARK_SCHEME, CUSTOM_CONTRAST, FORCED_COLORS])).toBe('#0d0d0d');
+    expect(canvasFor('system', [DARK_SCHEME, FORCED_COLORS])).toBe('#0d0d0d');
   });
 
   /** An unset or unrecognised value is what `getInitialTheme` resolves as
    *  `system`, so the canvas has to resolve it the same way. */
   it('treats an unset or unknown mode as system', () => {
     expect(canvasFor(null, [DARK_SCHEME])).toBe('#0d0d0d');
-    expect(canvasFor(null, [DARK_SCHEME, MORE_CONTRAST])).toBe('#000000');
-    expect(canvasFor('sepia', [DARK_SCHEME, MORE_CONTRAST])).toBe('#000000');
+    expect(canvasFor(null, [DARK_SCHEME, MORE_CONTRAST])).toBe('#0d0d0d');
+    expect(canvasFor('sepia', [DARK_SCHEME, MORE_CONTRAST])).toBe('#0d0d0d');
   });
 });

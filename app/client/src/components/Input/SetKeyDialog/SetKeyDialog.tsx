@@ -51,14 +51,14 @@ const formSet: Set<string> = new Set([
 ]);
 
 const EXPIRY = {
-  THIRTY_MINUTES: { label: 'in 30 minutes', value: 30 * 60 * 1000 },
-  TWO_HOURS: { label: 'in 2 hours', value: 2 * 60 * 60 * 1000 },
-  TWELVE_HOURS: { label: 'in 12 hours', value: 12 * 60 * 60 * 1000 },
-  ONE_DAY: { label: 'in 1 day', value: 24 * 60 * 60 * 1000 },
-  ONE_WEEK: { label: 'in 7 days', value: 7 * 24 * 60 * 60 * 1000 },
-  ONE_MONTH: { label: 'in 30 days', value: 30 * 24 * 60 * 60 * 1000 },
-  NEVER: { label: 'never', value: 0 },
-};
+  THIRTY_MINUTES: { label: 'com_endpoint_config_expiry_30m', value: 30 * 60 * 1000 },
+  TWO_HOURS: { label: 'com_endpoint_config_expiry_2h', value: 2 * 60 * 60 * 1000 },
+  TWELVE_HOURS: { label: 'com_endpoint_config_expiry_12h', value: 12 * 60 * 60 * 1000 },
+  ONE_DAY: { label: 'com_endpoint_config_expiry_1d', value: 24 * 60 * 60 * 1000 },
+  ONE_WEEK: { label: 'com_endpoint_config_expiry_7d', value: 7 * 24 * 60 * 60 * 1000 },
+  ONE_MONTH: { label: 'com_endpoint_config_expiry_30d', value: 30 * 24 * 60 * 60 * 1000 },
+  NEVER: { label: 'com_ui_api_key_expire_never', value: 0 },
+} as const;
 
 const RevokeKeysButton = ({
   endpoint,
@@ -187,7 +187,7 @@ const SetKeyDialog = ({
   });
 
   const [userKey, setUserKey] = useState('');
-  const [expiresAtLabel, setExpiresAtLabel] = useState(EXPIRY.TWELVE_HOURS.label);
+  const [expiresAtDuration, setExpiresAtDuration] = useState(String(EXPIRY.TWELVE_HOURS.value));
   const { getExpiry, saveUserKey } = useUserKey(endpoint);
   const { showToast } = useToastContext();
   const localize = useLocalize();
@@ -195,12 +195,10 @@ const SetKeyDialog = ({
   const expirationOptions = Object.values(EXPIRY);
   const configuredEndpoint = endpointType ?? endpoint;
 
-  const handleExpirationChange = (label: string) => {
-    setExpiresAtLabel(label);
-  };
-
   const submit = () => {
-    const selectedOption = expirationOptions.find((option) => option.label === expiresAtLabel);
+    const selectedOption = expirationOptions.find(
+      (option) => String(option.value) === expiresAtDuration,
+    );
     let expiresAt: number | null;
 
     if (selectedOption?.value === 0) {
@@ -300,8 +298,14 @@ const SetKeyDialog = ({
             return;
           }
         } else if (emptyValues.length > 0) {
+          const fieldLabels: Record<string, string> = {
+            apiKey: localize('com_ui_api_key'),
+            baseURL: localize('com_endpoint_config_api_url'),
+          };
           showToast({
-            message: `${localize('com_endpoint_config_required_fields')} ${emptyValues.join(', ')}`,
+            message: `${localize('com_endpoint_config_required_fields')} ${emptyValues
+              .map((field) => fieldLabels[field] ?? field)
+              .join(', ')}`,
             status: NotificationSeverity.ERROR,
           });
           onOpenChange(true);
@@ -386,9 +390,12 @@ const SetKeyDialog = ({
           )}
           <Dropdown
             label={`${localize('com_endpoint_config_new_key_expiration')}: `}
-            value={expiresAtLabel}
-            onChange={handleExpirationChange}
-            options={expirationOptions.map((option) => option.label)}
+            value={expiresAtDuration}
+            onChange={setExpiresAtDuration}
+            options={expirationOptions.map((option) => ({
+              value: String(option.value),
+              label: localize(option.label),
+            }))}
             sizeClasses="w-[min(11.5625rem,90vw)]"
             portal={false}
           />

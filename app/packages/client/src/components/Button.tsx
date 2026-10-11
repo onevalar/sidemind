@@ -62,8 +62,9 @@ const buttonVariantRecipe = cva(
           'bg-button-primary text-text-inverted hover:bg-button-primary-hover hover:active:bg-surface-inverted-pressed',
         destructive:
           'bg-surface-destructive text-text-on-status hover:bg-surface-destructive-hover theme-destructive-soft:bg-surface-destructive/10 theme-destructive-soft:text-text-destructive theme-destructive-soft:hover:bg-surface-destructive/14 theme-destructive-soft:hover:active:bg-surface-destructive/17',
+        /** Arc's secondary surface keeps its outline when disabled (see ARC_UI.md). */
         outline:
-          'text-text-primary border border-border-light bg-transparent hover:bg-surface-hover hover:active:bg-surface-pressed hover:text-text-primary',
+          'text-text-primary border border-border-light bg-surface-primary shadow-xs hover:bg-surface-hover hover:active:bg-surface-pressed hover:text-text-primary disabled:bg-surface-secondary disabled:text-text-muted disabled:opacity-100',
         /** An outlined filter whose pressed state stays visible between activations. */
         'outline-toggle':
           'text-text-primary border border-border-control bg-transparent transition-none hover:bg-surface-hover hover:active:bg-surface-pressed hover:text-text-primary aria-pressed:border-border-heavy aria-pressed:bg-surface-active-alt aria-pressed:hover:bg-surface-active-alt',

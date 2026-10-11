@@ -2,8 +2,9 @@ import { memo, useMemo, useState } from 'react';
 import { useAtomValue } from 'jotai';
 import { useRecoilValue } from 'recoil';
 import { useForm } from 'react-hook-form';
+import { Spinner } from '@librechat/client';
 import { useParams } from 'react-router-dom';
-import { Button, Spinner } from '@librechat/client';
+import { GitBranch, MessageSquare } from 'lucide-react';
 import { Constants, buildTree } from 'librechat-data-provider';
 import type { TChatProject } from 'librechat-data-provider';
 import type { ChatFormValues } from '~/common';
@@ -27,6 +28,7 @@ import {
 import { QueuedTurnPortalProvider } from './Steering/QueuedTurnPortal';
 import ApprovalProvider from './Messages/Content/ApprovalContext';
 import ConversationStarters from './Input/ConversationStarters';
+import SegmentedControl from '~/components/ui/SegmentedControl';
 import { pendingApprovalActionFamily } from './approval/state';
 import ProjectBadge from '~/components/Projects/ProjectBadge';
 import { composerLiftFamily } from './Input/Composer/state';
@@ -235,23 +237,24 @@ function ChatView({
                             isSubmitting={chatHelpers.isSubmitting}
                           >
                             {!isLandingPage && !isSubagentThreadReadOnly && (
-                              <div className="mt-14 flex shrink-0 gap-2 px-4 py-2">
-                                <Button
-                                  size="sm"
-                                  variant={canvasOpen ? 'outline' : 'secondary'}
-                                  aria-pressed={!canvasOpen}
-                                  onClick={() => setCanvasOpen(false)}
-                                >
-                                  {localize('com_canvas_chat')}
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  variant={canvasOpen ? 'secondary' : 'outline'}
-                                  aria-pressed={canvasOpen}
-                                  onClick={() => setCanvasOpen(true)}
-                                >
-                                  {localize('com_canvas_title')}
-                                </Button>
+                              <div className="mt-14 flex shrink-0 px-4 py-2">
+                                <SegmentedControl
+                                  label={localize('com_canvas_title')}
+                                  value={canvasOpen ? 'canvas' : 'chat'}
+                                  onValueChange={(value) => setCanvasOpen(value === 'canvas')}
+                                  options={[
+                                    {
+                                      value: 'chat',
+                                      label: localize('com_canvas_chat'),
+                                      icon: <MessageSquare size={16} aria-hidden="true" />,
+                                    },
+                                    {
+                                      value: 'canvas',
+                                      label: localize('com_canvas_title'),
+                                      icon: <GitBranch size={16} aria-hidden="true" />,
+                                    },
+                                  ]}
+                                />
                               </div>
                             )}
                             {canvasOpen && !isLandingPage && !isSubagentThreadReadOnly ? (

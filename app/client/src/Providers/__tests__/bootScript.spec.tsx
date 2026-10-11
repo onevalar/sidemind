@@ -103,12 +103,67 @@ describe('index.html deployment theme boot script', () => {
     expect(root().classList.contains('dark')).toBe(true);
   });
 
-  it('leaves the shell alone under high contrast, which outranks the deployment theme', () => {
+  it.each(['light', 'dark'] as const)(
+    'migrates saved high-contrast-%s and keeps the boot and runtime deployment palette identical',
+    (mode) => {
+      localStorage.setItem('color-theme', `high-contrast-${mode}`);
+      boot();
+      expect(localStorage.getItem('color-theme')).toBe(mode);
+      expect(root()).toHaveClass(mode);
+      const bootStyle = root().getAttribute('style');
+      expect(bootStyle).toBe(appliedStyle(mode).getAttribute('style'));
+
+      render(
+        <ThemeProvider
+          allowHighContrast={false}
+          themeDefinition={acme}
+          persistThemeDefinition={false}
+        >
+          {null}
+        </ThemeProvider>,
+      );
+      expect(root().getAttribute('style')).toBe(bootStyle);
+      expect(root()).not.toHaveClass('high-contrast');
+    },
+  );
+
+  it.each(['(prefers-contrast: more)', '(prefers-contrast: custom)', '(forced-colors: active)'])(
+    'keeps system dark and its deployment cache under %s at boot and runtime',
+    (contrastQuery) => {
+      localStorage.setItem('color-theme', 'system');
+      window.matchMedia = jest.fn().mockImplementation((query: string) => ({
+        matches: query === '(prefers-color-scheme: dark)' || query === contrastQuery,
+        media: query,
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+      }));
+      boot();
+      const bootStyle = root().getAttribute('style');
+      expect(bootStyle).toBe(appliedStyle('dark').getAttribute('style'));
+      render(
+        <ThemeProvider
+          allowHighContrast={false}
+          themeDefinition={acme}
+          persistThemeDefinition={false}
+        >
+          {null}
+        </ThemeProvider>,
+      );
+      expect(root().getAttribute('style')).toBe(bootStyle);
+      expect(root()).toHaveClass('dark');
+      expect(root()).not.toHaveClass('high-contrast');
+      expect(localStorage.getItem('color-theme')).toBe('system');
+    },
+  );
+
+  it('keeps the migrated scheme when storage allows reads but denies writes', () => {
     localStorage.setItem('color-theme', 'high-contrast-dark');
+    jest.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('Storage denied');
+    });
     boot();
-    expect(root().getAttribute('style')).toBeNull();
-    expect(root().hasAttribute('data-theme')).toBe(false);
-    expect(document.head.textContent).toContain('background-color: #000000');
+    expect(root()).toHaveClass('dark');
+    expect(root().getAttribute('style')).toBe(appliedStyle('dark').getAttribute('style'));
   });
 
   it.each(['/login', '/register', '/share/abc', '/Share/abc', '/reset-password', '/oauth/success'])(

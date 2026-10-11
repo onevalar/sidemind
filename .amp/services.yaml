@@ -1,10 +1,9 @@
 services:
   chatgit:
-    # Protected runtime: persistent local mongod + LibreChat Express serving the
-    # built client. Requires a prior `npm run build`; it never builds itself.
-    # Remote preview is separate from the account-free device-local launcher.
-    command: CHATGIT_LOCAL_MODE=false npm run dev -- --port "$PORT"
+    # Preview the actual account-free local app, not the upstream account mode.
+    # Open .amp/open-chatgit.sh in the Desktop portal after starting this service.
+    # Isolate preview data; never adopt an existing account-mode database.
+    command: CHATGIT_LOCAL_MODE=true CHATGIT_STATE_DIR="$PWD/.chatgit/local-preview" npm run dev -- --port "$PORT"
+    # Keep the existing public 23183 proxy connected to this local service.
+    port: 32251
     health: /health
-    portal:
-      title: ChatGit
-      description: Protected orb preview. The local app opens without registration via npm run open; ChatGPT plan authorization is available only in device-local mode.

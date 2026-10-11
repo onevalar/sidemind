@@ -33,12 +33,14 @@ function Controls() {
     themeName,
     highContrast,
     resolvedMode,
+    theme,
   } = useTheme();
   return (
     <>
       <output>{themeName}</output>
       <output data-testid="high-contrast">{String(highContrast)}</output>
       <output data-testid="resolved-mode">{resolvedMode}</output>
+      <output data-testid="appearance">{theme}</output>
       <button onClick={() => setTheme('dark')}>Dark</button>
       <button onClick={() => setTheme('light')}>Light</button>
       <button onClick={() => setTheme('high-contrast-light')}>HC light</button>
@@ -77,6 +79,83 @@ beforeEach(() => {
 });
 
 describe('ThemeProvider', () => {
+  describe('when app high contrast is disabled', () => {
+    it.each(['light', 'dark'] as const)(
+      'migrates saved high-contrast-%s without the boot script',
+      (mode) => {
+        localStorage.setItem('color-theme', `high-contrast-${mode}`);
+        render(
+          <ThemeProvider allowHighContrast={false}>
+            <Controls />
+          </ThemeProvider>,
+        );
+        expect(screen.getByTestId('appearance')).toHaveTextContent(mode);
+        expect(screen.getByTestId('high-contrast')).toHaveTextContent('false');
+        expect(document.documentElement).toHaveClass(mode);
+        expect(document.documentElement).not.toHaveClass('high-contrast');
+        expect(localStorage.getItem('color-theme')).toBe(mode);
+      },
+    );
+
+    it('normalizes initial props, controlled changes and consumer requests', () => {
+      const view = (initialTheme: string) => (
+        <ThemeProvider allowHighContrast={false} initialTheme={initialTheme}>
+          <Controls />
+        </ThemeProvider>
+      );
+      const { rerender } = render(view('high-contrast-light'));
+      expect(screen.getByTestId('appearance')).toHaveTextContent('light');
+      expect(localStorage.getItem('color-theme')).toBe('light');
+
+      rerender(view('high-contrast-dark'));
+      expect(screen.getByTestId('appearance')).toHaveTextContent('dark');
+      expect(localStorage.getItem('color-theme')).toBe('dark');
+      act(() => screen.getByRole('button', { name: 'HC light' }).click());
+      expect(screen.getByTestId('appearance')).toHaveTextContent('light');
+      expect(localStorage.getItem('color-theme')).toBe('light');
+      expect(screen.getByTestId('high-contrast')).toHaveTextContent('false');
+      expect(document.documentElement).not.toHaveClass('high-contrast');
+    });
+
+    it.each(['(prefers-contrast: more)', '(prefers-contrast: custom)', '(forced-colors: active)'])(
+      'follows live system scheme changes without activating app contrast under %s',
+      (contrastQuery) => {
+        let dark = true;
+        const listeners = new Set<() => void>();
+        window.matchMedia = jest.fn(
+          (query: string) =>
+            ({
+              ...matchMedia(
+                query === '(prefers-color-scheme: dark)' ? dark : query === contrastQuery,
+              ),
+              addEventListener: (_event: string, listener: () => void) => listeners.add(listener),
+              removeEventListener: (_event: string, listener: () => void) =>
+                listeners.delete(listener),
+            }) as MediaQueryList,
+        );
+        const { unmount } = render(
+          <ThemeProvider allowHighContrast={false} initialTheme="system">
+            <Controls />
+          </ThemeProvider>,
+        );
+        expect(screen.getByTestId('resolved-mode')).toHaveTextContent('dark');
+        expect(document.documentElement).toHaveClass('dark');
+        expect(document.documentElement).not.toHaveClass('high-contrast');
+
+        dark = false;
+        act(() => listeners.forEach((listener) => listener()));
+        expect(screen.getByTestId('resolved-mode')).toHaveTextContent('light');
+        expect(screen.getByTestId('high-contrast')).toHaveTextContent('false');
+        expect(screen.getByTestId('appearance')).toHaveTextContent('system');
+        expect(document.documentElement).toHaveClass('light');
+        expect(localStorage.getItem('color-theme')).toBe('system');
+        expect(window.matchMedia).not.toHaveBeenCalledWith(contrastQuery);
+        unmount();
+        expect(listeners.size).toBe(0);
+      },
+    );
+  });
+
   it('preserves CSS fallbacks for colors omitted by legacy RGB props', async () => {
     document.documentElement.style.setProperty('--text-primary', '9 9 9');
     render(

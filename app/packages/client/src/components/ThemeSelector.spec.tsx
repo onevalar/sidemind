@@ -51,7 +51,7 @@ const renderWith = (
 const renderTheme = (theme: string, highContrast = false, setTheme = jest.fn()) =>
   renderWith(theme, highContrast, setTheme, <ThemeSelector returnThemeOnly />);
 
-/** The form the auth routes render: both appearance controls, no host chrome. */
+/** The form the auth routes render, with its live announcement. */
 const renderAuthControls = (theme: string, highContrast = false, setTheme = jest.fn()) =>
   renderWith(theme, highContrast, setTheme, <ThemeSelector />);
 
@@ -88,10 +88,7 @@ describe('ThemeSelector MorphIcon map', () => {
     expect(screen.getByTestId('sun')).toBeInTheDocument();
   });
 
-  /** An unmapped icon falls back to `morph-icon`, so a missing high contrast
-   *  entry in the icon record would surface here rather than as a blank glyph.
-   *  The contrast modes show their scheme, because the contrast toggle beside
-   *  them owns the contrast glyph. */
+  /** Legacy values still have a scheme icon during migration. */
   it('shows the scheme icon for both high contrast modes', () => {
     const light = renderTheme('high-contrast-light', true);
     expect(screen.getByTestId('sun')).toBeInTheDocument();
@@ -110,18 +107,16 @@ describe('ThemeSelector MorphIcon map', () => {
 });
 
 describe('ThemeSelector scheme toggle', () => {
-  it('flips the scheme and keeps an explicit contrast choice', () => {
+  it('flips a legacy contrast choice to a plain scheme', () => {
     const { setTheme } = renderTheme('high-contrast-light', true);
     fireEvent.click(screen.getByRole('button'));
-    expect(setTheme).toHaveBeenCalledWith('high-contrast-dark');
+    expect(setTheme).toHaveBeenCalledWith('dark');
   });
 
-  /** Under `system` the contrast comes from `prefers-contrast`, so the stored
-   *  mode never names it and only the resolved value can carry it forward. */
-  it('keeps an OS-requested contrast when the stored mode is system', () => {
+  it('never carries OS-requested contrast into the chosen scheme', () => {
     const { setTheme } = renderTheme('system', true);
     fireEvent.click(screen.getByRole('button'));
-    expect(setTheme).toHaveBeenCalledWith('high-contrast-dark');
+    expect(setTheme).toHaveBeenCalledWith('dark');
   });
 
   it('leaves an ordinary system mode on the plain schemes', () => {
@@ -133,55 +128,34 @@ describe('ThemeSelector scheme toggle', () => {
   it('answers Ctrl+Shift+T with the same choice', () => {
     const { setTheme } = renderTheme('system', true);
     fireEvent.keyDown(window, { key: 'T', ctrlKey: true, shiftKey: true });
-    expect(setTheme).toHaveBeenCalledWith('high-contrast-dark');
+    expect(setTheme).toHaveBeenCalledWith('dark');
   });
 });
 
-/** The auth routes render this selector alone, so contrast has to be reachable
- *  from it — the scheme toggle preserves a contrast choice but never makes one. */
-describe('ThemeSelector contrast toggle', () => {
-  it('turns contrast on for the scheme currently rendered', () => {
+describe('ThemeSelector auth controls', () => {
+  it('offers only the scheme toggle, not an app contrast toggle', () => {
     const { setTheme } = renderAuthControls('dark');
-    const toggle = screen.getByRole('button', { name: 'com_ui_toggle_high_contrast' });
-    expect(toggle).toHaveAttribute('aria-pressed', 'false');
-    fireEvent.click(toggle);
-    expect(setTheme).toHaveBeenCalledWith('high-contrast-dark');
-  });
-
-  it('turns an explicit contrast mode back off', () => {
-    const { setTheme } = renderAuthControls('high-contrast-light', true);
-    const toggle = screen.getByRole('button', { name: 'com_ui_toggle_high_contrast' });
-    expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+    expect(
+      screen.queryByRole('button', { name: 'com_ui_toggle_high_contrast' }),
+    ).not.toBeInTheDocument();
+    const toggle = screen.getByRole('button', { name: 'com_ui_toggle_theme' });
     fireEvent.click(toggle);
     expect(setTheme).toHaveBeenCalledWith('light');
+    expect(screen.getByRole('alert')).toHaveTextContent('com_ui_light_theme_enabled');
   });
 
-  /** Under `system` the OS supplies the contrast, so opting out has to name an
-   *  explicit mode rather than leave `system` to switch it straight back on. */
-  it('opts out of an OS-requested contrast explicitly', () => {
+  it('announces only a plain scheme under an OS contrast request', () => {
     const { setTheme } = renderAuthControls('system', true);
-    fireEvent.click(screen.getByRole('button', { name: 'com_ui_toggle_high_contrast' }));
-    expect(setTheme).toHaveBeenCalledWith('light');
-  });
-
-  /** The two controls are independent settings, so a single gesture that flips
-   *  both — plain light to high-contrast dark — has to land twice. A throttle
-   *  shared across the pair swallowed whichever click came second. */
-  it('accepts both controls inside one throttle window', () => {
-    const { setTheme } = renderAuthControls('light');
     fireEvent.click(screen.getByRole('button', { name: 'com_ui_toggle_theme' }));
-    fireEvent.click(screen.getByRole('button', { name: 'com_ui_toggle_high_contrast' }));
-    expect(setTheme).toHaveBeenNthCalledWith(1, 'dark');
-    expect(setTheme).toHaveBeenNthCalledWith(2, 'high-contrast-light');
+    expect(setTheme).toHaveBeenCalledWith('dark');
+    expect(screen.getByRole('alert')).toHaveTextContent('com_ui_dark_theme_enabled');
   });
 
-  /** The throttle still does its job within a control: Ctrl+Shift+T auto-repeats
-   *  while held, and a held key must not stream theme writes. */
-  it('still throttles repeats of the same control', () => {
+  it('still throttles held keyboard shortcuts', () => {
     const { setTheme } = renderAuthControls('light');
-    const toggle = screen.getByRole('button', { name: 'com_ui_toggle_high_contrast' });
-    fireEvent.click(toggle);
-    fireEvent.click(toggle);
+    fireEvent.keyDown(window, { key: 'T', ctrlKey: true, shiftKey: true });
+    fireEvent.keyDown(window, { key: 'T', ctrlKey: true, shiftKey: true, repeat: true });
     expect(setTheme).toHaveBeenCalledTimes(1);
   });
 });

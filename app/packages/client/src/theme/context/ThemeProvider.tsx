@@ -129,6 +129,9 @@ export interface ThemeProviderProps {
   themeDefinition?: ThemeDefinition;
   /** Whether theme definition, color, name, and source changes should be persisted. */
   persistThemeDefinition?: boolean;
+  /** Disable app contrast palettes and migrate legacy modes to their plain scheme.
+   * Native forced-colors CSS remains independent of this policy. */
+  allowHighContrast?: boolean;
   themeName?: string;
   initialTheme?: string;
 }
@@ -187,6 +190,13 @@ export const resolvesToHighContrast = (theme: string): boolean =>
 
 const isAppearanceMode = (value: string): value is AppearanceMode =>
   themeModes.includes(value as AppearanceMode);
+
+const normalizeAppearance = (theme: AppearanceMode, allowHighContrast: boolean): AppearanceMode => {
+  if (allowHighContrast || !isHighContrast(theme)) {
+    return theme;
+  }
+  return isDark(theme) ? 'dark' : 'light';
+};
 
 const isValidThemeColors = (value: unknown): value is IThemeRGB => {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
@@ -470,9 +480,14 @@ export function ThemeProvider({
   themeRGB: propThemeRGB,
   themeDefinition: propThemeDefinition,
   persistThemeDefinition = true,
+  allowHighContrast = true,
   themeName: propThemeName,
-  initialTheme,
+  initialTheme: propInitialTheme,
 }: ThemeProviderProps): JSX.Element {
+  const initialTheme =
+    propInitialTheme && isAppearanceMode(propInitialTheme)
+      ? normalizeAppearance(propInitialTheme, allowHighContrast)
+      : propInitialTheme;
   const initialThemeState = useRef<InitialThemeState | undefined>(undefined);
   if (!initialThemeState.current) {
     if (propThemeDefinition && isValidThemeDefinition(propThemeDefinition)) {
@@ -498,9 +513,15 @@ export function ThemeProvider({
     }
   }
 
-  const initialAppearance =
-    initialTheme && isAppearanceMode(initialTheme) ? initialTheme : getInitialTheme();
-  const [theme, setThemeState] = useState<AppearanceMode>(initialAppearance);
+  const initialAppearance = normalizeAppearance(
+    initialTheme && isAppearanceMode(initialTheme) ? initialTheme : getInitialTheme(),
+    allowHighContrast,
+  );
+  const [appearance, setThemeState] = useState<AppearanceMode>(initialAppearance);
+  const theme = normalizeAppearance(appearance, allowHighContrast);
+  if (theme !== appearance) {
+    setThemeState(theme);
+  }
   /**
    * Seeded from the mode string alone, never from a media query, so a server
    * render and the first client render agree. `system` therefore starts at the
@@ -599,6 +620,13 @@ export function ThemeProvider({
   }, []);
 
   useEffect(() => {
+    const stored = readStorage(THEME_KEY);
+    if (!allowHighContrast && stored && isAppearanceMode(stored) && isHighContrast(stored)) {
+      writeStorage(THEME_KEY, normalizeAppearance(stored, false));
+    }
+  }, [allowHighContrast]);
+
+  useEffect(() => {
     if (persistedInitialProps.current) {
       return;
     }
@@ -651,13 +679,17 @@ export function ThemeProvider({
     writeThemeStorage,
   ]);
 
-  const setTheme = useCallback((newTheme: string) => {
-    if (!isAppearanceMode(newTheme)) {
-      return;
-    }
-    setThemeState(newTheme);
-    writeStorage(THEME_KEY, newTheme);
-  }, []);
+  const setTheme = useCallback(
+    (newTheme: string) => {
+      if (!isAppearanceMode(newTheme)) {
+        return;
+      }
+      const appearance = normalizeAppearance(newTheme, allowHighContrast);
+      setThemeState(appearance);
+      writeStorage(THEME_KEY, appearance);
+    },
+    [allowHighContrast],
+  );
 
   const commitThemeTransition = useCallback(
     ({ state, writes }: ThemeTransition) => {
@@ -727,7 +759,7 @@ export function ThemeProvider({
     (currentTheme: AppearanceMode) => {
       const root = window.document.documentElement;
       const mode: ThemeMode = isDark(currentTheme) ? 'dark' : 'light';
-      const highContrast = resolvesToHighContrast(currentTheme);
+      const highContrast = allowHighContrast && resolvesToHighContrast(currentTheme);
       /** Publish both so consumers rerender when an OS preference flips under
        *  `system`, where `theme` itself never changes. */
       setResolvedMode(mode);
@@ -778,7 +810,7 @@ export function ThemeProvider({
         console.error('Unable to apply theme definition', error);
       }
     },
-    [legacyThemeRGB, prepareThemeDOM, restoreAppliedTheme, themeDefinition],
+    [allowHighContrast, legacyThemeRGB, prepareThemeDOM, restoreAppliedTheme, themeDefinition],
   );
 
   useBeforePaintEffect(() => {
@@ -797,12 +829,12 @@ export function ThemeProvider({
     }
     const queries = [
       window.matchMedia('(prefers-color-scheme: dark)'),
-      ...CONTRAST_QUERIES.map((query) => window.matchMedia(query)),
+      ...(allowHighContrast ? CONTRAST_QUERIES.map((query) => window.matchMedia(query)) : []),
     ];
     const handleChange = () => applyThemeMode('system');
     queries.forEach((query) => query.addEventListener('change', handleChange));
     return () => queries.forEach((query) => query.removeEventListener('change', handleChange));
-  }, [applyThemeMode, theme]);
+  }, [allowHighContrast, applyThemeMode, theme]);
 
   useEffect(
     () => () => {

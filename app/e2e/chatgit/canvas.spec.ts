@@ -66,7 +66,7 @@ test('ChatGit: branches, deduplicated provider payload, saved context and readin
     await expect(page.getByTestId('canvas-graph')).toBeVisible();
   };
   const inspectNode = async (marker: string) => {
-    await page.getByRole('button', { name: 'Fit View', exact: true }).click();
+    await page.getByRole('button', { name: 'Fit all messages in view', exact: true }).click();
     await page.locator('.react-flow__node').filter({ hasText: marker }).getByRole('button').click();
   };
 
@@ -108,7 +108,7 @@ test('ChatGit: branches, deduplicated provider payload, saved context and readin
   let mergedMessage: TMessage;
   let mergedProviderRequest: unknown;
   await test.step('selected branch histories are deduplicated in the actual HTTP provider request', async () => {
-    await page.getByRole('button', { name: 'Fit View', exact: true }).click();
+    await page.getByRole('button', { name: 'Fit all messages in view', exact: true }).click();
     await page.getByRole('checkbox', { name: /Use as context ANSWER_A:/ }).check();
     await page.getByRole('checkbox', { name: /Use as context ANSWER_B:/ }).check();
     await canvasSend(
@@ -157,27 +157,17 @@ test('ChatGit: branches, deduplicated provider payload, saved context and readin
     await page.screenshot({ path: `${artifactDir}/librechat-canvas.png` });
     await page.emulateMedia({ colorScheme: 'dark' });
     await expect(page.locator('html')).toHaveClass(/dark/);
-    await page.screenshot({ path: `${artifactDir}/chatgit-dark.png` });
+    await page.screenshot({ path: `${artifactDir}/chatgit-dark.png`, animations: 'disabled' });
     await page.emulateMedia({ colorScheme: 'light' });
     await expect(page.locator('html')).not.toHaveClass(/dark/);
     await page.getByRole('combobox', { name: 'Reading mode' }).selectOption('dialog');
     await inspectNode('MERGE_QUESTION:');
     await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCSS('opacity', '1');
     await page.screenshot({ path: `${artifactDir}/chatgit-dialog.png` });
     await page.keyboard.press('Escape');
     await page.getByRole('combobox', { name: 'Reading mode' }).selectOption('side');
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole('button', { name: 'Fit View', exact: true }).click();
-    await expect(page.getByRole('button', { name: 'Ask on new branch' })).toBeAttached();
-    await page.screenshot({ path: `${artifactDir}/chatgit-narrow.png` });
-    const narrowInput = page.getByRole('textbox', { name: 'New question', exact: true });
-    await narrowInput.scrollIntoViewIfNeeded();
-    await narrowInput.fill('NARROW_DRAFT');
-    await expect(narrowInput).toHaveValue('NARROW_DRAFT');
-    await page.screenshot({ path: `${artifactDir}/chatgit-narrow-input.png` });
-    await narrowInput.clear();
-    await page.setViewportSize({ width: 1440, height: 1000 });
-    await page.getByRole('button', { name: 'Fit View', exact: true }).click();
+    await page.getByRole('button', { name: 'Fit all messages in view', exact: true }).click();
     await page.getByRole('button', { name: 'Chat', exact: true }).click();
     await chatSend(
       'FOLLOWUP: 保留这两条路线继续分析。',
@@ -267,27 +257,70 @@ test('ChatGit: branches, deduplicated provider payload, saved context and readin
     const saved = (await messages()).find((message) => message.text.startsWith('FILE_QUESTION:'));
     expect(saved?.files?.some((file) => file.filename === 'canvas-check.json')).toBe(true);
   });
-  await test.step('reading preference persists; keyboard opens full text; narrow screen stays usable', async () => {
+  await test.step('reading preference persists; desktop keyboard interaction preserves drafts', async () => {
     await openCanvas();
     await expect(page.getByRole('combobox', { name: 'Reading mode' })).toHaveValue('side');
     await page.getByRole('combobox', { name: 'Reading mode' }).selectOption('dialog');
     await page.reload();
     await openCanvas();
     await expect(page.getByRole('combobox', { name: 'Reading mode' })).toHaveValue('dialog');
-    await page
+    const node = page
       .locator('.react-flow__node')
       .filter({ hasText: 'PLAN_A:' })
-      .getByRole('button')
-      .focus();
+      .getByRole('button');
+    await node.focus();
     await page.keyboard.press('Space');
     await expect(page.getByRole('dialog')).toContainText('PLAN_A:');
+    await page.keyboard.press('Tab');
+    expect(
+      await page.getByRole('dialog').evaluate((el) => el.contains(document.activeElement)),
+    ).toBe(true);
+    await page.keyboard.press('Shift+Tab');
+    expect(
+      await page.getByRole('dialog').evaluate((el) => el.contains(document.activeElement)),
+    ).toBe(true);
     await page.keyboard.press('Escape');
+    await expect(node).toBeFocused();
+    await page.emulateMedia({ reducedMotion: 'reduce' });
+    await page.keyboard.press('Space');
+    await expect(page.getByRole('dialog')).toHaveCSS('animation-name', 'none');
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: 'Ask from this node', exact: true })
+      .click();
+    const input = page.getByRole('textbox', { name: 'New question', exact: true });
+    await expect(input).toBeFocused();
+    await input.fill('KEYBOARD_DRAFT');
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    await expect(input).toHaveValue('KEYBOARD_DRAFT');
+    await expect(input).toBeFocused();
+    await expect(
+      page.getByRole('button', { name: 'Ask on new branch', exact: true }),
+    ).toBeDisabled();
     await page.getByRole('combobox', { name: 'Reading mode' }).selectOption('side');
-    await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.getByRole('textbox', { name: 'New question', exact: true })).toBeAttached();
+    await page.getByRole('button', { name: 'Fit all messages in view', exact: true }).click();
+    await page.getByRole('checkbox', { name: /Use as context ANSWER_A:/ }).check();
+    await page.getByRole('button', { name: 'Clear all', exact: true }).click();
+    await expect(
+      page.getByRole('checkbox', { name: /Use as context ANSWER_A:/ }),
+    ).not.toBeChecked();
+    await expect(input).toHaveValue('KEYBOARD_DRAFT');
+    await expect(input).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
+    await inspectNode('PLAN_A:');
+    await page.getByRole('button', { name: 'Ask from this node', exact: true }).click();
+    await input.fill('KEYBOARD_QUESTION: 保留换行与中文输入。');
+    const count = (await outbound()).length;
+    await input.press('Enter');
+    await expect(input).toHaveValue('KEYBOARD_QUESTION: 保留换行与中文输入。\n');
+    await input.dispatchEvent('keydown', { key: 'Enter', ctrlKey: true, isComposing: true });
+    expect((await outbound()).length).toBe(count);
+    await fixture('KEYBOARD_REPLY: 快捷键只发送一次。');
+    await input.press('Control+Enter');
+    await waitSaved('KEYBOARD_REPLY:');
+    expect((await outbound()).length).toBe(count + 1);
   });
   await page.context().storageState({ path: '/tmp/chatgit-browser-state.json' });
   writeFileSync('/tmp/chatgit-browser-url', page.url());

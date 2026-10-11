@@ -118,6 +118,7 @@ describe('DeploymentTheme', () => {
   let queryClient: QueryClient;
   let getStartupConfig: jest.SpyInstance;
   let warn: jest.SpyInstance;
+  const originalMatchMedia = window.matchMedia;
 
   const serveTheme = (theme?: ConfigTheme) => getStartupConfig.mockResolvedValue(configWith(theme));
 
@@ -138,7 +139,53 @@ describe('DeploymentTheme', () => {
     getStartupConfig.mockRestore();
     warn.mockRestore();
     mockGetThemeFromEnv.mockReset();
+    window.matchMedia = originalMatchMedia;
   });
+
+  it.each(['light', 'dark'] as const)(
+    'migrates high-contrast-%s without replacing deployment or stored definitions',
+    async (mode) => {
+      const before = snapshotStorage();
+      localStorage.setItem('color-theme', `high-contrast-${mode}`);
+      serveTheme(inlineTheme);
+      renderTheme(queryClient);
+
+      await waitFor(() => expect(root().dataset.theme).toBe('acme'));
+      expect(root()).toHaveClass(mode);
+      expect(root()).not.toHaveClass('high-contrast');
+      expect(root().style.getPropertyValue('--surface-primary')).toBe(
+        mode === 'dark' ? '40 50 60' : '10 20 30',
+      );
+      expect(localStorage.getItem('color-theme')).toBe(mode);
+      expect(snapshotStorage()).toEqual(before);
+    },
+  );
+
+  it.each(['(prefers-contrast: more)', '(prefers-contrast: custom)', '(forced-colors: active)'])(
+    'keeps system dark on the deployment palette under %s',
+    async (contrastQuery) => {
+      const before = snapshotStorage();
+      localStorage.setItem('color-theme', 'system');
+      window.matchMedia = jest.fn(
+        (query: string) =>
+          ({
+            matches: query === '(prefers-color-scheme: dark)' || query === contrastQuery,
+            media: query,
+            addEventListener: jest.fn(),
+            removeEventListener: jest.fn(),
+          }) as unknown as MediaQueryList,
+      );
+      serveTheme(inlineTheme);
+      renderTheme(queryClient);
+
+      await waitFor(() => expect(root().dataset.theme).toBe('acme'));
+      expect(root()).toHaveClass('dark');
+      expect(root()).not.toHaveClass('high-contrast');
+      expect(root().style.getPropertyValue('--surface-primary')).toBe('40 50 60');
+      expect(localStorage.getItem('color-theme')).toBe('system');
+      expect(snapshotStorage()).toEqual(before);
+    },
+  );
 
   it('resolves a bundled theme name without touching stored preferences', async () => {
     const before = snapshotStorage();

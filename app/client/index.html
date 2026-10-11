@@ -50,45 +50,36 @@
         let theme = null;
         try {
           theme = localStorage.getItem('color-theme');
+          /* Same migration as ThemeProvider with allowHighContrast=false. Keep
+           * the chosen scheme even when storage permits reads but denies writes. */
+          if (theme === 'high-contrast-dark' || theme === 'high-contrast-light') {
+            theme = theme === 'high-contrast-dark' ? 'dark' : 'light';
+            localStorage.setItem('color-theme', theme);
+          }
         } catch (e) {
-          /* Web Storage denied by browser policy: the shell falls back to the system theme. */
+          /* Denied reads use system; denied writes retain the migrated scheme. */
         }
         const loadingContainerStyle = document.createElement('style');
         let dark;
-        let contrast;
 
-        if (theme === 'high-contrast-dark' || theme === 'high-contrast-light') {
-          dark = theme === 'high-contrast-dark';
-          contrast = true;
-        } else if (theme === 'dark' || theme === 'light') {
+        if (theme === 'dark' || theme === 'light') {
           dark = theme === 'dark';
-          contrast = false;
         } else {
-          /* `system`, and anything unset or unrecognised, which ThemeProvider also
-           * resolves as `system`. The OS decides the scheme and the contrast, and
-           * a contrast request moves the dark canvas to pure black, so keying off
-           * the scheme alone would flash #0d0d0d behind the black palette.
-           * The three contrast queries mirror ThemeProvider's `CONTRAST_QUERIES`:
-           * a Windows Contrast Theme reports `forced-colors: active` with
-           * `prefers-contrast: custom`, never `more`. */
-          dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-          contrast = [
-            '(prefers-contrast: more)',
-            '(prefers-contrast: custom)',
-            '(forced-colors: active)',
-          ].some(function (query) {
-            return window.matchMedia(query).matches;
-          });
+          /* ChatGit follows only the OS color scheme. Native forced colors are
+           * left to the browser, not translated into an app contrast palette. */
+          dark =
+            typeof window.matchMedia === 'function' &&
+            window.matchMedia('(prefers-color-scheme: dark)').matches;
         }
-        let backgroundColor = dark ? (contrast ? '#000000' : '#0d0d0d') : '#ffffff';
+        let backgroundColor = dark ? '#0d0d0d' : '#ffffff';
         const root = document.documentElement;
         root.classList.add(dark ? 'dark' : 'light');
 
         /* The deployment theme (`interface.theme`) arrives with /api/config, so a
          * signed-in reload replays the copy DeploymentTheme cached under
          * `deployment-theme` (client/src/Providers/themeCache.ts) to paint it
-         * before the bundle runs. High contrast outranks it, as in ThemeProvider,
-         * which drops this copy (`data-theme-boot`) once it applies its own. */
+         * before the bundle runs. ThemeProvider drops this copy (`data-theme-boot`)
+         * once it applies its own. */
         const base = document.querySelector('base');
         const basePath = base ? new URL(base.href).pathname : '/';
         const path =
@@ -101,7 +92,7 @@
           /^(?:share|oauth|login|register|forgot-password|reset-password|verify)(?:\/|$)/i.test(
             path,
           );
-        if (!contrast && !publicRoute) {
+        if (!publicRoute) {
           try {
             const cached = JSON.parse(localStorage.getItem('deployment-theme') || 'null');
             const boot =

@@ -1,6 +1,6 @@
 # ChatGit browser regression (orb / Linux)
 
-This is a development correctness check, not a model-quality benchmark. It registers a test user, exercises the actual UI and MongoDB, and inspects the HTTP messages received by the bundled OpenAI-compatible fixture. It covers independent branches, common-history deduplication, sibling exclusion, frozen context after reload, ordinary follow-up, both question-branch operations, stopping, text upload, reading preferences, keyboard access and narrow-screen input.
+This is a development correctness check, not a model-quality benchmark. It registers a test user in an isolated account-mode fixture (not the local product), exercises the actual UI and MongoDB, and inspects the HTTP messages received by the bundled OpenAI-compatible fixture. It covers independent branches, common-history deduplication, sibling exclusion, frozen context after reload, ordinary follow-up, both question-branch operations, stopping, text upload, reading preferences and desktop keyboard access. ChatGit targets desktop windows, with Chinese/English and System/Light/Dark appearance; narrow-screen and app high-contrast modes are not acceptance targets.
 
 Start with the root `.agents/setup`, `npm run check:safety` and `npm run build`. Stop a running ChatGit service before building or running the isolated test app. Never run the upstream frontend/backend scripts directly.
 
@@ -20,7 +20,7 @@ E2E_BASE_URL=http://localhost:<port> node app/node_modules/@playwright/test/cli.
 
 amp orb service stop chatgit-check
 # Stop chatgit-test-model only if you started it for this check.
-# Reload only the declared preview (its command explicitly sets CHATGIT_LOCAL_MODE=false).
+# Reload the account-free local preview, opened through Amp's Desktop portal.
 amp orb service restart chatgit
 ```
 

@@ -232,8 +232,9 @@ export function useDeploymentThemeOverride(ready: boolean, theme: DeploymentThem
 
 /**
  * Supplies the deployment theme from the startup config to `ThemeProvider`.
- * Precedence: high-contrast modes (inside the provider), then `interface.theme`,
- * then the `REACT_APP_THEME_*` build colors, then the user's stored theme. The
+ * Precedence: `interface.theme`, then the `REACT_APP_THEME_*` build colors,
+ * then the user's stored theme. ChatGit uses only light, dark and system modes;
+ * OS forced colors remain a native CSS accessibility feature. The
  * deployment theme is never persisted to the user's theme keys, so the stored theme
  * survives its removal; a separate cache (`./themeCache`) paints it before the
  * config answers on a reload.
@@ -317,7 +318,9 @@ export default function DeploymentTheme({ children }: { children: React.ReactNod
 
   return (
     <DeploymentThemeOverrideContext.Provider value={setOverride}>
-      <ThemeProvider {...props}>{children}</ThemeProvider>
+      <ThemeProvider {...props} allowHighContrast={false}>
+        {children}
+      </ThemeProvider>
     </DeploymentThemeOverrideContext.Provider>
   );
 }

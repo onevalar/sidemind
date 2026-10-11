@@ -29,7 +29,7 @@ const DialogOverlay = React.forwardRef<
 >(({ className, ...props }, ref) => (
   <DialogPrimitive.Overlay
     className={cn(
-      'bg-scrim-modal data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in fixed inset-0 z-[999] transition-all duration-100',
+      'bg-scrim-modal data-[state=closed]:animate-out data-[state=closed]:fade-out data-[state=open]:fade-in fixed inset-0 z-[999] transition-opacity duration-100 motion-reduce:animate-none motion-reduce:transition-none',
       className ?? '',
     )}
     {...props}
@@ -60,11 +60,10 @@ const DialogContent: React.ForwardRefExoticComponent<
         <DialogPrimitive.Content
           ref={ref}
           className={cn(
-            /** The dialog surface is otherwise borderless: in high contrast it sits
-             *  on a canvas of its own colour, so it needs a drawn edge. */
-            'bg-surface-dialog animate-in data-[state=open]:fade-in-90 data-[state=open]:slide-in-from-bottom-10 high-contrast:border high-contrast:border-solid high-contrast:border-border-medium fixed z-[999] grid w-full gap-4 rounded-b-lg pb-6 sm:rounded-lg',
+            /** Arc's raised surface uses the same theme contract as settings dialogs. */
+            'bg-surface-dialog border-border-light rounded-theme-surface animate-in data-[state=open]:fade-in-90 high-contrast:border high-contrast:border-solid high-contrast:border-border-medium high-contrast:shadow-none fixed z-[999] grid w-full gap-4 border-(length:--theme-dialog-stroke) pb-6 shadow-2xl motion-reduce:animate-none',
             isSmallScreen
-              ? 'bg-surface-dialog fixed top-1/2 left-1/2 z-[999] m-auto grid w-11/12 -translate-x-1/2 -translate-y-1/2 gap-4 rounded-xl pb-6'
+              ? 'fixed top-1/2 left-1/2 m-auto w-11/12 -translate-x-1/2 -translate-y-1/2'
               : '',
             disableScroll ? 'overflow-hidden' : '',
             className ?? '',
@@ -73,7 +72,7 @@ const DialogContent: React.ForwardRefExoticComponent<
         >
           {children}
           {showCloseButton && (
-            <DialogPrimitive.Close className="focus:ring-focus-control data-[state=open]:bg-surface-hover absolute top-[1.6rem] right-6 rounded-sm opacity-70 transition-opacity hover:opacity-100 focus:ring-2 focus:ring-offset-2 focus:outline-hidden disabled:pointer-events-none">
+            <DialogPrimitive.Close className="border-border-light bg-surface-secondary text-text-secondary hover:bg-surface-hover hover:text-text-primary focus-visible:ring-focus-control absolute top-3 right-3 flex size-11 items-center justify-center rounded-lg border focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:outline-hidden disabled:pointer-events-none">
               <X className="text-text-primary size-theme-icon-md" aria-hidden="true" />
               <span className="sr-only">Close</span>
             </DialogPrimitive.Close>
@@ -89,7 +88,10 @@ const DialogHeader: {
   ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element;
   displayName: string;
 } = ({ className, ...props }: React.HTMLAttributes<HTMLDivElement>): JSX.Element => (
-  <div className={cn('flex flex-col space-y-2 p-6 pb-4 text-left', className ?? '')} {...props} />
+  <div
+    className={cn('flex flex-col space-y-2 p-6 pe-16 pb-4 text-start', className ?? '')}
+    {...props}
+  />
 );
 DialogHeader.displayName = 'DialogHeader';
 

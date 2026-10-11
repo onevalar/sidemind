@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { useAtom, useStore } from 'jotai';
 import { Constants } from 'librechat-data-provider';
 import { GitBranch, MessageSquare, X, ArrowUpRight } from 'lucide-react';
@@ -18,6 +18,7 @@ import { canvasDraft, readerMode } from './state';
 import { useChatContext } from '~/Providers';
 import { useLocalize } from '~/hooks';
 import '@xyflow/react/dist/style.css';
+import './style.css';
 
 function messageText(message: TMessage | undefined) {
   return (
@@ -60,6 +61,8 @@ export default function Canvas({
   const [reader, setReader] = useAtom(readerMode);
   const [readId, setReadId] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const questionRef = useRef<HTMLTextAreaElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
   const rows = useMemo(
     () => new Map(messages.map((message) => [message.messageId, message])),
     [messages],
@@ -109,8 +112,9 @@ export default function Canvas({
     );
   }, [messages, rows]);
 
-  function inspect(message: TMessage) {
+  function inspect(message: TMessage, trigger: HTMLElement | null) {
     setReadId(message.messageId);
+    returnFocusRef.current = trigger;
     if (reader === 'dialog') setDialogOpen(true);
   }
   function openInChat() {
@@ -134,21 +138,29 @@ export default function Canvas({
     style: {
       width: 252,
       minHeight: message.isCreatedByUser ? 112 : 158,
-      borderRadius: message.isCreatedByUser ? 20 : 12,
-      borderColor: selected.includes(message.messageId)
-        ? 'rgb(var(--text-primary))'
-        : 'rgb(var(--border-medium) / var(--border-medium-alpha, 0.2))',
-      background: 'rgb(var(--surface-primary))',
+      padding: 16,
+      borderRadius: 'var(--theme-surface-radius)',
+      borderColor:
+        selected.includes(message.messageId) || inspected?.messageId === message.messageId
+          ? 'rgb(var(--text-primary))'
+          : 'rgb(var(--border-medium))',
+      boxShadow: 'var(--theme-shadow-xs)',
+      background: selected.includes(message.messageId)
+        ? 'rgb(var(--surface-active-alt))'
+        : 'rgb(var(--surface-primary))',
       color: 'rgb(var(--text-primary))',
     },
     data: {
       label: (
-        <div className="text-left">
+        <div className="text-start">
           <div className="text-text-secondary mb-2 flex items-center justify-between gap-2 text-xs">
-            <span>
+            <span className="tabular-nums">
               {message.isCreatedByUser ? t('com_canvas_question') : t('com_canvas_answer')} ·{' '}
               {index + 1}
             </span>
+            {inspected?.messageId === message.messageId && (
+              <span className="text-text-primary font-medium">{t('com_canvas_reading_now')}</span>
+            )}
             {message.canvasSources?.length ? (
               <GitBranch size={14} aria-label={t('com_canvas_reference')} />
             ) : null}
@@ -156,19 +168,24 @@ export default function Canvas({
           <button
             type="button"
             // eslint-disable-next-line shadcn/no-unknown-classes -- React Flow interaction guards.
-            className="nodrag nopan line-clamp-3 w-full text-left text-sm whitespace-pre-wrap focus-visible:outline"
-            onClick={() => inspect(message)}
+            className="nodrag nopan focus-visible:outline-focus-control line-clamp-3 min-h-11 w-full rounded-sm text-start text-sm leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap focus-visible:outline-2 focus-visible:outline-offset-2"
+            aria-current={inspected?.messageId === message.messageId ? 'true' : undefined}
+            onClick={(event) => {
+              event.stopPropagation();
+              inspect(message, event.currentTarget);
+            }}
           >
             {messageText(message) ||
               t(isSubmitting ? 'com_canvas_generating' : 'com_canvas_failed')}
           </button>
           <label
             // eslint-disable-next-line shadcn/no-unknown-classes -- React Flow interaction guards.
-            className="nodrag nopan mt-3 flex min-h-8 cursor-pointer items-center gap-2 text-xs"
+            className="nodrag nopan mt-2 flex min-h-11 cursor-pointer items-center gap-2 text-xs"
             onClick={(event) => event.stopPropagation()}
           >
             <input
               type="checkbox"
+              className="accent-text-primary size-4"
               checked={selected.includes(message.messageId)}
               disabled={isSubmitting || !eligible(message)}
               aria-label={`${t('com_canvas_select')} ${messageText(message).slice(0, 70)}`}
@@ -221,7 +238,9 @@ export default function Canvas({
       selected: [],
       parentId: inspected.messageId,
     });
+    returnFocusRef.current = questionRef.current;
     setDialogOpen(false);
+    if (!dialogOpen) questionRef.current?.focus();
   }
   function send(event: React.FormEvent) {
     event.preventDefault();
@@ -251,31 +270,33 @@ export default function Canvas({
     }
   }
   const details = inspected && (
-    <div className="text-text-primary flex flex-col gap-4">
-      <div className="text-text-secondary flex items-center justify-between text-xs">
+    <div className="text-text-primary flex min-w-0 flex-col gap-4">
+      <div className="text-text-secondary flex flex-wrap items-center justify-between gap-2 text-xs">
         <span>{inspected.isCreatedByUser ? t('com_canvas_question') : t('com_canvas_answer')}</span>
-        <Button size="sm" variant="ghost" onClick={openInChat}>
-          <MessageSquare size={14} />
+        <Button size="sm" variant="ghost" className="min-h-11" onClick={openInChat}>
+          <MessageSquare size={14} aria-hidden="true" />
           {t('com_canvas_open_chat')}
         </Button>
       </div>
-      <p className="max-h-64 overflow-y-auto text-sm leading-relaxed whitespace-pre-wrap">
-        {messageText(inspected)}
+      <p className="text-sm leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap">
+        {messageText(inspected) || t(isSubmitting ? 'com_canvas_generating' : 'com_canvas_failed')}
       </p>
       <div className="flex flex-wrap gap-2">
         <Button
           size="sm"
-          variant="outline"
+          variant="default"
+          className="min-h-11"
           disabled={isSubmitting || !!inspected.error || !!inspected.unfinished}
           onClick={() => branch('continue')}
         >
-          <GitBranch size={14} />
+          <GitBranch size={14} aria-hidden="true" />
           {t('com_canvas_continue')}
         </Button>
         {inspected.isCreatedByUser && (
           <Button
             size="sm"
             variant="outline"
+            className="min-h-11"
             disabled={isSubmitting}
             onClick={() => branch('rewrite')}
           >
@@ -286,19 +307,21 @@ export default function Canvas({
       {inspected.canvasContext && (
         <details
           data-testid="canvas-snapshot"
-          className="border-border-light rounded-lg border p-3"
+          className="border-border-light bg-surface-secondary rounded-lg border p-3"
         >
-          <summary className="cursor-pointer text-sm font-medium">
+          <summary className="focus-visible:outline-focus-control cursor-pointer rounded-sm py-2 text-sm font-medium focus-visible:outline-2">
             {t('com_canvas_snapshot')} · {inspected.canvasContext.nodes.length}
           </summary>
           <p className="text-text-secondary mt-2 text-xs">{t('com_canvas_frozen')}</p>
-          <ol className="mt-3 flex max-h-64 flex-col gap-3 overflow-y-auto">
+          <ol className="mt-3 flex flex-col gap-3">
             {inspected.canvasContext.nodes.map((node, index) => (
               <li key={`${node.messageId}-${node.revision}`} className="text-sm">
                 <span className="text-text-secondary text-xs">
-                  {index + 1} · {node.role}
+                  {index + 1} · {t(node.role === 'user' ? 'com_ui_user' : 'com_ui_assistant')}
                 </span>
-                <p className="mt-1 whitespace-pre-wrap">{node.text}</p>
+                <p className="mt-1 leading-relaxed [overflow-wrap:anywhere] whitespace-pre-wrap">
+                  {node.text}
+                </p>
               </li>
             ))}
           </ol>
@@ -311,8 +334,8 @@ export default function Canvas({
       className="text-text-primary flex min-h-0 flex-1 flex-col"
       aria-label={t('com_canvas_title')}
     >
-      <div className="border-border-light text-text-secondary flex flex-wrap items-center justify-between gap-2 border-b px-4 py-3 text-xs">
-        <p>{t('com_canvas_notice')}</p>
+      <div className="border-border-light text-text-secondary flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b px-4 py-2 text-xs">
+        <p className="leading-relaxed">{t('com_canvas_notice')}</p>
         <label className="flex items-center gap-2">
           {t('com_canvas_reading')}
           <select
@@ -321,33 +344,46 @@ export default function Canvas({
               setReader(event.target.value as 'side' | 'dialog');
               setDialogOpen(false);
             }}
-            className="bg-surface-primary text-text-primary border-border-light rounded-md border px-2 py-1"
+            className="bg-surface-primary text-text-primary border-border-control focus-visible:ring-focus-control min-h-11 rounded-lg border py-2 ps-3 pe-8 text-base focus-visible:ring-2 sm:text-sm"
             aria-label={t('com_canvas_reading')}
           >
             <option value="side">{t('com_canvas_side')}</option>
             <option value="dialog">{t('com_canvas_dialog')}</option>
           </select>
         </label>
+        <Button
+          variant="outline"
+          className="min-h-11 lg:hidden"
+          onClick={() => questionRef.current?.focus()}
+        >
+          {t('com_canvas_new_question')}
+        </Button>
       </div>
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto lg:flex-row lg:overflow-hidden">
         <div className="min-h-80 min-w-0 flex-1" data-testid="canvas-graph">
           <ReactFlow
             nodes={nodes}
             edges={edges}
+            ariaLabelConfig={{
+              'controls.ariaLabel': t('com_canvas_controls'),
+              'controls.zoomIn.ariaLabel': t('com_ui_zoom_in'),
+              'controls.zoomOut.ariaLabel': t('com_ui_zoom_out'),
+              'controls.fitView.ariaLabel': t('com_canvas_fit_view'),
+            }}
+            // eslint-disable-next-line shadcn/no-unknown-classes -- Third-party theme bridge in style.css.
+            className="chatgit-canvas"
             fitView
             minZoom={0.2}
             maxZoom={1.5}
             nodesDraggable={false}
             nodesConnectable={false}
             nodesFocusable={false}
+            edgesFocusable={false}
+            elementsSelectable={false}
             deleteKeyCode={null}
-            onNodeClick={(_, node) => {
+            onNodeClick={(event, node) => {
               const row = rows.get(node.id);
-              if (row) inspect(row);
-            }}
-            onNodeDoubleClick={(_, node) => {
-              const row = rows.get(node.id);
-              if (row) inspect(row);
+              if (row) inspect(row, event.currentTarget.querySelector('button'));
             }}
           >
             <Background />
@@ -355,25 +391,67 @@ export default function Canvas({
           </ReactFlow>
         </div>
         <aside
-          className="border-border-light bg-surface-primary flex w-full shrink-0 flex-col gap-5 border-t p-5 lg:max-h-full lg:w-96 lg:overflow-y-auto lg:border-t-0 lg:border-l"
+          className="border-border-light bg-surface-primary flex w-full shrink-0 flex-col border-t lg:max-h-full lg:w-96 lg:overflow-y-auto lg:border-s lg:border-t-0"
           aria-label={t('com_canvas_reader')}
         >
-          <h2 className="font-semibold">{t('com_canvas_reader')}</h2>
-          {reader === 'side' ? (
-            details
-          ) : (
-            <Button variant="outline" onClick={() => setDialogOpen(true)}>
-              {t('com_canvas_read_full')}
-            </Button>
-          )}
-          <form onSubmit={send} className="border-border-light flex flex-col gap-3 border-t pt-4">
-            <label htmlFor="canvas-question" className="text-sm font-semibold">
-              {t('com_canvas_new_question')}
-            </label>
-            <p className="text-text-secondary text-xs" role="status">
+          <h2 className="border-border-light flex shrink-0 items-center gap-2 border-b px-5 py-4 text-sm font-medium">
+            <GitBranch size={16} aria-hidden="true" />
+            {t('com_canvas_reader')}
+          </h2>
+          <div className="max-h-80 min-h-32 overflow-y-auto p-5 lg:max-h-none lg:flex-1">
+            {reader === 'side' ? (
+              details
+            ) : (
+              <Button
+                variant="outline"
+                className="min-h-11 w-full"
+                disabled={!inspected}
+                onClick={(event) => {
+                  returnFocusRef.current = event.currentTarget;
+                  setDialogOpen(true);
+                }}
+              >
+                {t('com_canvas_read_full')}
+              </Button>
+            )}
+          </div>
+          <form
+            onSubmit={send}
+            className="border-border-light bg-surface-secondary flex shrink-0 flex-col gap-3 border-t p-5"
+          >
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor="canvas-question" className="text-sm font-semibold">
+                {t('com_canvas_new_question')}
+              </label>
+              {(selected.length > 0 || draft.mode !== 'merge') && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="min-h-11"
+                  onClick={() => {
+                    setDraft((current) => ({
+                      ...current,
+                      mode: 'merge',
+                      selected: [],
+                      parentId: null,
+                    }));
+                    questionRef.current?.focus();
+                  }}
+                >
+                  {t(draft.mode === 'merge' ? 'com_ui_clear_all' : 'com_ui_cancel')}
+                </Button>
+              )}
+            </div>
+            <p
+              id="canvas-context-status"
+              className="text-text-secondary text-xs leading-relaxed tabular-nums"
+              role="status"
+            >
               {
                 {
-                  merge: `${t('com_canvas_selected')} ${selected.length} · ${contextCount} ${t('com_canvas_history_nodes')}`,
+                  merge: selected.length
+                    ? `${t('com_canvas_selected')} ${selected.length} · ${contextCount} ${t('com_canvas_history_nodes')}`
+                    : t('com_canvas_select_hint'),
                   continue: t('com_canvas_continue_hint'),
                   rewrite: t('com_canvas_rewrite_hint'),
                 }[draft.mode]
@@ -389,13 +467,22 @@ export default function Canvas({
                 {selected.map((id) => (
                   <li
                     key={id}
-                    className="bg-surface-secondary flex items-center gap-2 rounded-md px-2 py-1 text-xs"
+                    className="bg-surface-secondary flex min-w-0 items-center gap-2 rounded-lg ps-3 pe-1 text-xs"
                   >
-                    <span className="line-clamp-1 flex-1">{messageText(rows.get(id)!)}</span>
+                    <button
+                      type="button"
+                      className="focus-visible:outline-focus-control min-h-11 min-w-0 flex-1 rounded-sm text-start focus-visible:outline-2"
+                      onClick={(event) => inspect(rows.get(id)!, event.currentTarget)}
+                    >
+                      <span className="line-clamp-1 [overflow-wrap:anywhere]">
+                        {messageText(rows.get(id)!)}
+                      </span>
+                    </button>
                     <Button
                       type="button"
-                      size="sm"
+                      size="icon"
                       variant="ghost"
+                      className="size-11 shrink-0"
                       aria-label={`${t('com_canvas_remove')} ${messageText(rows.get(id)!).slice(0, 40)}`}
                       onClick={() =>
                         setDraft((current) => ({
@@ -404,7 +491,7 @@ export default function Canvas({
                         }))
                       }
                     >
-                      <X size={14} />
+                      <X size={14} aria-hidden="true" />
                     </Button>
                   </li>
                 ))}
@@ -412,40 +499,73 @@ export default function Canvas({
             )}
             <Textarea
               id="canvas-question"
+              ref={questionRef}
+              variant="document"
+              aria-describedby="canvas-context-status canvas-keyboard-hint"
               value={draft.text}
-              rows={4}
+              rows={3}
               disabled={isSubmitting}
               placeholder={t('com_canvas_placeholder')}
+              onKeyDown={(event) => {
+                if (
+                  event.key === 'Enter' &&
+                  (event.metaKey || event.ctrlKey) &&
+                  !event.nativeEvent.isComposing &&
+                  event.keyCode !== 229
+                ) {
+                  event.preventDefault();
+                  event.currentTarget.form?.requestSubmit();
+                }
+              }}
               onChange={(event) =>
                 setDraft((current) => ({ ...current, text: event.target.value }))
               }
             />
+            <p id="canvas-keyboard-hint" className="text-text-secondary text-xs">
+              {t('com_canvas_keyboard_hint')}
+            </p>
             <Button
               type="submit"
+              className="min-h-11"
               disabled={
                 isSubmitting || !draft.text.trim() || (draft.mode === 'merge' && !selected.length)
               }
             >
-              <ArrowUpRight size={16} />
-              {t('com_canvas_send')}
+              <ArrowUpRight size={16} aria-hidden="true" />
+              {t(isSubmitting ? 'com_canvas_generating' : 'com_canvas_send')}
             </Button>
             {isSubmitting && (
-              <Button type="button" variant="outline" onClick={() => void stopGenerating()}>
+              <Button
+                type="button"
+                variant="outline"
+                className="min-h-11"
+                onClick={() => void stopGenerating()}
+              >
                 {t('com_canvas_stop')}
               </Button>
             )}
-            <p className="text-text-secondary text-xs leading-relaxed">
-              {t('com_canvas_text_only')}
-            </p>
+            <details className="text-text-secondary text-xs leading-relaxed">
+              <summary className="focus-visible:outline-focus-control cursor-pointer rounded-sm py-2 focus-visible:outline-2">
+                {t('com_canvas_context_help')}
+              </summary>
+              <p className="pt-1">{t('com_canvas_text_only')}</p>
+            </details>
           </form>
         </aside>
       </div>
       <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
-        <DialogContent className="max-w-2xl" aria-describedby={undefined}>
+        <DialogContent
+          className="max-w-2xl"
+          aria-describedby={undefined}
+          onCloseAutoFocus={(event) => {
+            event.preventDefault();
+            returnFocusRef.current?.focus();
+          }}
+        >
           <DialogHeader>
             <DialogTitle>{t('com_canvas_read_full')}</DialogTitle>
           </DialogHeader>
-          <div className="max-h-96 overflow-y-auto px-6 pb-2">{details}</div>
+          <div className="max-h-[60dvh] overflow-y-auto px-6 pb-2">{details}</div>
         </DialogContent>
       </Dialog>
     </section>

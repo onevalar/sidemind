@@ -117,4 +117,6 @@ The old Next.js browser records are not automatically imported into MongoDB. The
 
 ## Orbs
 
-`.agents/setup` installs only the toolchain and dependencies: it does not build, start services, or create `.chatgit/`. The declared `chatgit` portal service explicitly uses `CHATGIT_LOCAL_MODE=false`, so remote viewers cannot acquire the private local owner's session or use its ChatGPT connection. The portal is an account-protected development preview, not the device-local launcher. After a build, start only the intended service; `amp orb services ensure` may start other declared orb services too.
+`.agents/setup` installs only the toolchain and dependencies: it does not build, start services, or create `.chatgit/`. After building, `amp orb services ensure` starts the account-free local app with isolated preview data under `.chatgit/local-preview/`. It does not publish a Web portal or enable signup. Open `.amp/open-chatgit.sh` through Amp's Desktop portal to launch the orb's browser directly into the workspace using the existing private local launcher. This previews the local application on the orb, not an installation on your computer.
+
+Do not switch to `CHATGIT_LOCAL_MODE=false` merely to provide a preview link: that exposes the upstream account workflow, which is not ChatGit's personal-app experience. Existing account-mode data is left untouched. Start only the intended service; `amp orb services ensure` may start other declared orb services too.
