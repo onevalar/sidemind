@@ -415,8 +415,26 @@ describe('ChatGPT Responses inference', () => {
       model: 'available-first',
       instructions: 'Rewrite the supplied Markdown according to the instruction. Return ONLY the replacement Markdown, without an explanation or an outer code fence. Never modify content outside the supplied source.',
       input: [{ role: 'user', content: JSON.stringify({ instruction: 'rewrite clearly', source: 'only supplied source' }) }],
-      store: false, stream: true,
+      store: false, stream: true, include: ['reasoning.encrypted_content'],
     })
+  })
+
+  it('completes Responses function calls and sends their results and reasoning back for a natural reply', async () => {
+    const output = [{ type: 'reasoning', id: 'r1', summary: [], encrypted_content: 'encrypted-test-reasoning' }, { type: 'function_call', id: 'fc1', call_id: 'read1', name: 'read_note', arguments: '{"name":"Note.md"}' }]
+    fake.inference = () => streamed(event('response.completed', { response: { status: 'completed', output } }))
+    const tools = [{ type: 'function' as const, function: { name: 'read_note', description: 'Read Markdown', parameters: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] } } }]
+    const signal = new AbortController().signal
+    const initial = [{ role: 'system' as const, content: 'Chat naturally and read on demand.' }, { role: 'user' as const, content: 'Explain this note.' }]
+    const turn = await connection.chat(initial, tools, signal)
+    expect(turn.calls).toEqual([{ id: 'read1', type: 'function', function: { name: 'read_note', arguments: '{"name":"Note.md"}' } }])
+    expect(turn.text).toBe('')
+    fake.inference = () => streamed(event('response.output_text.delta', { delta: '这篇文章讨论光的反射。' }) + event('response.completed', { response: { status: 'completed' } }))
+    const answer = await connection.chat([...initial, { role: 'assistant', content: null, tool_calls: turn.calls, responseOutput: turn.responseOutput }, { role: 'tool', tool_call_id: 'read1', content: '{"content":"# 光\\n反射"}' }], tools, signal)
+    expect(answer.text).toBe('这篇文章讨论光的反射。')
+    const body = JSON.parse(String(fake.responses[1]!.body))
+    expect(body.input).toEqual([{ role: 'user', content: 'Explain this note.' }, ...output, { type: 'function_call_output', call_id: 'read1', output: '{"content":"# 光\\n反射"}' }])
+    expect(body.tools[0]).toMatchObject({ type: 'function', name: 'read_note' })
+    expect(body.instructions).not.toContain('Rewrite')
   })
 
   it.each([

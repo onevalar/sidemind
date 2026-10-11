@@ -5,7 +5,7 @@ import { App } from '../src/App'
 import { api } from '../src/api'
 
 vi.mock('../src/api', () => ({
-  api: { listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), recordOpen: vi.fn(), search: vi.fn() },
+  api: { listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), recordOpen: vi.fn(), search: vi.fn(), openWorkspaceFolder: vi.fn(), agentChanges: vi.fn(), agent: vi.fn(), undoAgentChange: vi.fn() },
   subscribeEvents: () => () => {},
 }))
 vi.mock('../src/LibraryCanvas', () => ({ LibraryCanvas: () => <div>文章画布</div> }))
@@ -14,12 +14,35 @@ vi.mock('../src/NoteWorkspace', () => ({ NoteWorkspace: ({ name }: { name: strin
 beforeEach(() => {
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} })
+  HTMLElement.prototype.scrollIntoView = vi.fn()
   vi.mocked(api.listNotes).mockResolvedValue([])
   vi.mocked(api.listFolders).mockResolvedValue([''])
+  vi.mocked(api.agentChanges).mockResolvedValue([])
   vi.mocked(api.settings).mockImplementation(() => new Promise(() => {}))
   localStorage.clear()
 })
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals() })
+
+it('opens the right-clicked folder instead of the active canvas and keeps folder-open errors visible', async () => {
+  const opened: string[] = []
+  vi.mocked(api.listFolders).mockResolvedValue(['', 'Work', 'Work/Research'])
+  vi.mocked(api.openWorkspaceFolder).mockImplementation(async folder => { opened.push(folder); return { ok: true } })
+  render(<App/>)
+  const target = await screen.findByRole('button', { name: 'Work/Research' })
+  expect(screen.queryByRole('button', { name: /在文件管理器中打开/ })).toBe(null)
+  target.focus()
+  fireEvent.contextMenu(target, { clientX: 100, clientY: 200 })
+  fireEvent.click(await screen.findByRole('menuitem', { name: '在文件管理器中打开' }))
+  await waitFor(() => expect(opened).toEqual(['Work/Research']))
+  expect(screen.getByRole('button', { name: '笔记文件夹' }).getAttribute('aria-current')).toBe('page')
+  await waitFor(() => expect(document.activeElement).toBe(target))
+  vi.mocked(api.openWorkspaceFolder).mockRejectedValueOnce(new Error('无法打开文件管理器。'))
+  fireEvent.contextMenu(target, { clientX: 100, clientY: 200 })
+  fireEvent.click(await screen.findByRole('menuitem', { name: '在文件管理器中打开' }))
+  expect((await screen.findByRole('alert')).textContent).toContain('无法打开文件管理器。')
+  expect(screen.getByRole('button', { name: '笔记文件夹' }).getAttribute('aria-current')).toBe('page')
+})
 
 it('remembers a collapsed sidebar while keeping search, creation and settings accessible', async () => {
   const app = render(<App/>)
@@ -118,4 +141,40 @@ it('returns focus to the reference action after selecting an article in nested s
   fireEvent.click(screen.getByRole('option', { name: /参考文章/ }))
   await screen.findByRole('button', { name: '移除引用：参考文章' })
   await waitFor(() => expect(document.activeElement).toBe(reference))
+})
+
+it('offers an Agent on the canvas, preserves its conversation when hidden and supports pure chat without notes', async () => {
+  vi.mocked(api.listFolders).mockResolvedValue(['', 'Work'])
+  vi.mocked(api.recordOpen).mockResolvedValue({ ok: true })
+  vi.mocked(api.settings).mockResolvedValue({ notesDirectory: '/test', ai: { configured: true, keySaved: true, model: 'test-model', baseUrl: 'https://example.test/v1', source: 'saved' }, chatgpt: { configured: false, accounts: [], activeAccountId: null, model: '', loginStatus: 'idle' } })
+  vi.mocked(api.agent).mockImplementation(async (input, emit) => {
+    emit({ type: 'session', id: 'conversation-1' })
+    emit({ type: 'message', text: input.scope.kind === 'chat' ? '你好，今天想聊什么？' : '这些笔记主要讨论反射。\n\n[光的反射](Work/%E5%85%89%E7%9A%84%E5%8F%8D%E5%B0%84.md)' })
+    emit({ type: 'done' })
+  })
+  render(<App/>)
+  await screen.findByText('文章画布')
+  await act(async () => { fireEvent.click(await screen.findByRole('button', { name: 'Work' })) })
+  const input = screen.getByRole('textbox', { name: 'AI 消息' }) as HTMLTextAreaElement
+  await act(async () => { fireEvent.change(input, { target: { value: '介绍这些文章' } }); fireEvent.keyDown(input, { key: 'Enter' }) })
+  expect(await screen.findByText('这些笔记主要讨论反射。')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '关闭 AI 助手' }))
+  expect(screen.queryByRole('textbox', { name: 'AI 消息' })).toBe(null)
+  fireEvent.click(screen.getByRole('button', { name: 'AI 助手' }))
+  expect(screen.getByText('这些笔记主要讨论反射。')).toBeTruthy()
+  fireEvent.click(screen.getByRole('combobox', { name: '对话范围' }))
+  fireEvent.click(await screen.findByRole('option', { name: '纯聊天 · 不读取笔记' }))
+  expect(screen.queryByText('这些笔记主要讨论反射。')).toBe(null)
+  fireEvent.change(input, { target: { value: '你好' } })
+  fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+  fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
+  expect(screen.queryByText('你好，今天想聊什么？')).toBe(null)
+  await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }) })
+  expect(await screen.findByText('你好，今天想聊什么？')).toBeTruthy()
+  expect(vi.mocked(api.agent).mock.calls.at(-1)![0]).toEqual({ scope: { kind: 'chat', folder: '' }, session: undefined, message: '你好' })
+  fireEvent.click(screen.getByRole('combobox', { name: '对话范围' }))
+  fireEvent.click(await screen.findByRole('option', { name: '当前文件夹' }))
+  expect(screen.getByText('这些笔记主要讨论反射。')).toBeTruthy()
+  fireEvent.click(screen.getByRole('link', { name: '光的反射' }))
+  expect((await screen.findByRole('region', { name: '文章编辑' })).textContent).toBe('Work/光的反射.md')
 })

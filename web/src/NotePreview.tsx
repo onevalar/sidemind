@@ -18,7 +18,9 @@ export function NotePreview({ name, onClose, onOpen }: { name: string; onClose: 
     const stop = subscribeEvents(event => { if (event.type === 'hello' || event.type === 'note-changed' && event.name === name) void load() })
     return () => { active = false; stop() }
   }, [name])
-  return <Dialog title="文章预览" open onClose={onClose} footer={<><span className="muted preview-readonly">只读预览 · 不会修改正文</span><Button variant="outline" onPress={onClose}>关闭</Button><Button onPress={() => onOpen(name)}>打开并编辑</Button></>}>
-    {error ? <p role="alert" className="error-text">{error}</p> : note ? <article className="prose article-preview"><NoteMarkdown name={name} onOpenNote={onOpen}>{note.content || '这篇文章还没有正文。'}</NoteMarkdown></article> : <p role="status" className="muted">正在载入文章…</p>}
+  return <Dialog title="文章预览" className="note-preview-dialog" open onClose={onClose} footer={<><span className="muted preview-readonly">只读预览 · 不会修改正文</span><Button variant="outline" onPress={onClose}>关闭</Button><Button onPress={() => onOpen(name)}>打开并编辑</Button></>}>
+    <article className="prose article-preview">
+      {error ? <p role="alert" className="error-text">{error}</p> : note ? <NoteMarkdown name={name} onOpenNote={onOpen}>{note.content || '这篇文章还没有正文。'}</NoteMarkdown> : <p role="status" className="muted">正在载入文章…</p>}
+    </article>
   </Dialog>
 }

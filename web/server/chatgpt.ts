@@ -4,6 +4,7 @@ import { createHash, randomBytes, randomUUID, timingSafeEqual } from 'node:crypt
 import { createServer, type Server, type ServerResponse } from 'node:http'
 import { createRemoteJWKSet, customFetch, jwtVerify, type RemoteJWKSet } from 'jose'
 import type { PublicChatGPTConfig } from '../shared/types'
+import type { AICall, AIMessage, AITool, AITurn } from './ai'
 
 const ISSUER = 'https://auth.openai.com'
 const AUTHORIZE = ISSUER + '/api/accounts/authorize'
@@ -449,6 +450,19 @@ export class ChatGPTConnection {
 
   async propose(source: string, instruction: string, signal?: AbortSignal): Promise<string> {
     if (typeof source !== 'string' || typeof instruction !== 'string' || source.length > MAX_JSON || instruction.length > 16384) throw new ChatGPTError('所选内容或修改指令过长，请缩小范围后重试。')
+    return (await this.respond(INSTRUCTIONS, [{ role: 'user', content: JSON.stringify({ instruction, source }) }], [], signal)).text
+  }
+
+  async chat(messages: AIMessage[], tools: AITool[], signal: AbortSignal): Promise<AITurn> {
+    const input = messages.filter(message => message.role !== 'system').flatMap<unknown>(message => {
+      if (message.role === 'tool') return [{ type: 'function_call_output', call_id: message.tool_call_id, output: message.content }]
+      if (message.responseOutput) return message.responseOutput
+      return [...(message.content ? [{ role: message.role, content: message.content }] : []), ...(message.tool_calls ?? []).map(call => ({ type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments }))]
+    })
+    return this.respond(messages.find(message => message.role === 'system')?.content ?? '', input, tools, signal)
+  }
+
+  private async respond(instructions: string, input: unknown[], tools: AITool[], signal?: AbortSignal): Promise<AITurn> {
     const saved = await this.read()
     const id = saved.activeAccountId
     if (!id) throw new ChatGPTError('尚未选择 ChatGPT 账号，请先连接。')
@@ -465,7 +479,7 @@ export class ChatGPTConnection {
       const response = await interruptible(this.transport(RESOURCE + '/responses', {
         method: 'POST', redirect: 'error', signal: abort,
         headers: { 'content-type': 'application/json', authorization: 'Bearer ' + account.tokens!.accessToken },
-        body: JSON.stringify({ model: account.model, instructions: INSTRUCTIONS, input: [{ role: 'user', content: JSON.stringify({ instruction, source }) }], store: false, stream: true }),
+        body: JSON.stringify({ model: account.model, instructions, input, store: false, stream: true, include: ['reasoning.encrypted_content'], ...(tools.length ? { tools: tools.map(tool => ({ type: 'function', ...tool.function })) } : {}) }),
       }), abort)
       if (!response.ok) {
         let data: unknown
@@ -480,16 +494,17 @@ export class ChatGPTConnection {
     } finally { requests.delete(controller); if (!requests.size) this.requests.delete(id) }
   }
 
-  private async stream(response: Response, signal: AbortSignal): Promise<string> {
+  private async stream(response: Response, signal: AbortSignal): Promise<AITurn> {
     if (!response.body) throw new ChatGPTError('ChatGPT 未返回修改内容。')
     const reader = response.body.getReader()
     const decoder = new TextDecoder('utf-8', { fatal: true })
     let buffer = '', output = '', size = 0, event = '', data: string[] = []
+    let completed: AITurn | null = null
     const consume = (): boolean => {
       if (!data.length) { event = ''; return false }
       const raw = data.join('\n'); data = []
       if (raw === '[DONE]') throw new ChatGPTError('ChatGPT 响应未完成，未采用任何部分修改，请重试。')
-      let record: { type?: string; delta?: unknown; response?: { error?: unknown; status?: string }; error?: unknown; code?: unknown }
+      let record: { type?: string; delta?: unknown; response?: { error?: unknown; status?: string; output?: { type: string; call_id?: string; name?: string; arguments?: string; content?: { type: string; text?: string }[] }[] }; error?: unknown; code?: unknown }
       try { record = JSON.parse(raw) } catch { throw new ChatGPTError('ChatGPT 响应格式无效，未采用任何部分修改。') }
       const type = record.type ?? event; event = ''
       if (type === 'response.output_text.delta') {
@@ -500,7 +515,15 @@ export class ChatGPTConnection {
       } else if (type === 'response.incomplete') throw new ChatGPTError('ChatGPT 修改结果不完整，未采用任何部分修改，请缩短选区后重试。')
       else if (type === 'response.completed') {
         if (record.response?.status && record.response.status !== 'completed') throw new ChatGPTError('ChatGPT 修改结果不完整，未采用任何部分修改。')
-        if (!output.trim()) throw new ChatGPTError('ChatGPT 未返回有效修改内容。')
+        const items = record.response?.output
+        const calls: AICall[] = (items ?? []).filter(item => item.type === 'function_call').map(item => {
+          if (typeof item.call_id !== 'string' || typeof item.name !== 'string' || typeof item.arguments !== 'string') throw new ChatGPTError('ChatGPT 工具调用不完整，未执行操作。')
+          return { id: item.call_id, type: 'function', function: { name: item.name, arguments: item.arguments } }
+        })
+        if (calls.length > 16) throw new ChatGPTError('ChatGPT 本轮操作过多，未执行操作。')
+        if (!output) output = (items ?? []).flatMap(item => item.content ?? []).filter(part => part.type === 'output_text').map(part => part.text ?? '').join('')
+        if (!output.trim() && !calls.length) throw new ChatGPTError('ChatGPT 未返回有效修改内容。')
+        completed = { text: output, calls, ...(items ? { responseOutput: items } : {}) }
         return true
       }
       return false
@@ -532,11 +555,11 @@ export class ChatGPTConnection {
     try {
       for (;;) {
         const { done, value } = await interruptible(reader.read(), signal)
-        if (done) { buffer += decoder.decode(); if (drain(true)) return output; break }
+        if (done) { buffer += decoder.decode(); if (drain(true)) return completed!; break }
         size += value.byteLength
         if (size > MAX_OUTPUT) throw new ChatGPTError('ChatGPT 修改结果过长，未采用任何部分修改，请缩短选区。')
         buffer += decoder.decode(value, { stream: true })
-        if (drain(false)) return output
+        if (drain(false)) return completed!
       }
       throw new ChatGPTError('ChatGPT 响应中断或未完成，未采用任何部分修改，请重试。')
     } finally { void reader.cancel().catch(() => {}); reader.releaseLock() }

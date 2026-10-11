@@ -15,6 +15,15 @@ await store.init()
 const bus = new EventBus()
 watchNotes(store.root, bus)
 
+// Derived overviews stay local, including after changes in other Markdown editors.
+await store.overviews()
+let indexTimer: ReturnType<typeof setTimeout>
+bus.subscribe(event => {
+  if (event.type === 'canvas-changed') return
+  clearTimeout(indexTimer)
+  indexTimer = setTimeout(() => { void store.overviews().catch(() => console.error('文章概述更新失败，将在下次读取时重试。')) }, 200)
+})
+
 const app = createApp(store, bus, { staticDir: path.resolve(here, '../dist') })
 // Bind to loopback only: this server edits local files and has no authentication.
 serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, () => {

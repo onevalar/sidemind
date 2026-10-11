@@ -32,17 +32,27 @@ describe('configured workspace folder', () => {
     await expect(openWorkspaceFolder(dir, 'darwin', launcher)).rejects.toThrow('无法打开文件管理器')
     expect(calls).toBe(1)
   })
-  it('opens only the actual NoteStore root and rejects client-supplied paths and cross-site forms before invoking the launcher', async () => {
+  it('opens the selected real workspace folder and rejects outside paths, symlinks and cross-site forms', async () => {
     const store = new NoteStore(dir)
+    const folder = '阅读 $资料/物理 实验'
+    await store.createFolder('阅读 $资料')
+    await store.createFolder(folder)
+    await fs.symlink(path.join(dir, folder), path.join(dir, 'alias'))
+    await fs.symlink(path.dirname(dir), path.join(dir, 'outside'))
+    await fs.writeFile(path.join(dir, 'note.md'), '# Note')
     const opened: string[] = []
     const app = createApp(store, new EventBus(), { openDirectory: async root => { opened.push(root) } })
     const request = (body: string, supplied = headers) => app.request('/api/workspace/open', { method: 'POST', headers: supplied, body })
     expect((await request('{}')).status).toBe(200)
-    expect(opened).toEqual([store.root])
-    for (const body of ['null', '[]', '{"path":"/another/folder"}', '{"command":"anything"}', 'invalid']) expect((await request(body)).status).toBe(400)
+    expect((await request(JSON.stringify({ folder }))).status).toBe(200)
+    const expected = [store.root, path.join(store.root, folder)]
+    expect(opened).toEqual(expected)
+    for (const body of ['null', '[]', '{"path":"/another/folder"}', '{"command":"anything"}', '{"folder":null}', '{"folder":7}', 'invalid']) expect((await request(body)).status).toBe(400)
+    for (const folder of ['../outside', '/tmp', '.canvasnote', '阅读 $资料/../物理 实验', 'a\\b', 'alias', 'outside', 'note.md']) expect((await request(JSON.stringify({ folder }))).status).toBe(400)
+    expect((await request('{"folder":"Missing"}')).status).toBe(404)
     expect((await request('{}', { ...headers, host: 'evil.example' })).status).toBe(403)
     expect((await request('{}', { ...headers, 'content-type': 'text/plain' })).status).toBe(415)
-    expect(opened).toEqual([store.root])
+    expect(opened).toEqual(expected)
   })
   it('returns a visible actionable error when the system file manager cannot be opened', async () => {
     const app = createApp(new NoteStore(dir), new EventBus(), { openDirectory: async () => { throw new FolderOpenError('无法打开文件管理器。') } })

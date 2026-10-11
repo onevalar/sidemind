@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
@@ -29,6 +29,19 @@ const WELCOME = `# 欢迎使用画布笔记
 
 type Library = { version: 1; notes: Record<string, { position: NotePosition; lastOpenedAt: number }>; frames?: CanvasFrame[] }
 const folderOf = (name: string) => name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : ''
+export const contentVersion = (content: string) => createHash('sha256').update(content).digest('hex')
+export type NoteOverview = { name: string; title: string; version: string; characters: number; overview: string; overviewSource: 'local' | 'agent'; headings: { title: string; line: number }[] }
+
+/** Local, extractive overview across the article, not just the card's opening excerpt. */
+function overview(name: string, content: string): NoteOverview {
+  const tree = parser.parse(content)
+  const headings = tree.children.filter(node => node.type === 'heading').map(node => ({ title: node.children.map(summaryText).join(''), line: node.position!.start.line }))
+  const paragraphs = tree.children.map(summaryText).map(text => text.trim().replace(/\s+/g, ' ')).filter(Boolean)
+  const count = Math.min(6, paragraphs.length)
+  const samples = Array.from({ length: count }, (_, index) => paragraphs[Math.floor(index * (paragraphs.length - 1) / Math.max(1, count - 1))]!.slice(0, 180))
+  return { name, title: headings[0]?.title || path.basename(name, '.md'), version: contentVersion(content), characters: content.length, overview: samples.join('\n'), overviewSource: 'local', headings }
+}
+
 const validPosition = (p: NotePosition) => p && Number.isFinite(p.x) && Number.isFinite(p.y) && Math.abs(p.x) <= 10000000 && Math.abs(p.y) <= 10000000
 const validFrame = (frame: CanvasFrame) => frame && typeof frame.id === 'string' && /^[\w-]{1,80}$/.test(frame.id) &&
   typeof frame.space === 'string' && typeof frame.title === 'string' && !!frame.title.trim() && frame.title.length <= 80 && validPosition(frame.position) &&
@@ -61,7 +74,7 @@ export class NoteStore {
     }
   }
 
-  private async folderPath(folder: string): Promise<string> {
+  async folderPath(folder: string): Promise<string> {
     this.validate(folder, true)
     const target = path.join(this.root, folder)
     try {
@@ -109,6 +122,40 @@ export class NoteStore {
   }
 
   async folders(): Promise<string[]> { return (await this.scan()).folders }
+
+  async overviews(folder = ''): Promise<NoteOverview[]> {
+    await this.folderPath(folder)
+    return this.withLock('overviews', async () => {
+      const target = path.join(this.metaDir, 'overviews.json')
+      let previous: { version: number; notes: Record<string, NoteOverview> } = { version: 1, notes: {} }
+      try { previous = JSON.parse(await fs.readFile(target, 'utf8')) } catch { /* A derived index can be rebuilt without changing notes or layout. */ }
+      const notes: Record<string, NoteOverview> = {}
+      for (const name of (await this.scan()).names) {
+        const { content } = await this.load(name), version = contentVersion(content)
+        const cached = previous?.version === 1 ? previous.notes?.[name] : undefined
+        notes[name] = cached?.version === version && (cached.overviewSource === 'local' || cached.overviewSource === 'agent') ? cached : overview(name, content)
+      }
+      if (!isDeepStrictEqual(previous, { version: 1, notes })) await this.writeOverviews(notes)
+      return Object.values(notes).filter(note => !folder || note.name.startsWith(folder + '/'))
+    })
+  }
+
+  private async writeOverviews(notes: Record<string, NoteOverview>): Promise<void> {
+    const target = path.join(this.metaDir, 'overviews.json'), tmp = target + '.' + randomUUID() + '.tmp'
+    try { await fs.writeFile(tmp, JSON.stringify({ version: 1, notes }), 'utf8'); await fs.rename(tmp, target) }
+    finally { await fs.rm(tmp, { force: true }) }
+  }
+
+  async rememberOverview(name: string, version: string, text: string): Promise<void> {
+    await this.overviews()
+    await this.withLock('overviews', async () => {
+      const { content } = await this.load(name)
+      if (contentVersion(content) !== version) throw new ConflictError('文章已修改，不能保存过期概述。')
+      const index = JSON.parse(await fs.readFile(path.join(this.metaDir, 'overviews.json'), 'utf8')) as { notes: Record<string, NoteOverview> }
+      index.notes[name] = { ...overview(name, content), overview: text, overviewSource: 'agent' }
+      await this.writeOverviews(index.notes)
+    })
+  }
 
   async createFolder(folder: string): Promise<void> {
     this.validate(folder, true)

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { Viewport } from '@xyflow/react'
+import * as ContextMenu from '@radix-ui/react-context-menu'
 import type { NoteSummary } from '../shared/types'
 import { api, subscribeEvents } from './api'
 import { LibraryCanvas } from './LibraryCanvas'
@@ -10,6 +11,8 @@ import { QuickSearch } from './QuickSearch'
 import { captureContent } from './note-links'
 import { Button, Dialog, Icon, IconButton, Input, TextArea, Select, SegmentedControl } from './ui'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/arc/tabs/tabs'
+import { ResizablePanel, ResizablePanels } from './components/arc/resizable-panels/resizable-panels'
+import { AgentPanel } from './AgentPanel'
 
 const loadNoteWorkspace = () => import('./NoteWorkspace')
 
@@ -48,6 +51,11 @@ export function App() {
   const systemDark = useSyncExternalStore(subscribeAppearance, () => darkPreference().matches, () => false)
   const resolvedTheme = theme === 'system' ? systemDark ? 'dark' : 'light' : theme
   const beforeLeave = useRef<() => Promise<boolean>>(async () => true)
+  const agentSelection = useRef<() => string | undefined>(() => undefined)
+  const [aiOpen, setAiOpen] = useState(() => localStorage.getItem('canvas.ai-open') !== 'false')
+  const [aiShare] = useState(() => Math.min(65, Math.max(15, Number(localStorage.getItem('canvas.ai-width')) || 30)))
+  useEffect(() => { localStorage.setItem('canvas.ai-open', String(aiOpen)) }, [aiOpen])
+  const closeAI = () => { setAiOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('[aria-controls="ai-assistant-pane"]')?.focus()) }
   const creating = useRef(false)
   const requestVersion = useRef(0)
   const navigationVersion = useRef(0)
@@ -130,10 +138,10 @@ export function App() {
     } catch (error) { setFormError((error as Error).message) }
     finally { creating.current = false; setBusy(false) }
   }
-  const openFolder = async () => {
+  const openFolder = async (folder: string) => {
     if (folderRequest.current) return
     folderRequest.current = true; setOpeningFolder(true); setError('')
-    try { await api.openWorkspaceFolder() }
+    try { await api.openWorkspaceFolder(folder) }
     catch (error) { setError((error as Error).message) }
     finally { folderRequest.current = false; setOpeningFolder(false) }
   }
@@ -158,7 +166,13 @@ export function App() {
       {sidebarCollapsed && <IconButton icon="grid" label="返回当前文件夹画布" onPress={() => void navigate(null)}/>}
       <div id="sidebar-navigation" className="sidebar-navigation" hidden={sidebarCollapsed}>
       <div className="section-header sidebar-section"><span className="section-label">文件夹画布</span><IconButton icon="plus" label="新建文件夹" onPress={() => { setFormError(''); setNewFolderOpen(true) }}/></div>
-      <nav className="spaces" aria-label="文件夹">{folders.map(folder => <button type="button" aria-label={folderLabel(folder)} aria-current={space === folder && !selected ? 'page' : undefined} key={folder} className={'nav-item ' + (space === folder && !selected ? 'is-active' : '')} onClick={() => void navigate(null, folder)}><Icon name="folder" size={16}/><span title={folderLabel(folder)}>{folderLabel(folder)}</span><span className="count">{notes.filter(note => note.space === folder).length}</span></button>)}</nav>
+      <nav className="spaces" aria-label="文件夹">{folders.map(folder => <ContextMenu.Root key={folder} modal={false}>
+        <ContextMenu.Trigger asChild><button type="button" aria-label={folderLabel(folder)} aria-current={space === folder && !selected ? 'page' : undefined} className={'nav-item ' + (space === folder && !selected ? 'is-active' : '')} onClick={() => void navigate(null, folder)}><Icon name="folder" size={16}/><span title={folderLabel(folder)}>{folderLabel(folder)}</span><span className="count">{notes.filter(note => note.space === folder).length}</span></button></ContextMenu.Trigger>
+        <ContextMenu.Portal><ContextMenu.Content className="canvas-context-menu" collisionPadding={8} aria-label="文件夹操作">
+          <ContextMenu.Label className="canvas-menu-label">{folderLabel(folder)}</ContextMenu.Label>
+          <ContextMenu.Item className="canvas-menu-item" disabled={openingFolder} title="在运行笔记服务的电脑上打开这个文件夹，不会切换当前画布" onSelect={() => void openFolder(folder)}><Icon name="folder" size={16}/>{openingFolder ? '正在打开…' : '在文件管理器中打开'}</ContextMenu.Item>
+        </ContextMenu.Content></ContextMenu.Portal>
+      </ContextMenu.Root>)}</nav>
       <span className="section-label sidebar-section">最近打开</span>
       <div className="recent-notes">{recent.slice(0, 8).map(note => <button type="button" aria-label={note.title} aria-current={selected === note.name ? 'page' : undefined} key={note.name} className={'nav-item ' + (selected === note.name ? 'is-active' : '')} onClick={() => openNote(note.name)}><Icon name="note" size={16}/><span title={note.title}>{note.title}</span></button>)}{!recent.length && <p className="recent-empty muted">打开过的文章会显示在这里。</p>}</div>
       </div>
@@ -166,10 +180,17 @@ export function App() {
     </aside>
     <main className="stage">
       {error && <div className="global-error" role="alert"><span>{error}</span><Button size="sm" variant="ghost" onPress={() => void refreshList()}>重试</Button><IconButton icon="close" label="关闭提示" onPress={() => setError('')}/></div>}
-      {selected && NoteWorkspace ? <NoteWorkspace key={selected} name={selected} theme={resolvedTheme} beforeLeave={beforeLeave} onOpenNote={openNote} onBack={() => void navigate(null)} aiModel={aiModel} onConfigureAI={() => setSettingsOpen(true)} onUpdated={refreshList}/> : <>
-        <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span className="library-folder" title={folderLabel(space)}>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="ghost" className="open-folder-button" aria-label="在系统文件管理器中打开笔记工作区" onPress={() => void openFolder()} isDisabled={openingFolder}><Icon name="folder" size={16}/>{openingFolder ? '正在打开…' : '打开文件夹'}</Button><Button size="sm" onPress={openCreate}><Icon name="plus" size={16}/>新建文章</Button></div></header>
+      <div className="agent-workspace"><ResizablePanels label="笔记与 AI 助手" onLayoutChange={sizes => { if (aiOpen && sizes[1]) localStorage.setItem('canvas.ai-width', String(sizes[1])) }}>
+      <ResizablePanel id="article-pane" label="笔记与 AI 助手分栏宽度" defaultSize={100 - aiShare} minSize={360}>
+      {selected && NoteWorkspace ? <NoteWorkspace key={selected} name={selected} theme={resolvedTheme} beforeLeave={beforeLeave} agentSelection={agentSelection} aiOpen={aiOpen} onToggleAI={() => setAiOpen(value => !value)} onOpenNote={openNote} onBack={() => void navigate(null)}/> : <>
+        <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span className="library-folder" title={folderLabel(space)}>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="ghost" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" onPress={() => setAiOpen(value => !value)}><Icon name="spark" size={16}/>AI 助手</Button><Button size="sm" onPress={openCreate}><Icon name="plus" size={16}/>新建文章</Button></div></header>
         {!loaded ? <div className="empty">{error ? '笔记尚未载入，请重试。' : '正在载入画布…'}</div> : <LibraryCanvas key={space} folder={space} notes={visible} theme={resolvedTheme} viewport={views.get(space) ?? { x: 0, y: 0, zoom: 1 }} onViewport={viewport => { views.set(space, viewport); localStorage.setItem('canvas.views', JSON.stringify([...views])) }} beforeLeave={beforeLeave} onOpen={openNote} onPreview={setPreview} onCreate={openCreate}/>}
       </>}
+      </ResizablePanel>
+      <ResizablePanel id="ai-assistant-pane" label="AI 助手" defaultSize={aiShare} minSize={320} maxSize={720} hidden={!aiOpen}>
+        <AgentPanel folder={space} name={selected} model={aiModel} beforeSend={beforeLeave} selection={agentSelection} onConfigure={() => setSettingsOpen(true)} onClose={closeAI} onOpenNote={openNote}/>
+      </ResizablePanel>
+      </ResizablePanels></div>
     </main>
     {preview && <NotePreview key={preview} name={preview} onClose={() => setPreview(null)} onOpen={openNote}/>}
     {searchOpen && <QuickSearch notes={notes} spaces={folders} onClose={() => setSearchOpen(false)} onNote={openNote} onSpace={folder => void navigate(null, folder)} onNew={openCreate}/>}

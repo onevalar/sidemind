@@ -64,3 +64,14 @@ export interface PublicChatGPTConfig {
   unavailable?: boolean
   error?: string
 }
+
+export type AgentScope = { kind: 'chat'; folder: string } | { kind: 'folder'; folder: string } | { kind: 'note'; folder: string; name: string }
+export interface AgentChange { id: string; name: string; kind: 'edit' | 'create' }
+export interface AgentEdit extends AgentChange { before: string; after: string }
+export type AgentEvent =
+  | { type: 'session'; id: string }
+  | { type: 'activity'; text: string }
+  | { type: 'message'; text: string }
+  | { type: 'change'; change: AgentChange }
+  | { type: 'error'; text: string }
+  | { type: 'done' }

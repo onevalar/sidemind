@@ -16,7 +16,7 @@ const launchDirectory: Launcher = (command, args) => {
 type Launcher = (command: string, args: string[]) => Promise<unknown>
 export class FolderOpenError extends Error {}
 
-/** Only the configured workspace is passed to a system launcher, never request-supplied paths. */
+/** Receives a workspace directory validated by NoteStore, never an unchecked client path. */
 export async function openWorkspaceFolder(root: string, platform: NodeJS.Platform = process.platform, launch: Launcher = launchDirectory) {
   const command = platform === 'darwin' ? 'open' : platform === 'win32' ? 'explorer.exe' : platform === 'linux' ? 'xdg-open' : null
   if (!command) throw new FolderOpenError('此系统暂不支持打开文件夹，请在文件管理器中打开设置页显示的工作区路径。')
