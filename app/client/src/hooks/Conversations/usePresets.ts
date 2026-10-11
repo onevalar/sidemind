@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useState } from 'react';
 import filenamify from 'filenamify';
 import exportFromJSON from 'export-from-json';
 import { useToastContext } from '@librechat/client';
 import { QueryKeys } from 'librechat-data-provider';
 import { useQueryClient } from '@tanstack/react-query';
 import { useRecoilState, useSetRecoilState, useRecoilValue } from 'recoil';
-import { useCreatePresetMutation, useGetModelsQuery } from 'librechat-data-provider/react-query';
+import { useCreatePresetMutation } from 'librechat-data-provider/react-query';
 import type { TPreset, TEndpointsConfig } from 'librechat-data-provider';
 import {
   normalizeExportFilename,
@@ -28,7 +28,6 @@ import store from '~/store';
 
 export default function usePresets(index = 0) {
   const localize = useLocalize();
-  const hasLoaded = useRef(false);
   const queryClient = useQueryClient();
   const { showToast } = useToastContext();
   const getConversation = useGetConversation(index);
@@ -43,38 +42,7 @@ export default function usePresets(index = 0) {
   const presetsQuery = useGetPresetsQuery({ enabled: !!user && isAuthenticated });
   const preset = useRecoilValue(store.presetByIndex(index));
   const setPreset = useSetRecoilState(store.presetByIndex(index));
-  const conversationId = useRecoilValue(store.conversationIdByIndex(index));
-  const { data: modelsData } = useGetModelsQuery();
   const { newConversation } = useNewConvo(index);
-
-  useEffect(() => {
-    if (modelsData?.initial) {
-      return;
-    }
-
-    const { data: presets } = presetsQuery;
-    if (_defaultPreset || !presets || hasLoaded.current) {
-      return;
-    }
-
-    if (presets && presets.length > 0 && user && presets[0].user !== user.id) {
-      presetsQuery.refetch();
-      return;
-    }
-
-    const defaultPreset = presets.find((p) => p.defaultPreset);
-    if (!defaultPreset) {
-      hasLoaded.current = true;
-      return;
-    }
-    setDefaultPreset(defaultPreset);
-    if (!conversationId || conversationId === 'new') {
-      newConversation({ preset: defaultPreset, modelsData, disableParams: true });
-    }
-    hasLoaded.current = true;
-    // dependencies are stable and only needed once
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presetsQuery.data, user, modelsData, conversationId]);
 
   const setPresets = useCallback(
     (presets: TPreset[]) => {

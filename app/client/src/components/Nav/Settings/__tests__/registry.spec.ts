@@ -2,8 +2,8 @@ import { isValidElementType } from 'react-is';
 import { SettingsTabValues, isTwoFactorPolicyProvider } from 'librechat-data-provider';
 import type { SettingsContextValue } from '../types';
 import en from '~/locales/en/translation.json';
+import { TABS, PERSONAL_TABS } from '../types';
 import { registry } from '../registry';
-import { TABS } from '../types';
 
 const validTabSections = new Map(TABS.map((t) => [t.id, new Set(t.sections.map((s) => s.id))]));
 
@@ -63,6 +63,16 @@ describe('settings registry', () => {
   it('has a renderable Component for every entry', () => {
     for (const entry of registry) {
       expect(isValidElementType(entry.Component)).toBe(true);
+    }
+  });
+
+  it('reuses existing controls in the personal categories without duplicate settings', () => {
+    const ids = PERSONAL_TABS.flatMap((tab) =>
+      tab.sections.flatMap((section) => section.settingIds ?? []),
+    );
+    expect(new Set(ids).size).toBe(ids.length);
+    for (const id of ids) {
+      expect(registry.some((entry) => entry.id === id)).toBe(true);
     }
   });
 

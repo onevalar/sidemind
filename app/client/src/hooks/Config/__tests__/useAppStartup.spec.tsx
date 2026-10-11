@@ -38,6 +38,16 @@ jest.mock('~/hooks', () => ({
 jest.mock('~/data-provider', () => ({
   useMCPServersQuery: (config: unknown) => mockUseMCPServersQuery(config),
   useMCPToolsQuery: (config: unknown) => mockUseMCPToolsQuery(config),
+  useGetPresetsQuery: () => ({ data: [], refetch: jest.fn() }),
+}));
+
+jest.mock('librechat-data-provider/react-query', () => ({
+  useGetModelsQuery: () => ({ data: {} }),
+}));
+
+jest.mock('~/hooks/useNewConvo', () => ({
+  __esModule: true,
+  default: () => ({ newConversation: jest.fn() }),
 }));
 
 jest.mock('../useSpeechSettingsInit', () => ({

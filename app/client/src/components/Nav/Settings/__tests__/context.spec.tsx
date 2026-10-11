@@ -21,6 +21,7 @@ jest.mock('~/hooks/usePersonalizationAccess', () => () => ({
 
 jest.mock('~/data-provider', () => ({
   useGetStartupConfig: () => ({ data: undefined }),
+  useLocalModeQuery: () => ({ data: undefined }),
 }));
 
 jest.mock('../../SettingsTabs/ProviderKeys/useProviderKeys', () => () => []);

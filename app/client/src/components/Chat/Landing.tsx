@@ -1,14 +1,16 @@
 import { useMemo, useCallback, useState, useEffect, useRef } from 'react';
+import { useSetAtom } from 'jotai';
 import { HatGlasses } from 'lucide-react';
 import { easings } from '@react-spring/web';
 import { EModelEndpoint } from 'librechat-data-provider';
-import { BirthdayIcon, TooltipAnchor, SplitText, useRemScale } from '@librechat/client';
+import { Button, BirthdayIcon, TooltipAnchor, SplitText, useRemScale } from '@librechat/client';
+import { useGetEndpointsQuery, useGetStartupConfig, useLocalModeQuery } from '~/data-provider';
 import { useChatContext, useAgentsMapContext, useAssistantsMapContext } from '~/Providers';
+import { useLocalize, useAuthContext, useGreeting, useRequiresKey } from '~/hooks';
 import Description, { isHtmlDescription } from '~/components/ui/Description';
-import { useGetEndpointsQuery, useGetStartupConfig } from '~/data-provider';
 import { getIconEndpoint, getEntity, getModelSpec } from '~/utils';
-import { useLocalize, useAuthContext, useGreeting } from '~/hooks';
 import { useChatSettings } from '~/Providers/ChatSettingsContext';
+import { settingsOpenAtom } from '~/components/Nav/Settings';
 import AgentContact from '~/components/Agents/AgentContact';
 import ConvoIcon from '~/components/Endpoints/ConvoIcon';
 
@@ -44,6 +46,9 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
   const { data: endpointsConfig } = useGetEndpointsQuery();
   const { user } = useAuthContext();
   const localize = useLocalize();
+  const localMode = useLocalModeQuery().data?.localMode === true;
+  const { requiresKey } = useRequiresKey();
+  const openSettings = useSetAtom(settingsOpenAtom);
   const remScale = useRemScale();
   const { isTemporary } = useChatSettings();
 
@@ -213,6 +218,16 @@ export default function Landing({ centerFormOnLanding }: { centerFormOnLanding: 
               : `animate-fadeIn mt-4 max-w-md text-center text-sm font-normal ${isTemporary ? 'text-text-secondary' : 'text-text-primary'}`
           }
         />
+        {localMode && requiresKey && (
+          <Button
+            type="button"
+            variant="outline"
+            className="mt-4"
+            onClick={() => openSettings(true)}
+          >
+            {localize('com_ui_settings_label_provider_api_keys')}
+          </Button>
+        )}
         {selectedAgent && !isTemporary && (
           <AgentContact
             agent={selectedAgent}

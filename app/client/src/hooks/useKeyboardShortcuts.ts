@@ -907,7 +907,13 @@ export function useShortcutActions(): ShortcutAction[] {
   const handleOpenAgents = useCallback(() => handleOpenPanel('agents'), [handleOpenPanel]);
   const handleOpenPrompts = useCallback(() => handleOpenPanel('prompts'), [handleOpenPanel]);
   const handleOpenMemories = useCallback(() => handleOpenPanel('memories'), [handleOpenPanel]);
-  const handleOpenParameters = useCallback(() => handleOpenPanel('parameters'), [handleOpenPanel]);
+  const handleOpenParameters = useCallback(
+    () =>
+      startupConfig?.interface?.parameters === false
+        ? handleOpenSettings()
+        : handleOpenPanel('parameters'),
+    [startupConfig?.interface?.parameters, handleOpenSettings, handleOpenPanel],
+  );
   /* The file manager moved out of the side panel and into a dialog, so there is
      no `nav-panel-files` button left for `handleOpenPanel` to find. */
   const handleOpenFiles = useCallback(() => {

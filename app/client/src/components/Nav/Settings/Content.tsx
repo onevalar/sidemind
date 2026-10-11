@@ -1,10 +1,9 @@
-import { useMemo } from 'react';
-import type { SettingsContextValue, SettingsTab, SettingEntry } from './types';
+import { useMemo, useState } from 'react';
+import type { SettingsContextValue, SettingsTab } from './types';
 import { filterSettings } from './search';
+import { getSettings } from './registry';
 import { useLocalize } from '~/hooks';
-import { registry } from './registry';
 import Section from './Section';
-import { TABS } from './types';
 
 interface ContentProps {
   activeTab: SettingsTab;
@@ -12,17 +11,15 @@ interface ContentProps {
   ctx: SettingsContextValue;
 }
 
-function visible(entry: SettingEntry, ctx: SettingsContextValue): boolean {
-  return !entry.show || entry.show(ctx);
-}
-
 export default function Content({ activeTab, query, ctx }: ContentProps) {
   const localize = useLocalize();
-  const tab = TABS.find((t) => t.id === activeTab)!;
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const { tabs, entries } = useMemo(() => getSettings(ctx), [ctx]);
+  const tab = tabs.find((t) => t.id === activeTab)!;
 
   const results = useMemo(
-    () => (query.trim() ? filterSettings(registry, query, ctx, localize) : null),
-    [query, ctx, localize],
+    () => (query.trim() ? filterSettings(entries, query, ctx, localize) : null),
+    [entries, query, ctx, localize],
   );
 
   if (results !== null) {
@@ -36,7 +33,7 @@ export default function Content({ activeTab, query, ctx }: ContentProps) {
           <div className="text-text-primary overflow-hidden rounded-xl text-sm">
             {results.map(({ entry, label }) => {
               const Cmp = entry.Component;
-              const tabMeta = TABS.find((t) => t.id === entry.tab)!;
+              const tabMeta = tabs.find((t) => t.id === entry.tab)!;
               const sectionMeta = tabMeta.sections.find((s) => s.id === entry.section);
               return (
                 <div key={entry.id} className="px-4 py-3">
@@ -54,23 +51,22 @@ export default function Content({ activeTab, query, ctx }: ContentProps) {
     );
   }
 
-  return (
-    <div>
-      {tab.sections.map((section) => {
-        const entries = registry.filter(
-          (e) => e.tab === activeTab && e.section === section.id && visible(e, ctx),
-        );
-        if (entries.length === 0) {
-          return null;
-        }
-        return (
+  const sections = tab.sections.flatMap((section) => {
+    const settings = entries.filter(
+      (entry) => entry.tab === activeTab && entry.section === section.id,
+    );
+    if (settings.length === 0) return [];
+    return [
+      {
+        advanced: section.advanced,
+        content: (
           <Section
             key={section.id}
             heading={localize(section.labelKey)}
             icon={section.icon}
             danger={section.danger}
           >
-            {entries.map((e) => {
+            {settings.map((e) => {
               const Cmp = e.Component;
               return (
                 <div key={e.id} className="px-4 py-3">
@@ -79,8 +75,26 @@ export default function Content({ activeTab, query, ctx }: ContentProps) {
               );
             })}
           </Section>
-        );
-      })}
+        ),
+      },
+    ];
+  });
+
+  return (
+    <div>
+      {sections.filter((section) => !section.advanced).map((section) => section.content)}
+      {sections.some((section) => section.advanced) && (
+        <details
+          open={advancedOpen}
+          onToggle={(event) => setAdvancedOpen(event.currentTarget.open)}
+        >
+          <summary className="text-text-secondary focus-visible:ring-focus-control min-h-11 cursor-pointer rounded-lg px-1 py-3 text-sm font-medium focus-visible:ring-2 focus-visible:outline-hidden focus-visible:ring-inset">
+            {localize('com_ui_advanced_settings')}
+          </summary>
+          {advancedOpen &&
+            sections.filter((section) => section.advanced).map((section) => section.content)}
+        </details>
+      )}
     </div>
   );
 }

@@ -97,8 +97,9 @@ interface:
           menuShadow: '0 6px 18px rgb(0 0 0 / 0.25), 0 1px 3px rgb(0 0 0 / 0.16)'
   # Keep conversations and model/endpoint selection.
   modelSelect: true
-  parameters: true
-  presets: true
+  # Model parameters and presets live in Settings > General > Advanced Settings.
+  parameters: false
+  presets: false
   # Features outside ChatGit's scope.
   agents: false
   prompts: false

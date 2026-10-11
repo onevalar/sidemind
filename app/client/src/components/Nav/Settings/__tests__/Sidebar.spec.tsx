@@ -2,8 +2,9 @@ import * as Tabs from '@radix-ui/react-tabs';
 import userEvent from '@testing-library/user-event';
 import { SettingsTabValues } from 'librechat-data-provider';
 import type { SettingsContextValue } from '../types';
-import { render, screen } from 'test/layout-test-utils';
+import { act, render, screen } from 'test/layout-test-utils';
 import Sidebar from '../Sidebar';
+import Content from '../Content';
 
 const ctx: SettingsContextValue = {
   balanceEnabled: false,
@@ -46,6 +47,20 @@ function setup(extra: Partial<SettingsContextValue> = {}, query = '') {
 }
 
 describe('Sidebar', () => {
+  it('offers only the three personal settings categories even when account features are available', () => {
+    setup({
+      localMode: true,
+      aboutEnabled: true,
+      langfuseConnectionAccess: true,
+      balanceEnabled: true,
+    });
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+      'Model connections',
+      'General',
+      'Data & Privacy',
+    ]);
+  });
+
   it('hides the About tab when build info is disabled', () => {
     setup();
     expect(screen.queryByText('About')).not.toBeInTheDocument();
@@ -97,5 +112,40 @@ describe('Sidebar', () => {
   it('hides the clear button when the query is empty', () => {
     setup({}, '');
     expect(screen.queryByRole('button', { name: /clear search/i })).not.toBeInTheDocument();
+  });
+});
+
+describe('personal settings search', () => {
+  it('finds model parameters without mounting their editor in search results', () => {
+    render(
+      <Content activeTab="connections" query="temperature" ctx={{ ...ctx, localMode: true }} />,
+    );
+    expect(screen.getByText('Model Parameters').closest('details')).not.toHaveAttribute('open');
+    expect(screen.queryByRole('slider')).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: /Reset Model Parameters/i }),
+    ).not.toBeInTheDocument();
+  });
+
+  it.each(['advanced prompts', 'delete account', 'token balance'])(
+    'does not expose hidden %s settings through search',
+    (query) => {
+      render(
+        <Content
+          activeTab="connections"
+          query={query}
+          ctx={{ ...ctx, localMode: true, balanceEnabled: true, hasPrompts: true }}
+        />,
+      );
+      expect(screen.getByText('No settings match your search')).toBeInTheDocument();
+    },
+  );
+
+  it('still finds an advanced preference without opening its collapsed group', async () => {
+    await act(async () => {
+      render(<Content activeTab="connections" query="12-hour" ctx={{ ...ctx, localMode: true }} />);
+    });
+    expect(screen.getByText('Clock Format')).toBeInTheDocument();
+    expect(screen.queryByText('No settings match your search')).not.toBeInTheDocument();
   });
 });

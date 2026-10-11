@@ -1,5 +1,5 @@
 import { SettingsTabValues } from 'librechat-data-provider';
-import type { SettingEntry } from './types';
+import type { SettingEntry, SettingsContextValue } from './types';
 import {
   unseenTabBadgeAtom,
   replyNotificationsAtom,
@@ -22,6 +22,13 @@ import {
   AutoSendTextSelector,
   DecibelSelector,
 } from '../SettingsTabs/Speech/STT';
+import {
+  toggleControl,
+  ThemeSetting,
+  LangSetting,
+  CanvasReadingSetting,
+  ModelParametersSetting,
+} from './controls';
 import DisplayUsernameMessages from '../SettingsTabs/Account/DisplayUsernameMessages';
 import ConversationModeSwitch from '../SettingsTabs/Speech/ConversationModeSwitch';
 import EnableTwoFactorItem from '../SettingsTabs/Account/TwoFactorAuthentication';
@@ -30,7 +37,6 @@ import ClockFormatSelector from '../SettingsTabs/General/ClockFormatSelector';
 import ImportConversations from '../SettingsTabs/Data/ImportConversations';
 import WeekStartSelector from '../SettingsTabs/General/WeekStartSelector';
 import { ArchiveAllChats } from '../SettingsTabs/Data/ArchiveAllChats';
-import { toggleControl, ThemeSetting, LangSetting } from './controls';
 import BackupCodesItem from '../SettingsTabs/Account/BackupCodesItem';
 import { EngineSTTSetting, EngineTTSSetting } from './SpeechControls';
 import UiScaleSelector from '../SettingsTabs/General/UiScaleSelector';
@@ -60,6 +66,7 @@ import Avatar from '../SettingsTabs/Account/Avatar';
 import CodeEnvironments from './CodeEnvironments';
 import About from '../SettingsTabs/About/About';
 import ApiKeys from '../SettingsTabs/ApiKeys';
+import { TABS, PERSONAL_TABS } from './types';
 import MemoryToggle from './MemoryToggle';
 import { TTSEndpoints } from '~/common';
 import store from '~/store';
@@ -67,6 +74,14 @@ import store from '~/store';
 const { GENERAL, CHAT, SPEECH, DATA, ACCOUNT, ABOUT } = SettingsTabValues;
 
 export const registry: SettingEntry[] = [
+  {
+    id: 'modelParameters',
+    tab: GENERAL,
+    section: 'parameters',
+    labelKey: 'com_ui_model_parameters',
+    keywords: ['temperature', 'tokens', 'top p', 'system prompt', 'reasoning', 'parameters'],
+    Component: ModelParametersSetting,
+  },
   // General · Appearance
   {
     id: 'theme',
@@ -368,6 +383,15 @@ export const registry: SettingEntry[] = [
     }),
   },
   // Chat · Messages
+  {
+    id: 'canvasReading',
+    tab: CHAT,
+    section: 'messages',
+    labelKey: 'com_canvas_reading',
+    keywords: ['canvas', 'branch', 'panel', 'dialog'],
+    show: (ctx) => ctx.localMode === true,
+    Component: CanvasReadingSetting,
+  },
   {
     id: 'enableUserMsgMarkdown',
     tab: CHAT,
@@ -716,7 +740,7 @@ export const registry: SettingEntry[] = [
     section: 'apiKeys',
     labelKey: 'com_ui_settings_label_provider_api_keys',
     keywords: ['api', 'key', 'keys', 'provider', 'endpoint', 'credentials'],
-    show: (ctx) => ctx.hasUserProvidedEndpoints,
+    show: (ctx) => ctx.localMode === true || ctx.hasUserProvidedEndpoints,
     Component: ProviderKeys,
   },
   {
@@ -841,3 +865,20 @@ export const registry: SettingEntry[] = [
     Component: About,
   },
 ];
+
+/** Navigation, content and search share the same product boundary. */
+export function getSettings(ctx: SettingsContextValue) {
+  const tabs = (ctx.localMode ? PERSONAL_TABS : TABS).filter((tab) => !tab.show || tab.show(ctx));
+  const entries = ctx.localMode
+    ? tabs.flatMap((tab) =>
+        tab.sections.flatMap((section) =>
+          (section.settingIds ?? []).map((id) => ({
+            ...registry.find((entry) => entry.id === id)!,
+            tab: tab.id,
+            section: section.id,
+          })),
+        ),
+      )
+    : registry.filter((entry) => tabs.some((tab) => tab.id === entry.tab));
+  return { tabs, entries: entries.filter((entry) => !entry.show || entry.show(ctx)) };
+}

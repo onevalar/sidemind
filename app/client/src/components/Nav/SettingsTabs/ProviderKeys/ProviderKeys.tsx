@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import {
   Label,
   Button,
+  Spinner,
   OGDialog,
   OGDialogTitle,
   OGDialogHeader,
@@ -9,7 +10,7 @@ import {
   OGDialogTrigger,
   OGDialogContent,
 } from '@librechat/client';
-import { useGetEndpointsQuery } from '~/data-provider';
+import { useGetEndpointsQuery, useLocalModeQuery } from '~/data-provider';
 import ChatGPTConnection from './ChatGPTConnection';
 import { isChatGPTEndpointConfig } from './utils';
 import useProviderKeys from './useProviderKeys';
@@ -20,13 +21,63 @@ export default function ProviderKeys() {
   const localize = useLocalize();
   const [open, setOpen] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
-  const { data: endpointsConfig } = useGetEndpointsQuery();
+  const { data: endpointsConfig, isLoading, isError, refetch } = useGetEndpointsQuery();
+  const localMode = useLocalModeQuery().data?.localMode === true;
   const endpoints = useProviderKeys();
 
   const handleOpenAutoFocus = (event: Event) => {
     event.preventDefault();
     contentRef.current?.focus();
   };
+
+  const connections = endpointsConfig && (
+    <div className="divide-border-light divide-y">
+      {endpoints.map((endpoint) =>
+        isChatGPTEndpointConfig(endpointsConfig[endpoint]) ? (
+          <ChatGPTConnection key={endpoint} endpoint={endpoint} />
+        ) : (
+          <ProviderKeyRow key={endpoint} endpoint={endpoint} endpointsConfig={endpointsConfig} />
+        ),
+      )}
+    </div>
+  );
+
+  if (localMode) {
+    let content = connections;
+    if (isLoading) {
+      content = (
+        <div role="status" className="text-text-secondary flex items-center gap-2 text-sm">
+          <Spinner className="size-4" aria-hidden="true" />
+          {localize('com_ui_loading')}
+        </div>
+      );
+    } else if (isError) {
+      content = (
+        <div className="space-y-2">
+          <p role="alert" className="text-text-destructive text-sm">
+            {localize('com_ui_model_connections_load_error')}
+          </p>
+          <Button variant="outline" onClick={() => refetch()}>
+            {localize('com_ui_retry')}
+          </Button>
+        </div>
+      );
+    } else if (endpoints.length === 0) {
+      content = (
+        <p role="status" className="text-text-secondary text-sm">
+          {localize('com_ui_model_connections_empty')}
+        </p>
+      );
+    }
+    return (
+      <div className="space-y-4">
+        <p className="text-text-secondary text-sm">
+          {localize('com_ui_provider_api_keys_description')}
+        </p>
+        {content}
+      </div>
+    );
+  }
 
   return (
     <div className="flex items-center justify-between">
@@ -53,21 +104,7 @@ export default function ProviderKeys() {
               <InfoHoverCard text={localize('com_ui_provider_api_keys_description')} />
             </div>
           </OGDialogHeader>
-          {endpointsConfig && (
-            <div className="divide-border-light divide-y">
-              {endpoints.map((endpoint) =>
-                isChatGPTEndpointConfig(endpointsConfig[endpoint]) ? (
-                  <ChatGPTConnection key={endpoint} endpoint={endpoint} />
-                ) : (
-                  <ProviderKeyRow
-                    key={endpoint}
-                    endpoint={endpoint}
-                    endpointsConfig={endpointsConfig}
-                  />
-                ),
-              )}
-            </div>
-          )}
+          {connections}
         </OGDialogContent>
       </OGDialog>
     </div>

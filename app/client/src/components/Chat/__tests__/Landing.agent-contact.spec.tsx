@@ -38,10 +38,12 @@ jest.mock('~/Providers', () => ({
 jest.mock('~/data-provider', () => ({
   useGetStartupConfig: () => ({ data: { interface: {} } }),
   useGetEndpointsQuery: () => ({ data: {} }),
+  useLocalModeQuery: () => ({ data: { localMode: false } }),
 }));
 
 jest.mock('~/hooks', () => ({
   useAuthContext: () => ({ user: undefined }),
+  useRequiresKey: () => ({ requiresKey: false }),
   useGreeting: () => 'Welcome',
   useLocalize: () => (key: string) => {
     const translations: Record<string, string> = {
@@ -86,6 +88,10 @@ jest.mock('~/utils', () => ({
 }));
 
 jest.mock('~/components/Endpoints/ConvoIcon', () => () => <span data-testid="convo-icon" />);
+
+jest.mock('~/components/Nav/Settings', () => ({
+  settingsOpenAtom: jest.requireActual('jotai').atom(false),
+}));
 
 function renderLanding({ isTemporary = false }: { isTemporary?: boolean } = {}) {
   return render(

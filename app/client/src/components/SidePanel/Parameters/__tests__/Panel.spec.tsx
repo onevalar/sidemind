@@ -1,12 +1,15 @@
-import React, { useState } from 'react';
+import React from 'react';
+import { RecoilRoot, useRecoilState } from 'recoil';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { QueryKeys, EModelEndpoint, tConvoUpdateSchema } from 'librechat-data-provider';
 import type { TConversation, TStartupConfig, TEndpointsConfig } from 'librechat-data-provider';
 import { render, screen, fireEvent, waitFor } from 'test/layout-test-utils';
+import { ModelParametersSetting } from '~/components/Nav/Settings/controls';
 import { startupConfigKey } from '~/data-provider/Endpoints/queries';
 import AnnouncerContext from '~/Providers/AnnouncerContext';
 import { ChatContext } from '~/Providers';
 import Parameters from '../Panel';
+import store from '~/store';
 
 const saved = { thinking: false, thinkingBudget: 4096, temperature: 0.7, topP: 0.9, topK: 40 };
 
@@ -15,9 +18,12 @@ function setup(
   model: string,
   startupConfig: Partial<TStartupConfig> = {},
   restored?: TConversation,
+  advanced = false,
 ) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const endpoints: TEndpointsConfig = {
+    anthropic: { order: 1 },
+    bedrock: { order: 2 },
     'custom-anthropic': {
       order: 0,
       type: EModelEndpoint.custom,
@@ -28,15 +34,7 @@ function setup(
   queryClient.setQueryData(startupConfigKey(false), startupConfig);
 
   function Conversation() {
-    const [conversation, setConversation] = useState<TConversation | null>(
-      restored ??
-        ({
-          ...saved,
-          endpoint,
-          model,
-          conversationId: 'saved-conversation',
-        } as TConversation),
-    );
+    const [conversation, setConversation] = useRecoilState(store.conversationByIndex(0));
     const value = { conversation, setConversation, preset: null } as React.ContextType<
       typeof ChatContext
     >;
@@ -57,13 +55,25 @@ function setup(
           <AnnouncerContext.Provider
             value={{ announcePolite: jest.fn(), announceAssertive: jest.fn() }}
           >
-            <Parameters />
+            {advanced ? <ModelParametersSetting /> : <Parameters />}
           </AnnouncerContext.Provider>
         </ChatContext.Provider>
       </QueryClientProvider>
     );
   }
-  return render(<Conversation />);
+  return render(
+    <RecoilRoot
+      initializeState={({ set }) =>
+        set(
+          store.conversationByIndex(0),
+          restored ??
+            ({ ...saved, endpoint, model, conversationId: 'saved-conversation' } as TConversation),
+        )
+      }
+    >
+      <Conversation />
+    </RecoilRoot>,
+  );
 }
 
 const readConversation = (): TConversation =>
@@ -74,6 +84,27 @@ describe.each([
   [EModelEndpoint.bedrock, 'global.anthropic.claude-opus-5'],
   ['custom-anthropic', 'claude-opus-5'],
 ])('%s conversation parameters', (endpoint, model) => {
+  it('keeps values while advanced settings are closed and edits the same conversation when opened', async () => {
+    setup(endpoint, model, {}, undefined, true);
+    const disclosure = screen.getByText('Model Parameters');
+    expect(disclosure.closest('details')).not.toHaveAttribute('open');
+    expect(screen.queryByRole('slider', { name: 'Temperature' })).not.toBeInTheDocument();
+    expect(readConversation()).toMatchObject(saved);
+
+    fireEvent.click(disclosure);
+    const temperature = await screen.findByRole('slider', { name: 'Temperature' });
+    expect(temperature).toHaveAttribute('aria-valuenow', '0.7');
+    fireEvent.keyDown(temperature, { key: 'ArrowRight' });
+    await waitFor(() => expect(readConversation().temperature).toBeCloseTo(0.71));
+    expect(readConversation()).toMatchObject({ topP: 0.9, topK: 40, thinkingBudget: 4096 });
+
+    fireEvent.click(disclosure);
+    await waitFor(() =>
+      expect(screen.queryByRole('slider', { name: 'Temperature' })).not.toBeInTheDocument(),
+    );
+    expect(readConversation().temperature).toBeCloseTo(0.71);
+  });
+
   it('preserves hidden settings through the pruning effect and preset serialization', async () => {
     const { unmount } = setup(endpoint, model);
     expect(screen.getByRole('switch', { name: 'Thinking' })).not.toBeChecked();

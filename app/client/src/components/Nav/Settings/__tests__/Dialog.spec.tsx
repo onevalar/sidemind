@@ -3,6 +3,13 @@ import userEvent from '@testing-library/user-event';
 import { render, screen } from 'test/layout-test-utils';
 import { SettingsDialog } from '../index';
 
+let mockLocalMode = false;
+
+jest.mock('~/data-provider', () => ({
+  ...jest.requireActual('~/data-provider'),
+  useLocalModeQuery: () => ({ data: { localMode: mockLocalMode } }),
+}));
+
 jest.mock('../Content', () =>
   jest.fn(({ query }: { activeTab: string; query: string; ctx: unknown }) =>
     query.trim() ? (
@@ -16,6 +23,19 @@ jest.mock('../Content', () =>
 );
 
 describe('SettingsDialog', () => {
+  afterEach(() => {
+    mockLocalMode = false;
+  });
+
+  it('starts the personal workspace on model connections', () => {
+    mockLocalMode = true;
+    render(<SettingsDialog open onOpenChange={jest.fn()} />);
+    expect(
+      screen.getByRole('tab', { name: 'Model connections', selected: true }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByRole('tab')).toHaveLength(3);
+  });
+
   it('renders the General tab by default with its sections', () => {
     render(<SettingsDialog open onOpenChange={jest.fn()} />);
     expect(screen.getByRole('heading', { name: /settings/i, level: 2 })).toBeInTheDocument();

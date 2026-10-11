@@ -1,8 +1,8 @@
 import * as Tabs from '@radix-ui/react-tabs';
 import { Search, X, ChevronRight } from 'lucide-react';
 import type { SettingsContextValue, SettingsTab } from './types';
+import { getSettings } from './registry';
 import { useLocalize } from '~/hooks';
-import { TABS } from './types';
 import { cn } from '~/utils';
 
 interface SidebarProps {
@@ -26,7 +26,7 @@ export default function Sidebar({
   stacked = false,
 }: SidebarProps) {
   const localize = useLocalize();
-  const tabs = TABS.filter((t) => !t.show || t.show(ctx));
+  const { tabs } = getSettings(ctx);
 
   return (
     <div

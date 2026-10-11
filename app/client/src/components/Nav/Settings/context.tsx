@@ -9,13 +9,14 @@ import {
 import type { SettingsContextValue } from './types';
 import useProviderKeys from '../SettingsTabs/ProviderKeys/useProviderKeys';
 import { useHasAccess, useAuthContext, useGetAgentsConfig } from '~/hooks';
+import { useGetStartupConfig, useLocalModeQuery } from '~/data-provider';
 import usePersonalizationAccess from '~/hooks/usePersonalizationAccess';
-import { useGetStartupConfig } from '~/data-provider';
 import store from '~/store';
 
 export function useSettingsContext(): SettingsContextValue {
   const { user } = useAuthContext();
   const { data: startupConfig } = useGetStartupConfig();
+  const localMode = useLocalModeQuery().data?.localMode === true;
   const { agentsConfig } = useGetAgentsConfig();
   const { hasAnyPersonalizationFeature, hasMemoryOptOut } = usePersonalizationAccess();
 
@@ -63,6 +64,7 @@ export function useSettingsContext(): SettingsContextValue {
 
   return useMemo(
     () => ({
+      localMode,
       balanceEnabled,
       hasAnyPersonalizationFeature,
       hasMemoryOptOut,
@@ -87,6 +89,7 @@ export function useSettingsContext(): SettingsContextValue {
       replyNotificationSoundAllowed,
     }),
     [
+      localMode,
       balanceEnabled,
       hasAnyPersonalizationFeature,
       hasMemoryOptOut,

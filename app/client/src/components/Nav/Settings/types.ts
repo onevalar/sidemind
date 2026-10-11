@@ -1,11 +1,12 @@
 import { createElement } from 'react';
-import { MessageSquare, Info } from 'lucide-react';
+import { MessageSquare, Info, Plug } from 'lucide-react';
 import { SettingsTabValues } from 'librechat-data-provider';
 import { GearIcon, DataIcon, UserIcon, SpeechIcon } from '@librechat/client';
 import type { ComponentType, ReactNode } from 'react';
 import type { TranslationKeys } from '~/hooks';
 
 export type SettingsTab =
+  | 'connections'
   | SettingsTabValues.GENERAL
   | SettingsTabValues.CHAT
   | SettingsTabValues.SPEECH
@@ -24,6 +25,7 @@ export type SectionId =
   | 'commands'
   | 'messages'
   | 'conversations'
+  | 'parameters'
   | 'prompts'
   | 'stt'
   | 'tts'
@@ -39,6 +41,7 @@ export type SectionId =
   | 'about';
 
 export interface SettingsContextValue {
+  localMode?: boolean;
   balanceEnabled: boolean;
   hasAnyPersonalizationFeature: boolean;
   hasMemoryOptOut: boolean;
@@ -78,6 +81,9 @@ export interface SectionMeta {
   labelKey: TranslationKeys;
   icon?: ReactNode;
   danger?: boolean;
+  advanced?: boolean;
+  /** Personal mode reuses only these settings, in this order. */
+  settingIds?: string[];
 }
 
 export interface TabMeta {
@@ -110,6 +116,7 @@ export const TABS: TabMeta[] = [
       { id: 'notifications', labelKey: 'com_ui_settings_section_notifications' },
       { id: 'accessibility', labelKey: 'com_ui_settings_section_accessibility' },
       { id: 'admin', labelKey: 'com_ui_settings_section_admin' },
+      { id: 'parameters', labelKey: 'com_ui_settings_section_conversations', advanced: true },
     ],
   },
   {
@@ -175,5 +182,117 @@ export const TABS: TabMeta[] = [
     icon: createElement(Info, { className: 'icon-sm', 'aria-hidden': true }),
     sections: [{ id: 'about', labelKey: 'com_nav_setting_about' }],
     show: (ctx) => ctx.aboutEnabled,
+  },
+];
+
+export const PERSONAL_TABS: TabMeta[] = [
+  {
+    id: 'connections',
+    labelKey: 'com_ui_settings_label_provider_api_keys',
+    icon: createElement(Plug, { className: 'icon-sm', 'aria-hidden': true }),
+    sections: [
+      {
+        id: 'apiKeys',
+        labelKey: 'com_ui_settings_label_provider_api_keys',
+        settingIds: ['providerApiKeys'],
+      },
+    ],
+  },
+  {
+    id: SettingsTabValues.GENERAL,
+    labelKey: 'com_nav_setting_general',
+    icon: createElement(GearIcon),
+    sections: [
+      {
+        id: 'appearance',
+        labelKey: 'com_ui_settings_section_appearance',
+        settingIds: ['theme', 'language', 'fontSize', 'uiScale'],
+      },
+      {
+        id: 'sending',
+        labelKey: 'com_ui_settings_section_sending',
+        settingIds: ['enterToSend', 'saveDrafts'],
+      },
+      {
+        id: 'messages',
+        labelKey: 'com_ui_settings_section_messages',
+        settingIds: ['canvasReading', 'collapseLongUserMessages', 'autoScroll'],
+      },
+      {
+        id: 'parameters',
+        labelKey: 'com_ui_settings_section_conversations',
+        advanced: true,
+        settingIds: ['modelParameters'],
+      },
+      {
+        id: 'layout',
+        labelKey: 'com_ui_settings_section_layout',
+        advanced: true,
+        settingIds: ['chatDirection', 'clockFormat', 'maximizeChatSpace', 'chatTitleInTab'],
+      },
+      {
+        id: 'notifications',
+        labelKey: 'com_ui_settings_section_notifications',
+        advanced: true,
+        settingIds: ['unseenTabBadge', 'replyNotifications', 'replyNotificationSound'],
+      },
+      {
+        id: 'conversations',
+        labelKey: 'com_ui_settings_section_conversations',
+        advanced: true,
+        settingIds: ['showThinking', 'smoothStreaming', 'copyRichText', 'keepScreenAwake'],
+      },
+      {
+        id: 'stt',
+        labelKey: 'com_ui_settings_section_stt',
+        advanced: true,
+        settingIds: [
+          'speechToText',
+          'engineSTT',
+          'languageSTT',
+          'autoTranscribeAudio',
+          'autoSendText',
+          'decibelValue',
+        ],
+      },
+      {
+        id: 'tts',
+        labelKey: 'com_ui_settings_section_tts',
+        advanced: true,
+        settingIds: [
+          'textToSpeech',
+          'engineTTS',
+          'voice',
+          'conversationMode',
+          'automaticPlayback',
+          'cloudBrowserVoices',
+          'playbackRate',
+          'cacheTTS',
+        ],
+      },
+    ],
+  },
+  {
+    id: SettingsTabValues.DATA,
+    labelKey: 'com_ui_settings_tab_data',
+    icon: createElement(DataIcon),
+    sections: [
+      {
+        id: 'data',
+        labelKey: 'com_ui_settings_section_data',
+        settingIds: ['importConversations', 'manageFiles', 'archiveAllChats'],
+      },
+      {
+        id: 'danger',
+        labelKey: 'com_ui_settings_section_danger_zone',
+        danger: true,
+        settingIds: ['revokeKeys', 'clearChats'],
+      },
+      {
+        id: 'about',
+        labelKey: 'com_nav_setting_about',
+        settingIds: ['about'],
+      },
+    ],
   },
 ];
