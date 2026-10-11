@@ -1,11 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
-import { Command } from '@onevalar/pro/command'
+import { CommandPalette, type CommandItem } from './components/arc/command-palette/command-palette'
 import type { NoteSummary } from '../shared/types'
 import { api } from './api'
-import { Button, Icon } from './ui'
+import { Button, Dialog, Icon, SegmentedControl } from './ui'
 
 type SearchResult = NoteSummary & { snippet?: string }
-const alreadyFiltered = () => true
 
 export function QuickSearch({ notes, spaces, reference = false, onClose, onNote, onSpace, onNew }: {
   notes: NoteSummary[]; spaces: string[]; reference?: boolean; onClose: () => void
@@ -14,7 +13,7 @@ export function QuickSearch({ notes, spaces, reference = false, onClose, onNote,
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState<'notes' | 'spaces'>('notes')
   const [remote, setRemote] = useState<{ query: string; items: SearchResult[]; error?: string } | null>(null)
-  const input = useRef<HTMLInputElement>(null)
+  const panel = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (!query.trim() || category !== 'notes') return
     const controller = new AbortController()
@@ -31,34 +30,21 @@ export function QuickSearch({ notes, spaces, reference = false, onClose, onNote,
   const found: SearchResult[] = query.trim() ? remote?.query === query ? remote.items : [] : notes
   const foundSpaces = spaces.filter(space => (space || '笔记文件夹').toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()))
   const error = category === 'notes' && remote?.query === query ? remote.error : undefined
-  const changeCategory = (next: 'notes' | 'spaces') => { setCategory(next); input.current?.focus() }
-  return <div style={{ display: 'contents' }} onKeyDownCapture={event => {
+  const items: CommandItem[] = category === 'notes' ? found.map(note => ({
+    id: note.name, label: note.title, group: '文章', icon: <Icon name="note"/>,
+    description: (note.space || '笔记文件夹') + ' · ' + (query.trim() ? note.snippet || note.excerpt : note.excerpt || '还没有正文'),
+  })) : foundSpaces.map(space => ({ id: space || '/', label: space || '笔记文件夹', group: '文件夹', icon: <Icon name="folder"/>, description: notes.filter(note => note.space === space).length + ' 篇文章' }))
+  return <Dialog title={reference ? '引用文章' : '搜索文章和文件夹'} open onClose={onClose} className="search-dialog" onOpenAutoFocus={event => { event.preventDefault(); panel.current?.querySelector<HTMLInputElement>('[role="combobox"]')?.focus() }}><div ref={panel} onKeyDownCapture={event => {
     if (event.key === 'Escape' && !event.nativeEvent.isComposing) { event.preventDefault(); event.stopPropagation(); onClose() }
-  }}><Command><Command.Backdrop isOpen onOpenChange={open => { if (!open) onClose() }}><Command.Container size="lg">
-    <Command.Dialog aria-label={reference ? '引用笔记' : '搜索文章和文件夹'} inputValue={query} onInputChange={setQuery} filter={alreadyFiltered}>
-      <Command.InputGroup aria-label={reference ? '查找要引用的笔记' : '搜索标题或正文'}>
-        <Command.InputGroup.Prefix><Icon name="search"/></Command.InputGroup.Prefix>
-        <Command.InputGroup.Input ref={input} placeholder={category === 'spaces' ? '搜索文件夹…' : '搜索标题或正文…'}/>
-        <Command.InputGroup.Suffix><Button variant="ghost" size="sm" aria-label="关闭搜索" onPress={onClose}>Esc</Button></Command.InputGroup.Suffix>
-      </Command.InputGroup>
-      <Command.Header>
-        {reference ? <span className="muted">选择笔记，添加到快速记录</span> : <>
-          <Button variant="ghost" size="sm" onPress={onNew}><Icon name="plus" size={14}/>新建笔记</Button>
-          <Button variant={category === 'notes' ? 'secondary' : 'ghost'} size="sm" aria-pressed={category === 'notes'} onPress={() => changeCategory('notes')}>所有笔记</Button>
-          <Button variant={category === 'spaces' ? 'secondary' : 'ghost'} size="sm" aria-pressed={category === 'spaces'} onPress={() => changeCategory('spaces')}>文件夹</Button>
-        </>}
-      </Command.Header>
-      {error && <p role="alert" className="search-error error-text">搜索失败：{error}</p>}
-      <Command.List key={category} aria-label={category === 'notes' ? '笔记结果' : '文件夹结果'} aria-busy={searching}
-        renderEmptyState={() => searching ? '正在搜索…' : error ? '请修改关键词后重试。' : '没有找到匹配的' + (category === 'notes' ? '文章' : '文件夹')}
-        onAction={key => { if (category === 'spaces') onSpace(key === '/' ? '' : String(key)); else onNote(String(key)) }}>
-        {category === 'notes' ? found.map(note => <Command.Item key={note.name} id={note.name} textValue={note.title} className="note-command-result">
-          <Icon name="note"/><span className="command-note-text"><strong>{note.title}</strong><small>{note.space || '笔记文件夹'} · {query.trim() ? note.snippet || note.excerpt : note.excerpt || '还没有正文'}</small></span><span className="command-enter" aria-hidden="true">↵</span>
-        </Command.Item>) : foundSpaces.map(space => <Command.Item key={space} id={space || '/'} textValue={space || '笔记文件夹'}>
-          <Icon name="folder"/><span>{space || '笔记文件夹'}</span><span className="command-space-count muted">{notes.filter(note => note.space === space).length} 篇文章</span>
-        </Command.Item>)}
-      </Command.List>
-      <Command.Footer><span>↑ ↓ 选择 · ↵ {reference ? '引用' : '打开'}</span><span>Esc 关闭</span></Command.Footer>
-    </Command.Dialog>
-  </Command.Container></Command.Backdrop></Command></div>
+  }}>
+    <div className="search-toolbar">{reference ? <p className="muted">选择文章，添加到新建笔记。</p> : <>
+      <SegmentedControl label="搜索范围" value={category} options={[{ value: 'notes', label: '所有文章' }, { value: 'spaces', label: '文件夹' }]} onValueChange={value => { setCategory(value as typeof category); panel.current?.querySelector<HTMLInputElement>('[role="combobox"]')?.focus() }}/>
+      <Button variant="ghost" size="sm" onPress={onNew}><Icon name="plus" size={16}/>新建文章</Button>
+    </>}</div>
+    {error && <p role="alert" className="search-error error-text">搜索失败：{error}</p>}
+    <CommandPalette className="search-palette" key={category} items={items} query={query} onQueryChange={setQuery} filter={false} autoFocus loading={searching}
+      label={reference ? '查找要引用的笔记' : category === 'spaces' ? '搜索文件夹' : '搜索标题或正文'} placeholder={category === 'spaces' ? '搜索文件夹…' : '搜索标题或正文…'}
+      emptyMessage={error ? '请修改关键词后重试。' : '没有找到匹配的' + (category === 'notes' ? '文章' : '文件夹')}
+      onSelect={item => { if (category === 'spaces') onSpace(item.id === '/' ? '' : item.id); else onNote(item.id) }}/>
+  </div></Dialog>
 }

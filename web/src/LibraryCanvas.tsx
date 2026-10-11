@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import { applyNodeChanges, Background, Controls, NodeResizeControl, ReactFlow, type Node, type NodeProps, type ReactFlowInstance, type Viewport } from '@xyflow/react'
+import { applyNodeChanges, Controls, NodeResizeControl, ReactFlow, type Node, type NodeProps, type ReactFlowInstance, type Viewport } from '@xyflow/react'
 import type { CanvasFrame, CanvasLayout, NotePosition, NoteSummary } from '../shared/types'
 import { api, subscribeEvents } from './api'
 import { Button, Dialog, Icon, Input } from './ui'
@@ -21,10 +21,10 @@ function minimumSize(frame: CanvasFrame, positions: CanvasLayout['positions']) {
 function ArticleCard({ data }: NodeProps<ArticleNode>) {
   return <button type="button" className={'article-card' + (data.chosen ? ' is-selected' : '')} aria-label={data.note.title}
     aria-pressed={data.chosen} onClick={data.choose} onFocus={data.choose} onDoubleClick={data.open}>
-    <span className="article-label"><Icon name={data.frameTitle ? 'group' : 'note'} size={15}/><span>{data.frameTitle || 'Markdown'}</span></span>
+    {data.frameTitle && <span className="article-label"><Icon name="group" size={14}/><span>{data.frameTitle}</span></span>}
     <strong title={data.note.title}>{data.note.title}</strong>
     <span className="article-summary">{data.note.excerpt || '还没有正文，双击开始写作。'}</span>
-    <span className="article-footer">{data.note.name.split('/').at(-1)}</span>
+    <span className="article-footer"><Icon name="note" size={13}/><span>{data.note.name.split('/').at(-1)}</span></span>
   </button>
 }
 function FrameCard({ data }: NodeProps<FrameNode>) {
@@ -199,20 +199,21 @@ export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOp
   }}>
     <div className="canvas">
       <ReactFlow nodes={nodes} nodeTypes={nodeTypes} colorMode={theme} defaultViewport={viewport} onInit={instance => { flow.current = instance }} nodesDraggable={ready}
+        ariaLabelConfig={{ 'controls.zoomIn.ariaLabel': '放大画布', 'controls.zoomOut.ariaLabel': '缩小画布', 'controls.fitView.ariaLabel': '查看全部文章' }}
         onMoveEnd={(_, view) => onViewport(view)} onNodesChange={changes => apply(applyNodeChanges(changes, nodeRef.current))}
         onNodeDragStart={(_, node) => setChosen(node.id)} onNodeDragStop={(_, node) => {
           if (node.type === 'frame') moveFrame(node.data.frame.id, node.position); else moveArticle(node.id, absolutePosition(node))
         }}
         onPaneClick={() => setChosen(null)} nodesConnectable={false} nodesFocusable={false} elementsSelectable={false}
         deleteKeyCode={null} zoomOnDoubleClick={false} minZoom={.2} maxZoom={2} panOnScroll>
-        <Background gap={24} size={1}/><Controls showInteractive={false}/>
+        <Controls showInteractive={false}/>
       </ReactFlow>
     </div>
     {ready && !notes.length && !layout.frames.length && <div className="canvas-empty canvas-empty-overlay"><Icon name="grid" size={30}/><h1>为想法留一个位置</h1><p className="muted">创建文章自由摆放，或先建底板划分主题区域。</p><Button onPress={onCreate}><Icon name="plus"/>创建第一篇文章</Button></div>}
-    <Button className="canvas-add-frame" size="sm" variant="outline" isDisabled={!ready} onPress={() => { setFormError(''); setForm({ id: null, title: '', width: '640', height: '320' }) }}><Icon name="group" size={16}/>新建底板</Button>
+    <Button className="canvas-add-frame" size="sm" variant="ghost" isDisabled={!ready} onPress={() => { setFormError(''); setForm({ id: null, title: '', width: '640', height: '320' }) }}><Icon name="group" size={16}/>新建底板</Button>
     <span className="layout-status muted" role="status">{saving ? '正在保存布局…' : error ? '布局未保存' : ready ? '布局已保存' : '正在载入布局…'}</span>
     {error && <div className="banner" role="alert"><span>{error}</span><div className="toolbar"><Button size="sm" variant="outline" isDisabled={saving} onPress={() => pendingVersion.current !== null ? persist(layoutRef.current, {}) : void loadAction.current()}>重试</Button>{pendingVersion.current !== null && <Button size="sm" variant="ghost" isDisabled={saving} onPress={() => setReloadOpen(true)}>重新载入</Button>}</div></div>}
-    <div className="canvas-actions">{selectedFrame ? <><span>{selectedFrame.members.length} 篇文章 · 拖动标题整组移动</span><Button variant="outline" size="sm" onPress={() => editFrame(selectedFrame)}>编辑底板</Button></> : chosen ? <><Button variant="ghost" size="sm" onPress={() => onPreview(chosen)}>预览 <kbd>空格</kbd></Button><Button variant="outline" size="sm" onPress={() => onOpen(chosen)}>打开文章 <kbd>↵</kbd></Button></> : <span>拖动文章安排位置 · 双击打开 · 选中后空格预览</span>}</div>
+    <div className={'canvas-actions' + (chosen ? '' : ' is-idle')}>{selectedFrame ? <><span>{selectedFrame.members.length} 篇文章 · 拖动标题整组移动</span><Button variant="secondary" size="sm" onPress={() => editFrame(selectedFrame)}>编辑底板</Button></> : chosen ? <><Button variant="ghost" size="sm" onPress={() => onPreview(chosen)}>预览</Button><Button variant="secondary" size="sm" onPress={() => onOpen(chosen)}>打开文章</Button></> : <span>拖动卡片整理思路 · 双击继续写作</span>}</div>
     <Dialog title={form?.id ? '编辑主题底板' : '新建主题底板'} open={!!form} onClose={() => setForm(null)} footer={<>
       {form?.id && <Button variant="ghost" onPress={() => { const current = layoutRef.current; persist({ ...current, frames: current.frames.filter(frame => frame.id !== form.id) }, {}); setForm(null); setChosen(null) }}>解散底板</Button>}
       <Button variant="ghost" onPress={() => setForm(null)}>取消</Button><Button type="submit" form="theme-frame-form" isDisabled={!form?.title.trim()}>{form?.id ? '保存底板' : '创建底板'}</Button>

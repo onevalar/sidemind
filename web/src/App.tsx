@@ -8,7 +8,8 @@ import { AIConnectionSettings } from './AIConnectionSettings'
 import { ChatGPTSettings } from './ChatGPTSettings'
 import { QuickSearch } from './QuickSearch'
 import { captureContent } from './note-links'
-import { Button, Dialog, Icon, IconButton, Input, TextArea } from './ui'
+import { Button, Dialog, Icon, IconButton, Input, TextArea, Select, SegmentedControl } from './ui'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/arc/tabs/tabs'
 
 const loadNoteWorkspace = () => import('./NoteWorkspace')
 
@@ -42,6 +43,7 @@ export function App() {
   const [newFolderOpen, setNewFolderOpen] = useState(false)
   const [folderName, setFolderName] = useState('')
   const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('canvas.theme') as Theme) || 'system')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('canvas.sidebar-collapsed') === 'true')
   const [views] = useState(() => { try { return new Map<string, Viewport>(JSON.parse(localStorage.getItem('canvas.views') || '[]')) } catch { return new Map<string, Viewport>() } })
   const systemDark = useSyncExternalStore(subscribeAppearance, () => darkPreference().matches, () => false)
   const resolvedTheme = theme === 'system' ? systemDark ? 'dark' : 'light' : theme
@@ -75,9 +77,10 @@ export function App() {
     return () => { active = false; clearTimeout(timer) }
   }, [loaded])
   useEffect(() => {
-    document.documentElement.dataset.theme = 'linear-' + resolvedTheme
+    document.documentElement.dataset.theme = resolvedTheme
     localStorage.setItem('canvas.theme', theme)
   }, [theme, resolvedTheme])
+  useEffect(() => { localStorage.setItem('canvas.sidebar-collapsed', String(sidebarCollapsed)) }, [sidebarCollapsed])
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing || event.repeat || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return
@@ -135,49 +138,65 @@ export function App() {
     finally { folderRequest.current = false; setOpeningFolder(false) }
   }
   const addFolder = async () => {
-    if (busy || !folderName.trim()) return
-    setBusy(true); setFormError('')
+    if (creating.current || !folderName.trim()) return
+    creating.current = true; setBusy(true); setFormError('')
     try {
       if (!await beforeLeave.current()) { setFormError('请先保存当前文章或画布位置。'); return }
       const folder = (space ? space + '/' : '') + folderName.trim()
       await api.createFolder(folder); await refreshList(); setFolderName(''); setNewFolderOpen(false); await navigate(null, folder)
     } catch (error) { setFormError((error as Error).message) }
-    finally { setBusy(false) }
+    finally { creating.current = false; setBusy(false) }
   }
   const visible = useMemo(() => notes.filter(note => note.space === space), [notes, space])
   const recent = notes.filter(note => note.lastOpenedAt > 0).sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
   const aiModel = settings?.chatgpt.unavailable ? null : settings?.chatgpt.activeAccountId ? settings.chatgpt.configured ? 'ChatGPT · ' + settings.chatgpt.model : null : settings?.ai.configured ? settings.ai.model : null
-  return <div className="app">
-    <aside className="sidebar">
-      <div className="brand"><span className="brand-mark"><Icon name="note" size={19}/></span><strong>Canvas Note</strong></div>
-      <Button aria-label="搜索笔记" className="search-trigger" variant="outline" onPress={() => setSearchOpen(true)}><Icon name="search" size={16}/><span>搜索文章</span><kbd>⌘ K</kbd></Button>
-      <Button aria-label="新建文章" className="nav-item" variant="ghost" onPress={openCreate} isDisabled={busy}><Icon name="plus"/><span>新建文章</span></Button>
+  return <div className={'app' + (sidebarCollapsed ? ' sidebar-collapsed' : '')}>
+    <aside className="sidebar" aria-label="笔记导航">
+      <div className="brand"><span className="brand-mark"><Icon name="note" size={19}/></span><strong>Canvas Note</strong><Button variant="ghost" size="sm" isIconOnly aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} aria-expanded={!sidebarCollapsed} aria-controls="sidebar-navigation" onPress={() => setSidebarCollapsed(value => !value)}><Icon name="panel"/></Button></div>
+      <button type="button" aria-label="搜索笔记" className="search-trigger nav-item" onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span>搜索文章</span></button>
+      <button type="button" aria-label="新建文章" className="nav-item" onClick={openCreate} disabled={busy}><Icon name="plus"/><span>新建文章</span></button>
+      {sidebarCollapsed && <IconButton icon="grid" label="返回当前文件夹画布" onPress={() => void navigate(null)}/>}
+      <div id="sidebar-navigation" className="sidebar-navigation" hidden={sidebarCollapsed}>
       <div className="section-header sidebar-section"><span className="section-label">文件夹画布</span><IconButton icon="plus" label="新建文件夹" onPress={() => { setFormError(''); setNewFolderOpen(true) }}/></div>
-      <nav className="spaces" aria-label="文件夹">{folders.map(folder => <Button aria-label={folderLabel(folder)} key={folder} className={'nav-item ' + (space === folder && !selected ? 'is-active' : '')} variant="ghost" onPress={() => void navigate(null, folder)}><Icon name="folder" size={16}/><span>{folderLabel(folder)}</span><span className="count">{notes.filter(note => note.space === folder).length}</span></Button>)}</nav>
+      <nav className="spaces" aria-label="文件夹">{folders.map(folder => <button type="button" aria-label={folderLabel(folder)} aria-current={space === folder && !selected ? 'page' : undefined} key={folder} className={'nav-item ' + (space === folder && !selected ? 'is-active' : '')} onClick={() => void navigate(null, folder)}><Icon name="folder" size={16}/><span title={folderLabel(folder)}>{folderLabel(folder)}</span><span className="count">{notes.filter(note => note.space === folder).length}</span></button>)}</nav>
       <span className="section-label sidebar-section">最近打开</span>
-      <div className="recent-notes">{recent.slice(0, 8).map(note => <Button aria-label={note.title} key={note.name} className={'nav-item ' + (selected === note.name ? 'is-active' : '')} variant="ghost" onPress={() => openNote(note.name)}><Icon name="note" size={15}/><span>{note.title}</span></Button>)}{!recent.length && <p className="recent-empty muted">打开过的文章会显示在这里。</p>}</div>
-      <div className="sidebar-footer"><div className="local-status"><span className="status-dot"/>Markdown · 布局独立保存</div><Button aria-label="设置与外观" className="nav-item" variant="ghost" onPress={() => setSettingsOpen(true)}><Icon name="settings" size={16}/><span>设置与外观</span></Button></div>
+      <div className="recent-notes">{recent.slice(0, 8).map(note => <button type="button" aria-label={note.title} aria-current={selected === note.name ? 'page' : undefined} key={note.name} className={'nav-item ' + (selected === note.name ? 'is-active' : '')} onClick={() => openNote(note.name)}><Icon name="note" size={16}/><span title={note.title}>{note.title}</span></button>)}{!recent.length && <p className="recent-empty muted">打开过的文章会显示在这里。</p>}</div>
+      </div>
+      <div className="sidebar-footer"><button type="button" aria-label="设置与外观" className="nav-item" onClick={() => setSettingsOpen(true)}><Icon name="settings" size={18}/><span>设置与外观</span></button></div>
     </aside>
     <main className="stage">
       {error && <div className="global-error" role="alert"><span>{error}</span><Button size="sm" variant="ghost" onPress={() => void refreshList()}>重试</Button><IconButton icon="close" label="关闭提示" onPress={() => setError('')}/></div>}
       {selected && NoteWorkspace ? <NoteWorkspace key={selected} name={selected} theme={resolvedTheme} beforeLeave={beforeLeave} onOpenNote={openNote} onBack={() => void navigate(null)} aiModel={aiModel} onConfigureAI={() => setSettingsOpen(true)} onUpdated={refreshList}/> : <>
-        <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="ghost" className="open-folder-button" aria-label="在系统文件管理器中打开笔记工作区" onPress={() => void openFolder()} isDisabled={openingFolder}><Icon name="folder" size={16}/>{openingFolder ? '正在打开…' : '打开文件夹'}</Button><Button size="sm" onPress={openCreate}><Icon name="plus" size={16}/>新建文章</Button></div></header>
+        <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span className="library-folder" title={folderLabel(space)}>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="ghost" className="open-folder-button" aria-label="在系统文件管理器中打开笔记工作区" onPress={() => void openFolder()} isDisabled={openingFolder}><Icon name="folder" size={16}/>{openingFolder ? '正在打开…' : '打开文件夹'}</Button><Button size="sm" onPress={openCreate}><Icon name="plus" size={16}/>新建文章</Button></div></header>
         {!loaded ? <div className="empty">{error ? '笔记尚未载入，请重试。' : '正在载入画布…'}</div> : <LibraryCanvas key={space} folder={space} notes={visible} theme={resolvedTheme} viewport={views.get(space) ?? { x: 0, y: 0, zoom: 1 }} onViewport={viewport => { views.set(space, viewport); localStorage.setItem('canvas.views', JSON.stringify([...views])) }} beforeLeave={beforeLeave} onOpen={openNote} onPreview={setPreview} onCreate={openCreate}/>}
       </>}
     </main>
     {preview && <NotePreview key={preview} name={preview} onClose={() => setPreview(null)} onOpen={openNote}/>}
     {searchOpen && <QuickSearch notes={notes} spaces={folders} onClose={() => setSearchOpen(false)} onNote={openNote} onSpace={folder => void navigate(null, folder)} onNew={openCreate}/>}
     {referenceOpen && <QuickSearch reference notes={notes} spaces={folders} onClose={() => setReferenceOpen(false)} onNote={name => { const note = notes.find(note => note.name === name); if (note) setReferences(current => [...current.filter(item => item.name !== name), note]); setReferenceOpen(false) }} onSpace={() => {}} onNew={() => {}}/>}
-    <Dialog title="新建文章" open={createOpen} onClose={() => { if (!busy) setCreateOpen(false) }} footer={<><Button variant="ghost" isDisabled={busy} onPress={() => setCreateOpen(false)}>取消</Button><Button isDisabled={busy} onPress={() => void create()}>{busy ? '正在创建…' : '创建并编辑'}</Button></>}>
-      <div className="new-note-fields"><label htmlFor="new-note-title">标题</label><Input id="new-note-title" value={newTitle} onChange={event => setNewTitle(event.target.value)} placeholder="给这篇文章起个名字" maxLength={120} fullWidth disabled={busy} autoFocus/><label htmlFor="new-note-folder">文件夹</label><select id="new-note-folder" value={destination} disabled={busy} onChange={event => setDestination(event.target.value)}>{folders.map(folder => <option key={folder} value={folder}>{folderLabel(folder)}</option>)}</select><label htmlFor="new-note-body">正文 <span className="muted">（可留空）</span></label><TextArea id="new-note-body" value={capture} disabled={busy} onChange={event => setCapture(event.target.value)} placeholder="快速记下一点什么，稍后继续编辑…" rows={4}/></div>
-      <Button size="sm" variant="ghost" isDisabled={busy} onPress={() => setReferenceOpen(true)}>引用已有文章</Button>{!!references.length && <div className="capture-references">{references.map(note => <span className="capture-reference" key={note.name}><span>{note.title}</span><IconButton icon="close" label={'移除引用：' + note.title} isDisabled={busy} onPress={() => setReferences(current => current.filter(item => item.name !== note.name))}/></span>)}</div>}{formError && <p role="alert" className="error-text">{formError}</p>}
+    <Dialog title="新建文章" open={createOpen} onClose={() => { if (!busy) setCreateOpen(false) }} footer={<><Button variant="ghost" isDisabled={busy} onPress={() => setCreateOpen(false)}>取消</Button><Button type="submit" form="new-note-form" isDisabled={busy}>{busy ? '正在创建…' : '创建并编辑'}</Button></>}>
+      <form id="new-note-form" aria-label="新建文章" aria-busy={busy} aria-describedby={formError ? 'new-note-error' : undefined} onSubmit={event => { event.preventDefault(); void create() }} onKeyDown={event => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault() }}>
+      <div className="new-note-fields"><label htmlFor="new-note-title">标题 <span className="muted">（可留空）</span></label><Input id="new-note-title" value={newTitle} onChange={event => setNewTitle(event.target.value)} placeholder="给这篇文章起个名字" aria-describedby="new-note-title-hint" maxLength={120} fullWidth disabled={busy} autoFocus/><p id="new-note-title-hint" className="field-hint muted">留空时自动命名，可稍后在正文中修改标题。</p><Select id="new-note-folder" label="文件夹" value={destination || '/'} disabled={busy} onValueChange={value => setDestination(value === '/' ? '' : value)} options={folders.map(folder => ({ value: folder || '/', label: folderLabel(folder) }))}/><label htmlFor="new-note-body">正文 <span className="muted">（可留空）</span></label><TextArea id="new-note-body" value={capture} disabled={busy} onChange={event => setCapture(event.target.value)} placeholder="快速记下一点什么，稍后继续编辑…" rows={4}/></div>
+      <Button type="button" size="sm" variant="ghost" isDisabled={busy} onPress={() => setReferenceOpen(true)}>引用已有文章</Button>{!!references.length && <div className="capture-references">{references.map(note => <span className="capture-reference" key={note.name}><span>{note.title}</span><IconButton icon="close" label={'移除引用：' + note.title} isDisabled={busy} onPress={() => setReferences(current => current.filter(item => item.name !== note.name))}/></span>)}</div>}{formError && <p id="new-note-error" role="alert" className="error-text">创建失败：{formError}<br/>输入已保留，可重试。</p>}
+      </form>
     </Dialog>
     <Dialog title="设置与外观" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
-      <div className="settings-section"><h3>外观</h3><div className="theme-options">{(['system', 'light', 'dark'] as const).map(value => <Button key={value} variant={theme === value ? 'secondary' : 'outline'} onPress={() => setTheme(value)}>{({ system: '跟随系统', light: '浅色', dark: '深色' })[value]}</Button>)}</div></div>
-      <div className="settings-section"><h3>Markdown 工作区</h3><p className="muted">每个真实文件夹对应一个画布；文章位置保存在独立的布局文件中。</p><code className="setting-path">{settings?.notesDirectory || '正在读取…'}</code></div>
-      <ChatGPTSettings config={settings?.chatgpt ?? null} onSaved={chatgpt => setSettings(current => current ? { ...current, chatgpt } : current)}/>
-      <AIConnectionSettings config={settings?.ai || null} onSaved={ai => setSettings(current => current ? { ...current, ai } : current)}/>
+      <Tabs defaultValue="general" className="settings-tabs">
+        <TabsList aria-label="设置分类"><TabsTrigger value="general">通用</TabsTrigger><TabsTrigger value="chatgpt">ChatGPT</TabsTrigger><TabsTrigger value="api">API 连接</TabsTrigger></TabsList>
+        <TabsContent value="general" forceMount>
+          <div className="settings-section"><h3>外观</h3><SegmentedControl className="theme-options" label="外观" value={theme} onValueChange={value => setTheme(value as Theme)} options={[{ value: 'system', label: '跟随系统' }, { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }]}/></div>
+          <div className="settings-section"><h3>Markdown 工作区</h3><p className="muted">每个真实文件夹对应一个画布；文章位置保存在独立的布局文件中。</p><code className="setting-path">{settings?.notesDirectory || '正在读取…'}</code></div>
+        </TabsContent>
+        <TabsContent value="chatgpt" forceMount><ChatGPTSettings config={settings?.chatgpt ?? null} onSaved={chatgpt => setSettings(current => current ? { ...current, chatgpt } : current)}/></TabsContent>
+        <TabsContent value="api" forceMount><AIConnectionSettings config={settings?.ai || null} onSaved={ai => setSettings(current => current ? { ...current, ai } : current)}/></TabsContent>
+      </Tabs>
     </Dialog>
-    <Dialog title="新建文件夹" open={newFolderOpen} onClose={() => { if (!busy) setNewFolderOpen(false) }} footer={<><Button variant="ghost" isDisabled={busy} onPress={() => setNewFolderOpen(false)}>取消</Button><Button isDisabled={busy || !folderName.trim()} onPress={() => void addFolder()}>{busy ? '正在创建…' : '创建文件夹'}</Button></>}><p className="muted">将在「{folderLabel(space)}」中创建真实文件夹。</p><Input aria-label="文件夹名称" placeholder="例如：阅读与思考" value={folderName} maxLength={120} disabled={busy} onChange={event => setFolderName(event.target.value)} fullWidth autoFocus/>{formError && <p role="alert" className="error-text">{formError}</p>}</Dialog>
+    <Dialog title="新建文件夹" open={newFolderOpen} onClose={() => { if (!busy) setNewFolderOpen(false) }} footer={<><Button variant="ghost" isDisabled={busy} onPress={() => setNewFolderOpen(false)}>取消</Button><Button type="submit" form="new-folder-form" isDisabled={busy || !folderName.trim()}>{busy ? '正在创建…' : '创建文件夹'}</Button></>}>
+      <form id="new-folder-form" aria-label="新建文件夹" aria-busy={busy} aria-describedby={formError ? 'new-folder-error' : undefined} onSubmit={event => { event.preventDefault(); void addFolder() }} onKeyDown={event => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault() }}>
+        <p id="new-folder-hint" className="muted">将在「{folderLabel(space)}」中创建真实文件夹。</p>
+        <div className="new-note-fields"><label htmlFor="new-folder-name">文件夹名称</label><Input id="new-folder-name" aria-describedby="new-folder-hint" placeholder="例如：阅读与思考" value={folderName} maxLength={120} required disabled={busy} onChange={event => setFolderName(event.target.value)} fullWidth autoFocus/></div>
+        {formError && <p id="new-folder-error" role="alert" className="error-text">创建失败：{formError}<br/>名称已保留，可修改后重试。</p>}
+      </form>
+    </Dialog>
   </div>
 }

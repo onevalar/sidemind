@@ -39,7 +39,7 @@ export function AIConnectionSettings({ config, onSaved }: { config: PublicAIConf
   }
   return <div className="settings-section ai-connection-settings">
     <div className="section-header"><h3>其他模型服务 · API 密钥</h3><span className="count">{!config ? '读取中…' : config.configured ? '已保存连接' : '未配置'}</span></div>
-    <p className="muted">也可连接自己的 OpenAI 兼容服务。启用 ChatGPT 时优先使用 ChatGPT，需在上方明确切换才会改用此连接。</p>
+    <p className="muted">也可连接自己的 OpenAI 兼容服务。启用 ChatGPT 时优先使用 ChatGPT，需在「ChatGPT」页中切换才会改用此连接。</p>
     {config?.source === 'environment' && <p className="muted">当前使用本机启动时提供的连接。保存后，将使用这里的设置。</p>}
     <div className="ai-connection-fields">
       <label htmlFor="canvas-ai-url">服务地址</label>
