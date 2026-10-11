@@ -13,6 +13,8 @@ import { Button, Dialog, Icon, IconButton, Input, TextArea, Select, SegmentedCon
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/arc/tabs/tabs'
 import { ResizablePanel, ResizablePanels } from './components/arc/resizable-panels/resizable-panels'
 import { AgentPanel } from './AgentPanel'
+import { PushControl, RepoSettings } from './PushControl'
+import { MemoryDialog } from './MemoryDialog'
 
 const loadNoteWorkspace = () => import('./NoteWorkspace')
 
@@ -53,6 +55,8 @@ export function App() {
   const beforeLeave = useRef<() => Promise<boolean>>(async () => true)
   const agentSelection = useRef<() => string | undefined>(() => undefined)
   const [aiOpen, setAiOpen] = useState(() => localStorage.getItem('canvas.ai-open') !== 'false')
+  const [focus, setFocus] = useState<{ names: string[]; key: number } | null>(null)
+  const [folderMemoryOpen, setFolderMemoryOpen] = useState(false)
   const [aiShare] = useState(() => Math.min(65, Math.max(15, Number(localStorage.getItem('canvas.ai-width')) || 30)))
   useEffect(() => { localStorage.setItem('canvas.ai-open', String(aiOpen)) }, [aiOpen])
   const closeAI = () => { setAiOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('[aria-controls="ai-assistant-pane"]')?.focus()) }
@@ -122,6 +126,8 @@ export function App() {
     } else if (folder !== undefined) setSpace(folder)
   }, [NoteWorkspace])
   const openNote = useCallback((name: string) => { void navigate(name) }, [navigate])
+  // The Agent points at notes: show their folder canvas and highlight them.
+  const focusNotes = useCallback((folder: string, names: string[]) => { void navigate(null, folder).then(() => setFocus(current => ({ names, key: (current?.key ?? 0) + 1 }))) }, [navigate])
   const openCreate = () => { setDestination(space); setFormError(''); setCreateOpen(true); setSearchOpen(false) }
   newAction.current = openCreate
   const create = async () => {
@@ -176,19 +182,19 @@ export function App() {
       <span className="section-label sidebar-section">最近打开</span>
       <div className="recent-notes">{recent.slice(0, 8).map(note => <button type="button" aria-label={note.title} aria-current={selected === note.name ? 'page' : undefined} key={note.name} className={'nav-item ' + (selected === note.name ? 'is-active' : '')} onClick={() => openNote(note.name)}><Icon name="note" size={16}/><span title={note.title}>{note.title}</span></button>)}{!recent.length && <p className="recent-empty muted">打开过的文章会显示在这里。</p>}</div>
       </div>
-      <div className="sidebar-footer"><button type="button" aria-label="设置与外观" className="nav-item" onClick={() => setSettingsOpen(true)}><Icon name="settings" size={18}/><span>设置与外观</span></button></div>
+      <div className="sidebar-footer"><PushControl beforeLeave={beforeLeave} collapsed={sidebarCollapsed}/><button type="button" aria-label="设置与外观" className="nav-item" onClick={() => setSettingsOpen(true)}><Icon name="settings" size={18}/><span>设置与外观</span></button></div>
     </aside>
     <main className="stage">
       {error && <div className="global-error" role="alert"><span>{error}</span><Button size="sm" variant="ghost" onPress={() => void refreshList()}>重试</Button><IconButton icon="close" label="关闭提示" onPress={() => setError('')}/></div>}
       <div className="agent-workspace"><ResizablePanels label="笔记与 AI 助手" onLayoutChange={sizes => { if (aiOpen && sizes[1]) localStorage.setItem('canvas.ai-width', String(sizes[1])) }}>
       <ResizablePanel id="article-pane" label="笔记与 AI 助手分栏宽度" defaultSize={100 - aiShare} minSize={360}>
       {selected && NoteWorkspace ? <NoteWorkspace key={selected} name={selected} theme={resolvedTheme} beforeLeave={beforeLeave} agentSelection={agentSelection} aiOpen={aiOpen} onToggleAI={() => setAiOpen(value => !value)} onOpenNote={openNote} onBack={() => void navigate(null)}/> : <>
-        <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span className="library-folder" title={folderLabel(space)}>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="ghost" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" onPress={() => setAiOpen(value => !value)}><Icon name="spark" size={16}/>AI 助手</Button><Button size="sm" onPress={openCreate}><Icon name="plus" size={16}/>新建文章</Button></div></header>
-        {!loaded ? <div className="empty">{error ? '笔记尚未载入，请重试。' : '正在载入画布…'}</div> : <LibraryCanvas key={space} folder={space} notes={visible} theme={resolvedTheme} viewport={views.get(space) ?? { x: 0, y: 0, zoom: 1 }} onViewport={viewport => { views.set(space, viewport); localStorage.setItem('canvas.views', JSON.stringify([...views])) }} beforeLeave={beforeLeave} onOpen={openNote} onPreview={setPreview} onCreate={openCreate}/>}
+        <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span className="library-folder" title={folderLabel(space)}>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="ghost" onPress={() => setFolderMemoryOpen(true)}>文件夹记忆</Button><Button size="sm" variant="ghost" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" onPress={() => setAiOpen(value => !value)}><Icon name="spark" size={16}/>AI 助手</Button><Button size="sm" onPress={openCreate}><Icon name="plus" size={16}/>新建文章</Button></div></header>
+        {!loaded ? <div className="empty">{error ? '笔记尚未载入，请重试。' : '正在载入画布…'}</div> : <LibraryCanvas key={space} folder={space} notes={visible} theme={resolvedTheme} viewport={views.get(space) ?? { x: 0, y: 0, zoom: 1 }} onViewport={viewport => { views.set(space, viewport); localStorage.setItem('canvas.views', JSON.stringify([...views])) }} beforeLeave={beforeLeave} onOpen={openNote} onPreview={setPreview} onCreate={openCreate} focus={focus}/>}
       </>}
       </ResizablePanel>
       <ResizablePanel id="ai-assistant-pane" label="AI 助手" defaultSize={aiShare} minSize={320} maxSize={720} hidden={!aiOpen}>
-        <AgentPanel folder={space} name={selected} model={aiModel} beforeSend={beforeLeave} selection={agentSelection} onConfigure={() => setSettingsOpen(true)} onClose={closeAI} onOpenNote={openNote}/>
+        <AgentPanel folder={space} name={selected} model={aiModel} beforeSend={beforeLeave} selection={agentSelection} onConfigure={() => setSettingsOpen(true)} onClose={closeAI} onOpenNote={openNote} onFocus={focusNotes}/>
       </ResizablePanel>
       </ResizablePanels></div>
     </main>
@@ -203,15 +209,21 @@ export function App() {
     </Dialog>
     <Dialog title="设置与外观" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
       <Tabs defaultValue="general" className="settings-tabs">
-        <TabsList aria-label="设置分类"><TabsTrigger value="general">通用</TabsTrigger><TabsTrigger value="chatgpt">ChatGPT</TabsTrigger><TabsTrigger value="api">API 连接</TabsTrigger></TabsList>
+        <TabsList aria-label="设置分类"><TabsTrigger value="general">通用</TabsTrigger><TabsTrigger value="chatgpt">ChatGPT</TabsTrigger><TabsTrigger value="api">API 与模型</TabsTrigger></TabsList>
         <TabsContent value="general" forceMount>
           <div className="settings-section"><h3>外观</h3><SegmentedControl className="theme-options" label="外观" value={theme} onValueChange={value => setTheme(value as Theme)} options={[{ value: 'system', label: '跟随系统' }, { value: 'light', label: '浅色' }, { value: 'dark', label: '深色' }]}/></div>
-          <div className="settings-section"><h3>Markdown 工作区</h3><p className="muted">每个真实文件夹对应一个画布；文章位置保存在独立的布局文件中。</p><code className="setting-path">{settings?.notesDirectory || '正在读取…'}</code></div>
+          <div className="settings-section"><h3>Markdown 笔记</h3><p className="muted">每个真实文件夹对应一个画布；文章位置保存在独立的布局文件中。</p><code className="setting-path">{settings?.notesDirectory || '正在读取…'}</code></div>
+          {settingsOpen && <RepoSettings/>}
         </TabsContent>
         <TabsContent value="chatgpt" forceMount><ChatGPTSettings config={settings?.chatgpt ?? null} onSaved={chatgpt => setSettings(current => current ? { ...current, chatgpt } : current)}/></TabsContent>
-        <TabsContent value="api" forceMount><AIConnectionSettings config={settings?.ai || null} onSaved={ai => setSettings(current => current ? { ...current, ai } : current)}/></TabsContent>
+        <TabsContent value="api" forceMount>
+          <AIConnectionSettings config={settings?.ai || null} onSaved={ai => setSettings(current => current ? { ...current, ai } : current)}/>
+          <AIConnectionSettings slot="summary" config={settings?.summary || null} onSaved={summary => setSettings(current => current ? { ...current, summary } : current)}/>
+          <AIConnectionSettings slot="embedding" config={settings?.embedding || null} onSaved={embedding => setSettings(current => current ? { ...current, embedding } : current)}/>
+        </TabsContent>
       </Tabs>
     </Dialog>
+    <MemoryDialog target="folder" name={space} title={'文件夹记忆 · ' + folderLabel(space)} open={folderMemoryOpen} onClose={() => setFolderMemoryOpen(false)}/>
     <Dialog title="新建文件夹" open={newFolderOpen} onClose={() => { if (!busy) setNewFolderOpen(false) }} footer={<><Button variant="ghost" isDisabled={busy} onPress={() => setNewFolderOpen(false)}>取消</Button><Button type="submit" form="new-folder-form" isDisabled={busy || !folderName.trim()}>{busy ? '正在创建…' : '创建文件夹'}</Button></>}>
       <form id="new-folder-form" aria-label="新建文件夹" aria-busy={busy} aria-describedby={formError ? 'new-folder-error' : undefined} onSubmit={event => { event.preventDefault(); void addFolder() }} onKeyDown={event => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault() }}>
         <p id="new-folder-hint" className="muted">将在「{folderLabel(space)}」中创建真实文件夹。</p>

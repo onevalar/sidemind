@@ -1,4 +1,4 @@
-import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent } from '../shared/types'
+import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent } from '../shared/types'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -14,34 +14,56 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 const enc = encodeURIComponent
 
+/** Reads a newline-delimited JSON stream until a `done` event. */
+async function ndjson<T extends { type: string }>(response: Response, onEvent: (event: T) => void, interrupted: string): Promise<void> {
+  if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || `${response.status} ${response.statusText}`)
+  if (!response.body) throw new Error(interrupted)
+  const reader = response.body.getReader(), decoder = new TextDecoder()
+  let buffer = '', done = false
+  const consume = () => {
+    for (let newline = buffer.indexOf('\n'); newline >= 0; newline = buffer.indexOf('\n')) {
+      const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1)
+      if (!line) continue
+      const event = JSON.parse(line) as T
+      if (event.type === 'done') done = true
+      onEvent(event)
+    }
+  }
+  try {
+    for (;;) {
+      const chunk = await reader.read()
+      if (chunk.done) { buffer += decoder.decode(); consume(); break }
+      buffer += decoder.decode(chunk.value, { stream: true }); consume()
+    }
+    if (!done) throw new Error(interrupted)
+  } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
+}
+
+export type ModelSlot = 'main' | 'summary' | 'embedding'
+export type AppSettings = { notesDirectory: string; dataDirectory: string; ai: PublicAIConfig; summary: PublicAIConfig; embedding: PublicAIConfig; chatgpt: PublicChatGPTConfig }
+const slot = (value: ModelSlot) => value === 'main' ? '' : '?slot=' + value
+
 export const api = {
   agent: async (input: { session?: string; scope: AgentScope; message: string; selection?: string }, onEvent: (event: AgentEvent) => void, signal: AbortSignal) => {
     const response = await fetch('/api/ai/agent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal })
     if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || '无法连接 AI 助手。')
-    if (!response.body) throw new Error('对话连接未建立。')
-    const reader = response.body.getReader(), decoder = new TextDecoder()
-    let buffer = '', done = false
-    const consume = () => {
-      for (let newline = buffer.indexOf('\n'); newline >= 0; newline = buffer.indexOf('\n')) {
-        const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1)
-        if (!line) continue
-        const event = JSON.parse(line) as AgentEvent
-        if (event.type === 'done') done = true
-        onEvent(event)
-      }
-    }
-    try {
-      for (;;) {
-        const chunk = await reader.read()
-        if (chunk.done) { buffer += decoder.decode(); consume(); break }
-        buffer += decoder.decode(chunk.value, { stream: true }); consume()
-      }
-      if (!done) throw new Error('对话连接中断。已完成的修改仍保留，请检查修改记录。')
-    } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
+    await ndjson(response, onEvent, '对话连接中断。已完成的修改仍保留，请检查修改记录。')
   },
-  agentChanges: (folder: string, name?: string) => request<import('../shared/types').AgentChange[]>(`/api/ai/changes?folder=${enc(folder)}${name ? '&name=' + enc(name) : ''}`),
-  agentChange: (id: string) => request<import('../shared/types').AgentEdit>(`/api/ai/changes/${enc(id)}`),
-  undoAgentChange: (id: string) => request<{ ok: true }>(`/api/ai/changes/${enc(id)}/undo`, { method: 'POST', body: '{}' }),
+  conversation: (scope: AgentScope) => request<ConversationState | null>(`/api/ai/conversation?scope=${enc(JSON.stringify(scope))}`),
+  changeSets: (filter: { folder?: string; name?: string } = {}) => request<ChangeSetSummary[]>(`/api/ai/changes?folder=${enc(filter.folder ?? '')}${filter.name ? '&name=' + enc(filter.name) : ''}`),
+  changeSet: (id: string) => request<ChangeSetDetail>(`/api/ai/changes/${enc(id)}`),
+  undoChangeSet: (id: string) => request<ChangeSetSummary>(`/api/ai/changes/${enc(id)}/undo`, { method: 'POST', body: '{}' }),
+  proposal: (id: string) => request<ProposalDetail>(`/api/ai/proposals/${enc(id)}`),
+  acceptProposal: (id: string) => request<{ proposal: ProposalSummary; changeset: ChangeSetSummary }>(`/api/ai/proposals/${enc(id)}/accept`, { method: 'POST', body: '{}' }),
+  rejectProposal: (id: string) => request<ProposalSummary>(`/api/ai/proposals/${enc(id)}/reject`, { method: 'POST', body: '{}' }),
+  memory: (target: MemoryTargetKind, name = '') => request<MemoryFileDTO>(`/api/memory?target=${target}&name=${enc(name)}`),
+  saveMemory: (target: MemoryTargetKind, name: string, content: string, expected: string | null) => request<{ ok: true }>('/api/memory', { method: 'PUT', body: JSON.stringify({ target, name, content, expected }) }),
+  repoStatus: () => request<RepoStatus>('/api/repo/status'),
+  setRemote: (url: string | null) => request<RepoStatus>('/api/repo/remote', { method: 'PUT', body: JSON.stringify({ url }) }),
+  push: async (onEvent: (event: PushEvent) => void, signal: AbortSignal) => {
+    const response = await fetch('/api/repo/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal })
+    await ndjson(response, onEvent, '推送连接中断。请刷新状态后重试。')
+  },
   openWorkspaceFolder: (folder: string) => request<{ ok: true }>('/api/workspace/open', { method: 'POST', body: JSON.stringify({ folder }) }),
   listNotes: () => request<NoteSummary[]>('/api/notes'),
   listFolders: () => request<string[]>('/api/folders'),
@@ -52,16 +74,16 @@ export const api = {
   recordOpen: (name: string) => request<{ ok: true }>(`/api/notes/${enc(name)}/open`, { method: 'POST', body: '{}' }),
   saveContent: (name: string, content: string, expectedContent: string) => request<NoteDTO>(`/api/notes/${enc(name)}/content`, { method: 'PUT', body: JSON.stringify({ content, expectedContent }) }),
   search: (query: string, signal?: AbortSignal) => request<(NoteSummary & { snippet: string })[]>(`/api/search?q=${enc(query)}`, { signal }),
-  settings: () => request<{ notesDirectory: string; ai: PublicAIConfig; chatgpt: PublicChatGPTConfig }>('/api/settings'),
-  saveAIConnection: (input: AIConnectionInput) => request<PublicAIConfig>('/api/ai/connection', { method: 'PUT', body: JSON.stringify(input) }),
-  clearAIConnection: () => request<PublicAIConfig>('/api/ai/connection', { method: 'DELETE', body: '{}' }),
+  settings: () => request<AppSettings>('/api/settings'),
+  saveAIConnection: (input: AIConnectionInput, target: ModelSlot = 'main') => request<PublicAIConfig>('/api/ai/connection' + slot(target), { method: 'PUT', body: JSON.stringify(input) }),
+  clearAIConnection: (target: ModelSlot = 'main') => request<PublicAIConfig>('/api/ai/connection' + slot(target), { method: 'DELETE', body: '{}' }),
   chatGPT: () => request<PublicChatGPTConfig>('/api/ai/chatgpt'),
   loginChatGPT: (accountId?: string) => request<{ authorizationUrl: string }>('/api/ai/chatgpt/login', { method: 'POST', body: JSON.stringify({ accountId }) }),
   cancelChatGPTLogin: () => request<PublicChatGPTConfig>('/api/ai/chatgpt/login', { method: 'DELETE', body: '{}' }),
   chatGPTModels: () => request<{ slug: string; displayName: string }[]>('/api/ai/chatgpt/models'),
   selectChatGPT: (accountId: string | null, model?: string) => request<PublicChatGPTConfig>('/api/ai/chatgpt/account', { method: 'PUT', body: JSON.stringify({ accountId, model }) }),
   logoutChatGPT: (accountId: string) => request<PublicChatGPTConfig>('/api/ai/chatgpt/logout', { method: 'POST', body: JSON.stringify({ accountId }) }),
-  testAIConnection: (input: AIConnectionInput, signal?: AbortSignal) => request<{ ok: true }>('/api/ai/test', { method: 'POST', body: JSON.stringify(input), signal }),
+  testAIConnection: (input: AIConnectionInput, signal?: AbortSignal, target: ModelSlot = 'main') => request<{ ok: true }>('/api/ai/test' + slot(target), { method: 'POST', body: JSON.stringify(input), signal }),
   proposeEdit: (source: string, instruction: string, signal?: AbortSignal) => request<{ replacement: string }>('/api/ai/propose', { method: 'POST', body: JSON.stringify({ source, instruction }), signal }),
   canvas: (folder: string) => request<CanvasLayout>(`/api/canvas?folder=${enc(folder)}`),
   saveCanvas: (folder: string, frames: CanvasFrame[], positions: Record<string, NotePosition>, expectedFrames: CanvasFrame[]) =>
@@ -73,7 +95,7 @@ export const api = {
     }),
 }
 
-export type ServerEvent = { type: 'hello' } | { type: 'notes-changed' } | { type: 'note-changed'; name: string } | { type: 'canvas-changed'; folder: string }
+export type ServerEvent = { type: 'hello' } | { type: 'notes-changed' } | { type: 'note-changed'; name: string } | { type: 'canvas-changed'; folder: string } | { type: 'memory-changed' } | { type: 'repo-changed' }
 
 const listeners = new Set<(event: ServerEvent) => void>()
 let events: EventSource | null = null

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import { applyNodeChanges, Controls, NodeResizeControl, ReactFlow, type Node, type NodeProps, type Viewport } from '@xyflow/react'
+import { applyNodeChanges, Controls, NodeResizeControl, ReactFlow, type Node, type NodeProps, type ReactFlowInstance, type Viewport } from '@xyflow/react'
 import * as ContextMenu from '@radix-ui/react-context-menu'
 import type { CanvasFrame, CanvasLayout, NotePosition, NoteSummary } from '../shared/types'
 import { api, subscribeEvents } from './api'
@@ -61,10 +61,12 @@ function FrameCard({ data }: NodeProps<FrameNode>) {
 }
 const nodeTypes = { article: ArticleCard, frame: FrameCard }
 
-export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOpen, onPreview, onCreate, beforeLeave }: {
+export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOpen, onPreview, onCreate, beforeLeave, focus }: {
   notes: NoteSummary[]; theme: 'light' | 'dark'; viewport: Viewport; onViewport: (viewport: Viewport) => void
   folder: string; onOpen: (name: string) => void; onPreview: (name: string) => void; onCreate: () => void
   beforeLeave: MutableRefObject<() => Promise<boolean>>
+  /** Notes the Agent pointed at: selected and brought into view once they are on the canvas. */
+  focus?: { names: string[]; key: number } | null
 }) {
   const [nodes, setNodes] = useState<CanvasNode[]>([])
   const nodeRef = useRef<CanvasNode[]>([])
@@ -83,6 +85,16 @@ export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOp
   const version = useRef(0)
   const loadAction = useRef<() => Promise<void>>(async () => {})
   const apply = useCallback((next: CanvasNode[]) => { nodeRef.current = next; setNodes(next) }, [])
+  const flow = useRef<ReactFlowInstance<CanvasNode> | null>(null)
+  const focused = useRef(0)
+  useEffect(() => {
+    if (!focus || focused.current === focus.key || !ready) return
+    const present = focus.names.filter(name => nodes.some(node => node.id === name))
+    if (!present.length) return
+    focused.current = focus.key
+    setChosen(present)
+    requestAnimationFrame(() => { void flow.current?.fitView({ nodes: present.map(id => ({ id })), padding: 0.4, maxZoom: 1.2, duration: 400 }) })
+  }, [focus, nodes, ready])
   const applyLayout = useCallback((next: CanvasLayout) => { layoutRef.current = next; setLayout(next) }, [])
   useEffect(() => {
     let active = true, request = 0
@@ -232,7 +244,7 @@ export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOp
     }
   }}>
     <div className="canvas">
-      <ReactFlow nodes={nodes} nodeTypes={nodeTypes} colorMode={theme} defaultViewport={viewport} nodesDraggable={ready}
+      <ReactFlow nodes={nodes} nodeTypes={nodeTypes} colorMode={theme} defaultViewport={viewport} nodesDraggable={ready} onInit={instance => { flow.current = instance }}
         proOptions={{ hideAttribution: true }}
         ariaLabelConfig={{ 'controls.zoomIn.ariaLabel': '放大画布', 'controls.zoomOut.ariaLabel': '缩小画布', 'controls.fitView.ariaLabel': '查看全部文章' }}
         onMoveEnd={(_, view) => onViewport(view)} onNodesChange={changes => apply(applyNodeChanges(changes, nodeRef.current))}

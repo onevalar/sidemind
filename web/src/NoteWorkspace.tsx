@@ -4,6 +4,7 @@ import { CodeEditor } from './CodeEditor'
 import { outlineHeadings, richEditingIssue } from './outline'
 import { RichEditor, type RichEditorHandle, type RichSelection } from './RichEditor'
 import { Button, Icon, IconButton, SegmentedControl } from './ui'
+import { MemoryDialog } from './MemoryDialog'
 
 // Measure wrapped source text, both for directory jumps and changing column widths.
 function editorOffsetTop(editor: HTMLTextAreaElement, offset: number) {
@@ -37,6 +38,7 @@ export function NoteWorkspace({ name, beforeLeave, agentSelection, aiOpen, onTog
   }, [note, sourceMode, saveDraft])
   const [outlineOpen, setOutlineOpen] = useState(false)
   const outlineToggle = useRef<HTMLButtonElement>(null)
+  const [memoryOpen, setMemoryOpen] = useState(false)
   const workspace = useRef<HTMLDivElement>(null)
   const positions = useRef({
     editor: null as { start: number; end: number; direction: HTMLTextAreaElement['selectionDirection']; top: number; left: number; width: number; caretTop: number } | null,
@@ -96,6 +98,7 @@ export function NoteWorkspace({ name, beforeLeave, agentSelection, aiOpen, onTog
       <div className="toolbar">
         <SegmentedControl label="文章编辑方式" value={sourceMode ? 'source' : 'edit'} onValueChange={value => changeMode(value as typeof mode)} options={[{ value: 'edit', label: '写作' }, { value: 'source', label: '源码' }]}/>
         <Button ref={outlineToggle} variant="ghost" size="sm" aria-expanded={outlineOpen} aria-controls="editor-outline" onPress={() => setOutlineOpen(!outlineOpen)}>目录</Button>
+        <Button variant="ghost" size="sm" onPress={() => setMemoryOpen(true)}>记忆</Button>
         <Button size="sm" variant="ghost" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" onPress={() => { onToggleAI?.(); setOutlineOpen(false) }}><Icon name="spark"/>AI 助手</Button>
       </div>
     </header>
@@ -115,5 +118,6 @@ export function NoteWorkspace({ name, beforeLeave, agentSelection, aiOpen, onTog
         </footer>
       </section>
     </div>
+    <MemoryDialog target="note" name={name} title={'文章记忆 · ' + title} open={memoryOpen} onClose={() => setMemoryOpen(false)}/>
   </>
 }

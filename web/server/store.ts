@@ -7,9 +7,10 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import type { Nodes } from 'mdast'
 import type { CanvasFrame, CanvasLayout, NoteDTO, NotePosition, NoteSummary } from '../shared/types'
+import { standalonePaths, type DataPaths } from './repo'
 
-const parser = unified().use(remarkParse).use(remarkGfm)
-function summaryText(node: Nodes): string {
+export const parser = unified().use(remarkParse).use(remarkGfm)
+export function summaryText(node: Nodes): string {
   if (node.type === 'heading' || node.type === 'html') return ''
   if ('value' in node) return node.value + (node.type === 'code' ? ' ' : '')
   if ('alt' in node) return node.alt || ''
@@ -28,20 +29,10 @@ const WELCOME = `# 欢迎使用画布笔记
 `
 
 type Library = { version: 1; notes: Record<string, { position: NotePosition; lastOpenedAt: number }>; frames?: CanvasFrame[] }
-const folderOf = (name: string) => name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : ''
+export type LayoutPatch = { positions: Record<string, NotePosition | null>; frames?: CanvasFrame[] }
+type CanvasFile = { version: 1; notes: Record<string, NotePosition>; frames: (Omit<CanvasFrame, 'space'>)[] }
+export const folderOf = (name: string) => name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : ''
 export const contentVersion = (content: string) => createHash('sha256').update(content).digest('hex')
-export type NoteOverview = { name: string; title: string; version: string; characters: number; overview: string; overviewSource: 'local' | 'agent'; headings: { title: string; line: number }[] }
-
-/** Local, extractive overview across the article, not just the card's opening excerpt. */
-function overview(name: string, content: string): NoteOverview {
-  const tree = parser.parse(content)
-  const headings = tree.children.filter(node => node.type === 'heading').map(node => ({ title: node.children.map(summaryText).join(''), line: node.position!.start.line }))
-  const paragraphs = tree.children.map(summaryText).map(text => text.trim().replace(/\s+/g, ' ')).filter(Boolean)
-  const count = Math.min(6, paragraphs.length)
-  const samples = Array.from({ length: count }, (_, index) => paragraphs[Math.floor(index * (paragraphs.length - 1) / Math.max(1, count - 1))]!.slice(0, 180))
-  return { name, title: headings[0]?.title || path.basename(name, '.md'), version: contentVersion(content), characters: content.length, overview: samples.join('\n'), overviewSource: 'local', headings }
-}
-
 const validPosition = (p: NotePosition) => p && Number.isFinite(p.x) && Number.isFinite(p.y) && Math.abs(p.x) <= 10000000 && Math.abs(p.y) <= 10000000
 const validFrame = (frame: CanvasFrame) => frame && typeof frame.id === 'string' && /^[\w-]{1,80}$/.test(frame.id) &&
   typeof frame.space === 'string' && typeof frame.title === 'string' && !!frame.title.trim() && frame.title.length <= 80 && validPosition(frame.position) &&
@@ -53,17 +44,18 @@ export class NotFoundError extends Error {}
 export class ConflictError extends Error {}
 
 export class NoteStore {
+  /** The notes folder: every `.md` below it is an article; subfolders are canvases. */
   readonly root: string
-  private readonly metaDir: string
+  readonly paths: DataPaths
   private locks = new Map<string, Promise<unknown>>()
 
-  constructor(root: string) {
-    this.root = path.resolve(root)
-    this.metaDir = path.join(this.root, '.canvasnote')
+  constructor(location: string | DataPaths) {
+    this.paths = typeof location === 'string' ? standalonePaths(location) : location
+    this.root = this.paths.notes
   }
 
   async init(): Promise<void> {
-    await fs.mkdir(this.metaDir, { recursive: true })
+    for (const directory of [this.paths.canvas, this.paths.cache]) await fs.mkdir(directory, { recursive: true })
     if (!(await this.scan()).names.length) await this.create('Welcome', WELCOME)
   }
 
@@ -122,39 +114,47 @@ export class NoteStore {
   }
 
   async folders(): Promise<string[]> { return (await this.scan()).folders }
+  async names(): Promise<string[]> { return (await this.scan()).names }
 
-  async overviews(folder = ''): Promise<NoteOverview[]> {
-    await this.folderPath(folder)
-    return this.withLock('overviews', async () => {
-      const target = path.join(this.metaDir, 'overviews.json')
-      let previous: { version: number; notes: Record<string, NoteOverview> } = { version: 1, notes: {} }
-      try { previous = JSON.parse(await fs.readFile(target, 'utf8')) } catch { /* A derived index can be rebuilt without changing notes or layout. */ }
-      const notes: Record<string, NoteOverview> = {}
-      for (const name of (await this.scan()).names) {
-        const { content } = await this.load(name), version = contentVersion(content)
-        const cached = previous?.version === 1 ? previous.notes?.[name] : undefined
-        notes[name] = cached?.version === version && (cached.overviewSource === 'local' || cached.overviewSource === 'agent') ? cached : overview(name, content)
-      }
-      if (!isDeepStrictEqual(previous, { version: 1, notes })) await this.writeOverviews(notes)
-      return Object.values(notes).filter(note => !folder || note.name.startsWith(folder + '/'))
+  /**
+   * Compare-and-swap for one note: `expected === null` means the file must not exist, `next === null` deletes it.
+   * Used by the change engine for atomic batches and exact undo.
+   */
+  async replaceFile(name: string, expected: string | null, next: string | null): Promise<void> {
+    this.validate(name)
+    await this.withLock(name, async () => {
+      const folder = folderOf(name)
+      if (next !== null && folder) await this.ensureFolder(folder)
+      const file = await this.notePath(name, false)
+      const current = await fs.readFile(file, 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error })
+      if (current !== expected) throw new ConflictError(expected === null ? `「${name}」已存在，未覆盖。` : `「${name}」已在其他地方修改，未覆盖新内容。`)
+      if (next === null) { await fs.rm(file); return }
+      if (expected === null) { await fs.writeFile(file, next, { encoding: 'utf8', flag: 'wx' }); return }
+      const tmp = path.join(path.dirname(file), '.' + path.basename(name) + '.' + randomUUID() + '.tmp')
+      try { await fs.writeFile(tmp, next, 'utf8'); await fs.rename(tmp, file) }
+      finally { await fs.rm(tmp, { force: true }) }
     })
   }
 
-  private async writeOverviews(notes: Record<string, NoteOverview>): Promise<void> {
-    const target = path.join(this.metaDir, 'overviews.json'), tmp = target + '.' + randomUUID() + '.tmp'
-    try { await fs.writeFile(tmp, JSON.stringify({ version: 1, notes }), 'utf8'); await fs.rename(tmp, target) }
-    finally { await fs.rm(tmp, { force: true }) }
+  /** Creates missing intermediate folders inside the notes root (never through symlinks). */
+  async ensureFolder(folder: string): Promise<void> {
+    this.validate(folder, true)
+    let current = ''
+    for (const part of folder.split('/')) {
+      current = current ? current + '/' + part : part
+      try { await this.folderPath(current) }
+      catch (error) { if (!(error instanceof NotFoundError)) throw error; await fs.mkdir(path.join(this.root, current)).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }) }
+    }
   }
 
-  async rememberOverview(name: string, version: string, text: string): Promise<void> {
-    await this.overviews()
-    await this.withLock('overviews', async () => {
-      const { content } = await this.load(name)
-      if (contentVersion(content) !== version) throw new ConflictError('文章已修改，不能保存过期概述。')
-      const index = JSON.parse(await fs.readFile(path.join(this.metaDir, 'overviews.json'), 'utf8')) as { notes: Record<string, NoteOverview> }
-      index.notes[name] = { ...overview(name, content), overview: text, overviewSource: 'agent' }
-      await this.writeOverviews(index.notes)
-    })
+  /** Removes a folder only if it is empty of notes and subfolders (hidden temp files are ignored). */
+  async removeEmptyFolder(folder: string): Promise<boolean> {
+    if (!folder) return false
+    const directory = await this.folderPath(folder)
+    const entries = await fs.readdir(directory)
+    if (entries.some(name => !name.startsWith('.'))) return false
+    await fs.rm(directory, { recursive: true })
+    return true
   }
 
   async createFolder(folder: string): Promise<void> {
@@ -169,23 +169,79 @@ export class NoteStore {
     }
   }
 
+  /** Canvas layout is split per folder (`canvas/<folder>/_canvas.json`, committed); visits live in the local cache. */
   private async readLibrary(): Promise<Library> {
+    const library: Library = { version: 1, notes: {}, frames: [] }
     try {
-      const library = JSON.parse(await fs.readFile(path.join(this.metaDir, 'library.json'), 'utf8')) as Library
-      if (library.version !== 1 || !library.notes || typeof library.notes !== 'object' || Array.isArray(library.notes) ||
-        Object.values(library.notes).some(entry => !entry || !validPosition(entry.position) || !Number.isFinite(entry.lastOpenedAt))) throw new Error()
-      if (library.frames !== undefined) this.validateFrames(library.frames)
+      const recent = await this.readJSON<{ version: 1; notes: Record<string, number> }>(path.join(this.paths.cache, 'recent.json'))
+      const visits = recent?.version === 1 && recent.notes && typeof recent.notes === 'object' ? recent.notes : {}
+      for (const file of await this.canvasFiles()) {
+        const folder = path.relative(this.paths.canvas, path.dirname(file)).split(path.sep).join('/')
+        const layout = await this.readJSON<CanvasFile>(file)
+        if (!layout) continue
+        if (layout.version !== 1 || !layout.notes || typeof layout.notes !== 'object' || Array.isArray(layout.notes) || !Array.isArray(layout.frames ?? [])) throw new Error()
+        const prefix = folder ? folder + '/' : ''
+        for (const [file, position] of Object.entries(layout.notes)) {
+          if (!validPosition(position)) throw new Error()
+          library.notes[prefix + file] = { position: { x: position.x, y: position.y }, lastOpenedAt: 0 }
+        }
+        for (const frame of layout.frames ?? []) library.frames!.push({ ...frame, space: folder, members: (frame.members ?? []).map(name => prefix + name) })
+      }
+      for (const [name, entry] of Object.entries(library.notes)) { const visit = visits[name]; if (Number.isFinite(visit)) entry.lastOpenedAt = visit! }
+      this.validateFrames(library.frames!)
       return library
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, notes: {} }
-      throw new ConflictError('画布布局文件无法读取，已停止保存布局以免丢失位置。Markdown 正文未受影响，请恢复 .canvasnote/library.json 后重试。')
+    } catch {
+      throw new ConflictError('画布布局文件无法读取，已停止保存布局以免丢失位置。Markdown 正文未受影响，请恢复 canvas/ 中的布局文件后重试。')
     }
   }
 
-  private async writeLibrary(library: Library): Promise<void> {
-    const target = path.join(this.metaDir, 'library.json'), tmp = target + '.' + randomUUID() + '.tmp'
-    try { await fs.writeFile(tmp, JSON.stringify(library, null, 2), 'utf8'); await fs.rename(tmp, target) }
+  private async readJSON<T>(file: string): Promise<T | null> {
+    try { return JSON.parse(await fs.readFile(file, 'utf8')) as T }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error }
+  }
+
+  private async canvasFiles(): Promise<string[]> {
+    const files: string[] = []
+    const visit = async (directory: string) => {
+      let entries: import('node:fs').Dirent[]
+      try { entries = await fs.readdir(directory, { withFileTypes: true }) } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
+      for (const entry of entries) {
+        if (entry.isDirectory() && !entry.name.startsWith('.')) await visit(path.join(directory, entry.name))
+        else if (entry.isFile() && entry.name === '_canvas.json') files.push(path.join(directory, entry.name))
+      }
+    }
+    await visit(this.paths.canvas)
+    return files
+  }
+
+  private async writeAtomic(file: string, content: string): Promise<void> {
+    await fs.mkdir(path.dirname(file), { recursive: true })
+    const tmp = file + '.' + randomUUID() + '.tmp'
+    try { await fs.writeFile(tmp, content, 'utf8'); await fs.rename(tmp, file) }
     finally { await fs.rm(tmp, { force: true }) }
+  }
+
+  /** Writes only the folder files whose content changed, so a commit shows exactly which canvases moved. */
+  private async writeLibrary(library: Library): Promise<void> {
+    const folders = new Map<string, CanvasFile>()
+    const folder = (name: string) => { if (!folders.has(name)) folders.set(name, { version: 1, notes: {}, frames: [] }); return folders.get(name)! }
+    for (const file of await this.canvasFiles()) folder(path.relative(this.paths.canvas, path.dirname(file)).split(path.sep).join('/'))
+    const visits: Record<string, number> = {}
+    for (const name of Object.keys(library.notes).sort((a, b) => a.localeCompare(b, 'zh'))) {
+      const entry = library.notes[name]!
+      folder(folderOf(name)).notes[name.slice(name.lastIndexOf('/') + 1)] = { x: entry.position.x, y: entry.position.y }
+      if (entry.lastOpenedAt > 0) visits[name] = entry.lastOpenedAt
+    }
+    for (const frame of library.frames ?? []) {
+      const { space, ...rest } = frame
+      folder(space).frames.push({ ...rest, members: frame.members.map(name => name.slice(name.lastIndexOf('/') + 1)) })
+    }
+    for (const [name, layout] of folders) {
+      const file = path.join(this.paths.canvas, name, '_canvas.json'), next = JSON.stringify(layout, null, 2) + '\n'
+      if (await fs.readFile(file, 'utf8').catch(() => null) !== next) await this.writeAtomic(file, next)
+    }
+    const recent = path.join(this.paths.cache, 'recent.json'), next = JSON.stringify({ version: 1, notes: visits })
+    if (await fs.readFile(recent, 'utf8').catch(() => null) !== next) await this.writeAtomic(recent, next)
   }
 
   /** Place ONLY new files, below existing cards; content and sort order never change coordinates. */
@@ -200,7 +256,7 @@ export class NoteStore {
         let lastOpenedAt = 0
         // Preserve visits from the previous version; old paragraph layouts are left untouched on disk.
         try {
-          const old = JSON.parse(await fs.readFile(path.join(this.metaDir, name + '.board.json'), 'utf8'))
+          const old = JSON.parse(await fs.readFile(path.join(this.paths.legacy, name + '.board.json'), 'utf8'))
           if (Number.isFinite(old.lastOpenedAt) && old.lastOpenedAt > 0) lastOpenedAt = old.lastOpenedAt
         } catch { /* no previous visit metadata */ }
         library.notes[name] = { position: { x: 48 + index % 3 * 312, y: top + Math.floor(index / 3) * 224 }, lastOpenedAt }
@@ -344,6 +400,90 @@ export class NoteStore {
       library.frames = allFrames
       await this.writeLibrary(library)
       return this.canvasLayout(library, folder, names)
+    })
+  }
+
+  /**
+   * Applies a partial layout change and returns the exact previous state of what it touched.
+   * `positions[name] = null` removes a stale entry; `frames` replaces the folder's frame list.
+   */
+  async patchLayout(folder: string, next: LayoutPatch): Promise<LayoutPatch> {
+    return this.withLock('library', async () => {
+      const library = await this.readLibrary()
+      const before = this.layoutState(library, folder, next)
+      this.writePatch(library, folder, next)
+      await this.writeLibrary(library)
+      return before
+    })
+  }
+
+  /** Strict variant for undo: refuses if anything touched has changed since `expected`. */
+  async replaceLayout(folder: string, expected: LayoutPatch, next: LayoutPatch): Promise<void> {
+    await this.withLock('library', async () => {
+      const library = await this.readLibrary()
+      if (!isDeepStrictEqual(this.layoutState(library, folder, expected), expected)) throw new ConflictError('画布布局已在之后被修改，未撤销布局。')
+      this.writePatch(library, folder, next)
+      await this.writeLibrary(library)
+    })
+  }
+
+  private layoutState(library: Library, folder: string, shape: LayoutPatch): LayoutPatch {
+    const positions: Record<string, NotePosition | null> = {}
+    for (const name of Object.keys(shape.positions)) { const entry = library.notes[name]; positions[name] = entry ? { x: entry.position.x, y: entry.position.y } : null }
+    return { positions, ...(shape.frames ? { frames: (library.frames ?? []).filter(frame => frame.space === folder) } : {}) }
+  }
+
+  private writePatch(library: Library, folder: string, next: LayoutPatch): void {
+    for (const [name, position] of Object.entries(next.positions)) {
+      this.validate(name)
+      if (position === null) { delete library.notes[name]; continue }
+      if (!validPosition(position)) throw new BadNameError('文章位置无效。')
+      library.notes[name] = { position: { x: position.x, y: position.y }, lastOpenedAt: library.notes[name]?.lastOpenedAt ?? 0 }
+    }
+    if (next.frames) {
+      if (next.frames.some(frame => frame.space !== folder)) throw new BadNameError('文档区必须属于当前文件夹。')
+      library.frames = [...(library.frames ?? []).filter(frame => frame.space !== folder), ...next.frames]
+      this.validateFrames(library.frames)
+    }
+  }
+
+  /** Raw layout of one folder for tools: every positioned note (including stale entries) and frames. */
+  async layout(folder: string): Promise<CanvasLayout> {
+    await this.folderPath(folder)
+    return this.withLock('library', async () => {
+      const { names } = await this.scan(), library = await this.readLibrary()
+      if (await this.placeNew(library, names)) await this.writeLibrary(library)
+      return this.canvasLayout(library, folder, names)
+    })
+  }
+
+  /**
+   * After a rename made outside the app, carries the old path's position and frame membership to the
+   * new path (same folder only); `to === null` forgets a deleted note's entry.
+   */
+  async moveLayoutEntry(from: string, to: string | null): Promise<void> {
+    await this.withLock('library', async () => {
+      const library = await this.readLibrary()
+      const old = library.notes[from]
+      if (!old) return
+      delete library.notes[from]
+      const same = to !== null && folderOf(to) === folderOf(from)
+      if (same) library.notes[to] = { position: old.position, lastOpenedAt: Math.max(old.lastOpenedAt, library.notes[to]?.lastOpenedAt ?? 0) }
+      library.frames = (library.frames ?? []).map(frame => frame.members.includes(from)
+        ? { ...frame, members: same && !frame.members.includes(to!) ? frame.members.map(name => name === from ? to! : name) : frame.members.filter(name => name !== from) }
+        : frame)
+      await this.writeLibrary(library)
+    })
+  }
+
+  /** Moves visit history with a renamed note; recent visits are local view state. */
+  async renameVisit(from: string, to: string): Promise<void> {
+    await this.withLock('library', async () => {
+      const library = await this.readLibrary()
+      const visit = library.notes[from]?.lastOpenedAt
+      if (!visit || !library.notes[to]) return
+      library.notes[to]!.lastOpenedAt = Math.max(library.notes[to]!.lastOpenedAt, visit)
+      await this.writeLibrary(library)
     })
   }
 

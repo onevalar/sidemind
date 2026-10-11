@@ -123,22 +123,25 @@ describe('API', () => {
     expect((await request('', [frame])).status).toBe(200)
     const nested = { ...frame, id: 'project', space: 'Work', members: ['Work/A.md'] }
     expect((await request('Work', [nested])).status).toBe(200)
-    const library = path.join(dir, '.canvasnote', 'library.json'), original = await fs.readFile(library, 'utf8')
+    // Layout is split per folder: canvas/_canvas.json (root) and canvas/Work/_canvas.json.
+    const layoutFiles = [path.join(dir, '.canvasnote', 'canvas', '_canvas.json'), path.join(dir, '.canvasnote', 'canvas', 'Work', '_canvas.json')]
+    const snapshot = () => Promise.all(layoutFiles.map(file => fs.readFile(file, 'utf8'))), original = await snapshot()
+    expect(JSON.parse(original[1]!)).toMatchObject({ frames: [{ id: 'project', members: ['A.md'] }] })
     for (const frames of [[{ ...frame, title: ' ' }], [{ ...frame, width: 20 }], [{ ...frame, position: { x: null, y: 4 } }], [frame, { ...frame, id: 'second' }], [{ ...frame, members: ['Work/A.md'] }], [{ ...frame, members: ['../outside.md'] }]]) {
       expect((await request('', frames as CanvasFrame[], {}, [frame])).status).toBe(400)
-      expect(await fs.readFile(library, 'utf8')).toBe(original)
+      expect(await snapshot()).toEqual(original)
     }
     expect((await request('', [frame], { 'Work/A.md': { x: 5, y: -17 } }, [frame])).status).toBe(400)
     expect((await request('', [frame], { 'Missing.md': { x: 5, y: -17 } }, [frame])).status).toBe(404)
     expect((await request('', [{ ...frame, title: 'stale' }], { 'Welcome.md': { x: 313, y: -719 } })).status).toBe(409)
-    expect(await fs.readFile(library, 'utf8')).toBe(original)
+    expect(await snapshot()).toEqual(original)
     expect(await (await app.request('/api/canvas?folder=Work', { headers: H })).json()).toMatchObject({ frames: [nested] })
     expect(await (await app.request('/api/canvas?folder=', { headers: H })).json()).toEqual({ frames: [frame], positions: root.positions })
   })
 
   it('returns a layout conflict without overwriting malformed library data or blocking Markdown reads', async () => {
     const original = await fs.readFile(path.join(dir, 'Welcome.md'), 'utf8')
-    const library = path.join(dir, '.canvasnote', 'library.json')
+    const library = path.join(dir, '.canvasnote', 'canvas', '_canvas.json')
     await fs.writeFile(library, '{broken')
     expect((await app.request('/api/notes', { headers: H })).status).toBe(409)
     expect((await app.request('/api/canvas/positions', { method: 'PUT', headers: J, body: JSON.stringify({ positions: { 'Welcome.md': { x: 107, y: -389 } } }) })).status).toBe(409)
@@ -165,11 +168,14 @@ describe('API', () => {
     expect((await fs.stat(file)).mtimeMs).toBe(mtime)
     const reopened = new NoteStore(dir)
     expect((await reopened.list())[0]!.lastOpenedAt).toBe(first)
-    const library = path.join(dir, '.canvasnote', 'library.json')
-    const beforeMissing = await fs.readFile(library, 'utf8')
+    // Visits are local view state in the cache, never in the committed canvas files.
+    const recent = path.join(dir, '.canvasnote', 'cache', 'recent.json'), canvas = path.join(dir, '.canvasnote', 'canvas', '_canvas.json')
+    expect(JSON.parse(await fs.readFile(recent, 'utf8')).notes['Welcome.md']).toBe(first)
+    expect(await fs.readFile(canvas, 'utf8')).not.toContain('lastOpenedAt')
+    const beforeMissing = await fs.readFile(recent, 'utf8')
     const missing = await app.request('/api/notes/Missing.md/open', { method: 'POST', headers: J, body: '{}' })
     expect(missing.status).toBe(404)
-    expect(await fs.readFile(library, 'utf8')).toBe(beforeMissing)
+    expect(await fs.readFile(recent, 'utf8')).toBe(beforeMissing)
     expect((await app.request('/api/notes/Welcome.md/open', { method: 'POST', headers: { ...H, 'content-type': 'text/plain' }, body: '{}' })).status).toBe(415)
   })
 

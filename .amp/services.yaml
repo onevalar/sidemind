@@ -5,7 +5,7 @@ services:
     port: 3001
     health: /api/notes
     env:
-      NOTES_DIR: ../.amp/preview-notes
+      CANVAS_DATA_DIR: ../.amp/preview-data
       CANVAS_CONFIG_DIR: ../.amp/preview-config
   canvas-note-web:
     cwd: web

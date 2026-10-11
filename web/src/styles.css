@@ -399,3 +399,44 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
  .editor-workspace[data-preview="live"] .w-md-editor-preview { position: relative; width: 100%; height: 50%; flex: 1; min-height: 0; border-top: 1px solid var(--line); box-shadow: none; }
  .new-note-fields select { min-height: 44px; }
 }
+
+/* Agent: plan, proposals, change sets (v0.3) */
+.agent-plan { list-style: none; margin: 16px 0 0; padding: 12px; display: grid; gap: 6px; border: 1px solid var(--line); border-radius: 10px; font-size: 12px; color: var(--text-secondary); }
+.agent-plan li { display: flex; align-items: flex-start; gap: 8px; line-height: 1.6; }
+.agent-plan li > svg { flex: none; margin-top: 3px; }
+.agent-plan li[data-status="done"] { color: var(--muted); }
+.agent-plan li[data-status="active"] { color: var(--text); font-weight: 550; }
+.agent-section-title { font-size: 12px; font-weight: 550; margin: 0 0 4px; color: var(--text); }
+.agent-proposals { margin-top: 20px; padding: 12px; border: 1px solid var(--warning); border-radius: 10px; font-size: 12px; }
+.agent-proposals .agent-change { align-items: flex-start; }
+.agent-change-file > strong { font-weight: 550; color: var(--text); line-height: 1.6; overflow-wrap: anywhere; }
+.agent-settled { font-size: 11px; margin: 6px 0 0; }
+.agent-diff + .agent-diff { margin-top: 16px; }
+.agent-diff h4 { font-size: 12px; font-weight: 550; margin: 12px 0 8px; overflow-wrap: anywhere; }
+
+/* Push */
+.push-item:disabled { opacity: .55; cursor: default; }
+.push-dialog { display: grid; gap: 12px; font-size: 13px; }
+.push-steps { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; max-height: 240px; overflow: auto; color: var(--text-secondary); font-size: 12px; }
+.push-steps li { display: flex; gap: 8px; align-items: flex-start; line-height: 1.6; }
+.push-steps li > svg { flex: none; margin-top: 3px; }
+.push-steps li > span { overflow-wrap: anywhere; }
+.push-warning { margin: 0; padding: 8px 10px; border-radius: 8px; background: var(--surface-secondary); color: var(--text-secondary); font-size: 12px; line-height: 1.6; }
+.push-report { display: grid; gap: 10px; border-top: 1px solid var(--line); padding-top: 12px; }
+.push-report p { margin: 0; line-height: 1.7; }
+.push-message { margin: 0; padding: 10px 12px; background: var(--surface-secondary); border-radius: 8px; font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 200px; overflow: auto; }
+.push-notes { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; font-size: 12px; max-height: 200px; overflow: auto; }
+.push-notes li { display: flex; justify-content: space-between; gap: 12px; }
+.push-notes li > span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.push-notes li > span:last-child { flex: none; }
+.push-stale { font-size: 12px; line-height: 1.7; }
+.push-stale ul { margin: 4px 0 0; padding-left: 18px; }
+
+/* Memory */
+.app-dialog.memory-dialog { width: min(calc(100vw - 64px), 760px); max-height: min(900px, calc(100dvh - 96px)); overflow: auto; }
+.memory-meta { margin: 12px 0 0; padding: 8px 10px; background: var(--surface-secondary); border-radius: 6px; font-size: 11px; color: var(--text-secondary); white-space: pre-wrap; }
+.memory-body { font-size: 13px; line-height: 1.75; }
+.memory-body h2 { font-size: 14px; margin: 18px 0 6px; }
+.memory-editor { width: 100%; margin-top: 12px; font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; }
+.repo-remote { display: grid; gap: 8px; margin-top: 14px; }
+.repo-remote label { font-size: 12px; font-weight: 550; }

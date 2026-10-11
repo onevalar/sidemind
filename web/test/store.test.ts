@@ -125,7 +125,7 @@ describe('NoteStore', () => {
     JSON.stringify({ version: 1, notes: { 'Welcome.md': { position: { x: 'bad', y: 7 }, lastOpenedAt: 0 } } }),
   ])('preserves malformed library data and keeps Markdown readable (%s)', async (corrupt) => {
     const original = await store.load('Welcome.md')
-    const file = path.join(dir, '.canvasnote', 'library.json')
+    const file = path.join(dir, '.canvasnote', 'canvas', '_canvas.json')
     await fs.writeFile(file, corrupt)
     const restarted = new NoteStore(dir)
     await restarted.init()

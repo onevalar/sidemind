@@ -453,16 +453,16 @@ export class ChatGPTConnection {
     return (await this.respond(INSTRUCTIONS, [{ role: 'user', content: JSON.stringify({ instruction, source }) }], [], signal)).text
   }
 
-  async chat(messages: AIMessage[], tools: AITool[], signal: AbortSignal): Promise<AITurn> {
+  async chat(messages: AIMessage[], tools: AITool[], signal: AbortSignal, onDelta?: (text: string) => void): Promise<AITurn> {
     const input = messages.filter(message => message.role !== 'system').flatMap<unknown>(message => {
       if (message.role === 'tool') return [{ type: 'function_call_output', call_id: message.tool_call_id, output: message.content }]
       if (message.responseOutput) return message.responseOutput
       return [...(message.content ? [{ role: message.role, content: message.content }] : []), ...(message.tool_calls ?? []).map(call => ({ type: 'function_call', call_id: call.id, name: call.function.name, arguments: call.function.arguments }))]
     })
-    return this.respond(messages.find(message => message.role === 'system')?.content ?? '', input, tools, signal)
+    return this.respond(messages.find(message => message.role === 'system')?.content ?? '', input, tools, signal, onDelta)
   }
 
-  private async respond(instructions: string, input: unknown[], tools: AITool[], signal?: AbortSignal): Promise<AITurn> {
+  private async respond(instructions: string, input: unknown[], tools: AITool[], signal?: AbortSignal, onDelta?: (text: string) => void): Promise<AITurn> {
     const saved = await this.read()
     const id = saved.activeAccountId
     if (!id) throw new ChatGPTError('尚未选择 ChatGPT 账号，请先连接。')
@@ -486,7 +486,7 @@ export class ChatGPTConnection {
         try { data = await jsonBody(response, abort) } catch { /* Safe status-only fallback. */ }
         throw safeRemoteError(response.status, data)
       }
-      return await this.stream(response, abort)
+      return await this.stream(response, abort, onDelta)
     } catch (error) {
       if (abort.aborted) throw aborted(abort)
       if (error instanceof ChatGPTError) throw error
@@ -494,7 +494,7 @@ export class ChatGPTConnection {
     } finally { requests.delete(controller); if (!requests.size) this.requests.delete(id) }
   }
 
-  private async stream(response: Response, signal: AbortSignal): Promise<AITurn> {
+  private async stream(response: Response, signal: AbortSignal, onDelta?: (text: string) => void): Promise<AITurn> {
     if (!response.body) throw new ChatGPTError('ChatGPT 未返回修改内容。')
     const reader = response.body.getReader()
     const decoder = new TextDecoder('utf-8', { fatal: true })
@@ -510,6 +510,7 @@ export class ChatGPTConnection {
       if (type === 'response.output_text.delta') {
         if (typeof record.delta !== 'string') throw new ChatGPTError('ChatGPT 响应格式无效。')
         output += record.delta
+        onDelta?.(record.delta)
       } else if (type === 'response.failed' || type === 'error' || type === 'response.error') {
         throw safeRemoteError(0, { error: record.response?.error ?? record.error ?? { code: record.code } })
       } else if (type === 'response.incomplete') throw new ChatGPTError('ChatGPT 修改结果不完整，未采用任何部分修改，请缩短选区后重试。')

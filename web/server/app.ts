@@ -6,20 +6,50 @@ import { compress } from 'hono/compress'
 import { serveStatic } from '@hono/node-server/serve-static'
 import type { EventBus } from './events'
 import { BadNameError, ConflictError, NotFoundError, type NoteStore } from './store'
-import { AIRequestError, chat, proposeEdit } from './ai'
-import { AISettings, AISettingsError, type AIConnectionInput } from './ai-settings'
+import { AIRequestError, embed, proposeEdit } from './ai'
+import { AISettings, AISettingsError, MODEL_SLOTS, type AIConnectionInput, type ModelSlot } from './ai-settings'
 import { FolderOpenError, openWorkspaceFolder } from './workspace-folder'
 import { ChatGPTConnection, ChatGPTError } from './chatgpt'
-import { NoteAgent, type AgentModel } from './agent'
-import type { AgentScope } from '../shared/types'
+import { NoteAgent } from './agent'
+import type { AgentEvent, AgentScope, ChangeSetDetail, PushEvent } from '../shared/types'
+import { NoteIndex } from './note-index'
+import { MemoryFiles } from './memory-files'
+import { ChangeEngine, summarize } from './changes'
+import { ProposalStore, detail as proposalDetail } from './proposals'
+import { ConversationStore } from './conversations'
+import { Models } from './models'
+import { SemanticIndex } from './semantic'
+import { GitError, type Git } from './git'
+import { PushService } from './push'
+import { memoryFile, type MemoryTarget } from './memory'
 
 const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/
 
-export function createApp(store: NoteStore, bus: EventBus, opts: { staticDir?: string; aiSettings?: AISettings; chatgpt?: ChatGPTConnection; aiTransport?: typeof fetch; openDirectory?: (root: string) => Promise<void> } = {}) {
+export type AppOptions = { staticDir?: string; aiSettings?: AISettings; chatgpt?: ChatGPTConnection; aiTransport?: typeof fetch; openDirectory?: (root: string) => Promise<void>; git?: Git | null }
+
+export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}) {
   const app = new Hono()
-  const ai = opts.aiSettings ?? new AISettings(store.root)
+  // Connections are keyed by the data directory (the old notes directory before migration), outside the repo.
+  const ai = opts.aiSettings ?? new AISettings(store.paths.root)
   const chatgpt = opts.chatgpt ?? new ChatGPTConnection(ai.file + '.chatgpt.json', { transport: opts.aiTransport })
-  const agent = new NoteAgent(store, bus)
+  const git = opts.git ?? null
+  const index = new NoteIndex(store)
+  const files = new MemoryFiles(store.paths.memory)
+  const changes = new ChangeEngine(store, files, bus)
+  const proposals = new ProposalStore(store.paths.cache, changes)
+  const conversations = new ConversationStore(path.join(store.paths.cache, 'conversations'))
+  const models = new Models(ai, chatgpt, opts.aiTransport)
+  let semantic: SemanticIndex | null = null
+  const semanticIndex = async () => {
+    const embedder = await models.embedder()
+    if (!embedder) return null
+    if (semantic?.model !== embedder.model) semantic = new SemanticIndex(index, embedder, path.join(store.paths.cache, 'embeddings.json'))
+    return semantic
+  }
+  const agent = new NoteAgent({ store, index, files, changes, proposals, git, models, conversations, bus, semantic: semanticIndex })
+  const pusher = new PushService({ store, files, git, models, conversations, index, bus })
+  const slotOf = (value: string | undefined): ModelSlot => { if (value === undefined) return 'main'; if (!MODEL_SLOTS.includes(value as ModelSlot)) throw new BadNameError('模型槽位无效。'); return value as ModelSlot }
+  const settingsFor = (slot: ModelSlot) => slot === 'main' ? ai : ai.forSlot(slot)
 
   // This server can read and write files on the user's machine and has no login, so:
   //  - only answer requests addressed to localhost (blocks DNS-rebinding from other sites)
@@ -41,6 +71,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: { staticDir?: s
     if (err instanceof AISettingsError) return c.json({ error: err.message }, 400)
     if (err instanceof ChatGPTError) return c.json({ error: err.message }, 502)
     if (err instanceof FolderOpenError) return c.json({ error: err.message }, 503)
+    if (err instanceof GitError) return c.json({ error: err.message }, 502)
     console.error(err)
     return c.json({ error: 'Internal error' }, 500)
   })
@@ -70,7 +101,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: { staticDir?: s
     return c.json(layout)
   })
   app.get('/api/search', async (c) => c.json(await store.search((c.req.query('q') ?? '').slice(0, 300))))
-  app.get('/api/settings', async (c) => c.json({ notesDirectory: store.root, ai: await ai.publicConfig(), chatgpt: await chatgpt.publicConfig() }))
+  app.get('/api/settings', async (c) => c.json({ notesDirectory: store.root, dataDirectory: store.paths.root, ai: await ai.publicConfig(), summary: await ai.forSlot('summary').publicConfig(), embedding: await ai.forSlot('embedding').publicConfig(), chatgpt: await chatgpt.publicConfig() }))
   app.post('/api/workspace/open', async (c) => {
     const body = await c.req.json().catch(() => null)
     if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).some(key => key !== 'folder') || body.folder !== undefined && typeof body.folder !== 'string') return c.json({ error: '请选择笔记工作区内的文件夹。' }, 400)
@@ -78,8 +109,8 @@ export function createApp(store: NoteStore, bus: EventBus, opts: { staticDir?: s
     await (opts.openDirectory ?? openWorkspaceFolder)(directory)
     return c.json({ ok: true })
   })
-  app.put('/api/ai/connection', async (c) => c.json(await ai.save(await c.req.json().catch(() => null))))
-  app.delete('/api/ai/connection', async (c) => c.json(await ai.clear()))
+  app.put('/api/ai/connection', async (c) => c.json(await settingsFor(slotOf(c.req.query('slot'))).save(await c.req.json().catch(() => null))))
+  app.delete('/api/ai/connection', async (c) => c.json(await settingsFor(slotOf(c.req.query('slot'))).clear()))
   app.get('/api/ai/chatgpt', async (c) => c.json(await chatgpt.publicConfig()))
   app.get('/api/ai/chatgpt/models', async (c) => c.json(await chatgpt.models()))
   app.post('/api/ai/chatgpt/login', async (c) => {
@@ -104,9 +135,11 @@ export function createApp(store: NoteStore, bus: EventBus, opts: { staticDir?: s
     return c.json(await chatgpt.signOut(body.accountId))
   })
   app.post('/api/ai/test', async (c) => {
-    const connection = await ai.resolve(await c.req.json().catch(() => null) as AIConnectionInput)
+    const slot = slotOf(c.req.query('slot'))
+    const connection = await settingsFor(slot).resolve(await c.req.json().catch(() => null) as AIConnectionInput)
     try {
-      await proposeEdit(connection, 'Connection test.', 'Return the supplied text unchanged.', c.req.raw.signal, opts.aiTransport)
+      if (slot === 'embedding') await embed(connection, ['连接测试'], c.req.raw.signal, opts.aiTransport)
+      else await proposeEdit(connection, 'Connection test.', 'Return the supplied text unchanged.', c.req.raw.signal, opts.aiTransport)
       return c.json({ ok: true })
     } catch { return c.json({ error: '连接测试未通过，请检查地址、模型名称和密钥。' }, 502) }
   })
@@ -114,34 +147,95 @@ export function createApp(store: NoteStore, bus: EventBus, opts: { staticDir?: s
     const body = await c.req.json().catch(() => null)
     if (!body || typeof body.message !== 'string' || !body.message.trim() || body.message.length > 16000 || !['chat', 'note', 'folder'].includes(body.scope?.kind) || typeof body.scope?.folder !== 'string' || (body.scope.kind === 'note' && typeof body.scope.name !== 'string') || (body.session !== undefined && typeof body.session !== 'string') || (body.selection !== undefined && (typeof body.selection !== 'string' || body.selection.length > 20000))) return c.json({ error: '请输入消息并选择对话范围。' }, 400)
     const scope: AgentScope = body.scope.kind === 'note' ? { kind: 'note', folder: body.scope.folder, name: body.scope.name } : { kind: body.scope.kind, folder: body.scope.kind === 'chat' ? '' : body.scope.folder }
-    let model: AgentModel
-    try {
-      const config = await chatgpt.publicConfig()
-      if (config.unavailable) throw new ChatGPTError(config.error ?? '无法读取 ChatGPT 连接，请检查设置。')
-      const connection = config.activeAccountId ? null : await ai.connection()
-      if (!config.activeAccountId && !connection) throw new AIRequestError('尚未连接模型服务，请先在设置中添加连接。')
-      model = config.activeAccountId ? (messages, tools, signal) => chatgpt.chat(messages, tools, signal) : (messages, tools, signal) => chat(connection, messages, tools, signal, opts.aiTransport)
-    } catch (error) { return c.json({ error: error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError ? error.message : '无法读取模型连接。' }, 502) }
+    let model: Awaited<ReturnType<Models['mainModel']>>['call']
+    try { model = (await models.mainModel()).call }
+    catch (error) { return c.json({ error: error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError ? error.message : '无法读取模型连接。' }, 502) }
     c.header('Content-Type', 'application/x-ndjson')
     c.header('Cache-Control', 'no-store')
     return stream(c, async output => {
       const controller = new AbortController()
       output.onAbort(() => controller.abort())
       const signal = AbortSignal.any([controller.signal, c.req.raw.signal, AbortSignal.timeout(600000)])
-      const emit = async (event: import('../shared/types').AgentEvent) => { if (!output.aborted) await output.write(JSON.stringify(event) + '\n') }
+      const emit = async (event: AgentEvent) => { if (!output.aborted) await output.write(JSON.stringify(event) + '\n') }
       try { await agent.run({ scope, session: body.session, message: body.message.trim(), ...(scope.kind === 'note' ? { selection: body.selection } : {}) }, model, signal, emit) }
       catch (error) {
         if (!signal.aborted) await emit({ type: 'error', text: error instanceof BadNameError || error instanceof ConflictError || error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError ? error.message : '模型连接中断。已经完成的修改保留在记录中，请检查后再继续。' })
+        if (!(error instanceof BadNameError || error instanceof ConflictError || error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError) && !signal.aborted) console.error(error)
       }
       finally { await emit({ type: 'done' }) }
     })
   })
-  app.post('/api/ai/changes/:id/undo', async c => {
-    await agent.undo(c.req.param('id'))
+  const parseScope = (raw: string | undefined): AgentScope => {
+    let scope: AgentScope
+    try { scope = JSON.parse(raw ?? '') } catch { throw new BadNameError('对话范围无效。') }
+    if (!scope || !['chat', 'note', 'folder'].includes(scope.kind) || typeof scope.folder !== 'string' || (scope.kind === 'note' && typeof scope.name !== 'string')) throw new BadNameError('对话范围无效。')
+    return scope.kind === 'note' ? { kind: 'note', folder: scope.folder, name: scope.name } : { kind: scope.kind, folder: scope.kind === 'chat' ? '' : scope.folder }
+  }
+  app.get('/api/ai/conversation', async c => c.json(await agent.state(parseScope(c.req.query('scope')))))
+  app.get('/api/ai/changes', async c => c.json(await changes.list({ folder: c.req.query('folder') || undefined, name: c.req.query('name') || undefined, conversation: c.req.query('conversation') || undefined })))
+  app.get('/api/ai/changes/:id', async c => {
+    const set = await changes.get(c.req.param('id'))
+    const result: ChangeSetDetail = { ...summarize(set, await changes.undoable(set)), diffs: set.files.map(({ area, name, before, after }) => ({ area, name, before, after })) }
+    return c.json(result)
+  })
+  app.post('/api/ai/changes/:id/undo', async c => c.json(summarize(await changes.undo(c.req.param('id')), false)))
+  app.get('/api/ai/proposals', async c => c.json(await proposals.list(c.req.query('status') as never || undefined)))
+  app.get('/api/ai/proposals/:id', async c => c.json(proposalDetail(await proposals.get(c.req.param('id')))))
+  app.post('/api/ai/proposals/:id/accept', async c => {
+    const { proposal, changeset } = await proposals.accept(c.req.param('id'))
+    if (proposal.conversation) {
+      try { const conversation = await conversations.get(proposal.conversation); conversation.changesets.push(changeset.id); await conversations.save(conversation) } catch { /* conversation pruned */ }
+    }
+    return c.json({ proposal, changeset: summarize(changeset, true) })
+  })
+  app.post('/api/ai/proposals/:id/reject', async c => c.json(await proposals.reject(c.req.param('id'))))
+
+  const memoryTarget = (target: unknown, name: unknown): MemoryTarget => {
+    if (target === 'library') return { kind: 'library' }
+    if (target === 'folder' && typeof name === 'string') return { kind: 'folder', folder: name }
+    if (target === 'note' && typeof name === 'string' && name) return { kind: 'note', name }
+    throw new BadNameError('记忆目标无效。')
+  }
+  app.get('/api/memory', async c => {
+    const target = memoryTarget(c.req.query('target'), c.req.query('name') ?? '')
+    if (target.kind === 'note') await store.load(target.name)
+    if (target.kind === 'folder') await store.folderPath(target.folder)
+    const file = memoryFile(target), content = await files.read(file)
+    return c.json({ target: target.kind, name: target.kind === 'note' ? target.name : target.kind === 'folder' ? target.folder : '', file, content: content ?? '', exists: content !== null })
+  })
+  app.put('/api/memory', async c => {
+    const body = await c.req.json().catch(() => null)
+    if (!body || typeof body.content !== 'string' || body.content.length > 200000 || (body.expected !== null && typeof body.expected !== 'string')) return c.json({ error: '请提供记忆内容。' }, 400)
+    const target = memoryTarget(body.target, body.name)
+    if (target.kind === 'note') await store.load(target.name)
+    if (target.kind === 'folder') await store.folderPath(target.folder)
+    // A direct edit by the user: written to the working tree and committed with the next push.
+    await files.replaceFile(memoryFile(target), body.expected, body.content.trim() ? body.content : null)
+    bus.emit({ type: 'memory-changed' })
     return c.json({ ok: true })
   })
-  app.get('/api/ai/changes/:id', async c => c.json(await agent.change(c.req.param('id'))))
-  app.get('/api/ai/changes', async c => c.json(await agent.changes(c.req.query('folder') ?? '', c.req.query('name'))))
+
+  app.get('/api/repo/status', async c => c.json(await pusher.status()))
+  app.put('/api/repo/remote', async c => {
+    const body = await c.req.json().catch(() => null)
+    if (!body || (body.url !== null && typeof body.url !== 'string')) return c.json({ error: '请填写远端仓库地址。' }, 400)
+    return c.json(await pusher.setRemote(body.url || null))
+  })
+  app.post('/api/repo/push', async c => {
+    c.header('Content-Type', 'application/x-ndjson')
+    c.header('Cache-Control', 'no-store')
+    return stream(c, async output => {
+      const controller = new AbortController()
+      output.onAbort(() => controller.abort())
+      const signal = AbortSignal.any([controller.signal, c.req.raw.signal, AbortSignal.timeout(1800000)])
+      const emit = async (event: PushEvent) => { if (!output.aborted) await output.write(JSON.stringify(event) + '\n') }
+      try { await pusher.push(emit, signal) }
+      catch (error) {
+        if (!(error instanceof GitError || error instanceof ConflictError || error instanceof AIRequestError || error instanceof ChatGPTError)) console.error(error)
+        await emit({ type: 'error', text: signal.aborted ? '推送已停止。已更新的记忆保留在工作区，下次推送时一起提交。' : error instanceof GitError || error instanceof ConflictError || error instanceof AIRequestError || error instanceof ChatGPTError ? error.message : '推送失败，请稍后重试。' })
+      } finally { await emit({ type: 'done' }) }
+    })
+  })
   app.post('/api/ai/propose', async (c) => {
     const body = await c.req.json().catch(() => null)
     if (!body || typeof body.source !== 'string' || typeof body.instruction !== 'string' || !body.source.trim() || !body.instruction.trim() || body.source.length > 100000 || body.instruction.length > 5000) return c.json({ error: '请选择内容并输入修改要求。' }, 400)

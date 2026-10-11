@@ -5,7 +5,7 @@ import { App } from '../src/App'
 import { api } from '../src/api'
 
 vi.mock('../src/api', () => ({
-  api: { listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), recordOpen: vi.fn(), search: vi.fn(), openWorkspaceFolder: vi.fn(), agentChanges: vi.fn(), agent: vi.fn(), undoAgentChange: vi.fn() },
+  api: { listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), recordOpen: vi.fn(), search: vi.fn(), openWorkspaceFolder: vi.fn(), conversation: vi.fn(), changeSets: vi.fn(), agent: vi.fn(), undoChangeSet: vi.fn(), repoStatus: vi.fn() },
   subscribeEvents: () => () => {},
 }))
 vi.mock('../src/LibraryCanvas', () => ({ LibraryCanvas: () => <div>文章画布</div> }))
@@ -18,7 +18,9 @@ beforeEach(() => {
   HTMLElement.prototype.scrollIntoView = vi.fn()
   vi.mocked(api.listNotes).mockResolvedValue([])
   vi.mocked(api.listFolders).mockResolvedValue([''])
-  vi.mocked(api.agentChanges).mockResolvedValue([])
+  vi.mocked(api.conversation).mockResolvedValue(null)
+  vi.mocked(api.changeSets).mockResolvedValue([])
+  vi.mocked(api.repoStatus).mockResolvedValue({ git: true, dataDirectory: '/test', branch: 'main', changes: 0, noteChanges: 0, remote: null, ahead: null, head: null, pushing: false })
   vi.mocked(api.settings).mockImplementation(() => new Promise(() => {}))
   localStorage.clear()
 })
@@ -146,7 +148,8 @@ it('returns focus to the reference action after selecting an article in nested s
 it('offers an Agent on the canvas, preserves its conversation when hidden and supports pure chat without notes', async () => {
   vi.mocked(api.listFolders).mockResolvedValue(['', 'Work'])
   vi.mocked(api.recordOpen).mockResolvedValue({ ok: true })
-  vi.mocked(api.settings).mockResolvedValue({ notesDirectory: '/test', ai: { configured: true, keySaved: true, model: 'test-model', baseUrl: 'https://example.test/v1', source: 'saved' }, chatgpt: { configured: false, accounts: [], activeAccountId: null, model: '', loginStatus: 'idle' } })
+  const none = { configured: false, keySaved: false, model: '', baseUrl: '', source: 'none' as const }
+  vi.mocked(api.settings).mockResolvedValue({ notesDirectory: '/test/notes', dataDirectory: '/test', summary: none, embedding: none, ai: { configured: true, keySaved: true, model: 'test-model', baseUrl: 'https://example.test/v1', source: 'saved' }, chatgpt: { configured: false, accounts: [], activeAccountId: null, model: '', loginStatus: 'idle' } })
   vi.mocked(api.agent).mockImplementation(async (input, emit) => {
     emit({ type: 'session', id: 'conversation-1' })
     emit({ type: 'message', text: input.scope.kind === 'chat' ? '你好，今天想聊什么？' : '这些笔记主要讨论反射。\n\n[光的反射](Work/%E5%85%89%E7%9A%84%E5%8F%8D%E5%B0%84.md)' })

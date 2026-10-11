@@ -31,6 +31,8 @@ export interface AiComposerProps {
   emptyTitle: string;
   emptyText: string;
   suggestions?: { label: string; prompt: string }[];
+  /** Partial reply while it streams; announced only once complete, as a message. */
+  streaming?: string;
   children?: ReactNode;
 }
 
@@ -66,7 +68,7 @@ function SendButton({ busy, disabled, onSend, onStop }: { busy: boolean; disable
   </motion.button>;
 }
 
-export function AiComposer({ title, subtitle, headerActions, context, messages, value, onValueChange, onSend, onStop, busy, activity = "正在思考…", onOpenNote, disabled, emptyTitle, emptyText, suggestions = [], children }: AiComposerProps) {
+export function AiComposer({ title, subtitle, headerActions, context, messages, value, onValueChange, onSend, onStop, busy, activity = "正在思考…", onOpenNote, disabled, emptyTitle, emptyText, suggestions = [], streaming, children }: AiComposerProps) {
   const reduced = useReducedMotion();
   const inputId = useId();
   const threadRef = useRef<HTMLDivElement>(null);
@@ -126,7 +128,8 @@ export function AiComposer({ title, subtitle, headerActions, context, messages, 
               </div> : <div className={styles.assistant}><span className={styles.meta}>AI 助手</span><div className={styles.answer}><NoteMarkdown onOpenNote={onOpenNote}>{message.text}</NoteMarkdown></div></div>}
             </div>)}
           </div>
-          {busy && <div className={styles.messagePad}><TextShimmer className={styles.meta}>{activity}</TextShimmer></div>}
+          {busy && streaming && <div className={styles.messagePad} aria-hidden="true"><div className={styles.assistant}><span className={styles.meta}>AI 助手</span><div className={styles.answer}><NoteMarkdown onOpenNote={onOpenNote}>{streaming}</NoteMarkdown></div></div></div>}
+          {busy && !streaming && <div className={styles.messagePad}><TextShimmer className={styles.meta}>{activity}</TextShimmer></div>}
           {children}
         </div>
       </div>

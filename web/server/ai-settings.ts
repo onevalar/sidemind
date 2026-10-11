@@ -14,7 +14,7 @@ export function normalizeAIUrl(value: string): string {
   const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && local)) throw new AISettingsError('模型服务需要 HTTPS；本机服务可使用 HTTP。')
   if (url.username || url.password || url.search || url.hash) throw new AISettingsError('服务地址不能包含账号、密钥、查询参数或锚点。')
-  if (/\/chat\/completions\/?$/.test(url.pathname)) throw new AISettingsError('请输入服务的基础地址，通常以 /v1 结尾。')
+  if (/\/(chat\/completions|embeddings)\/?$/.test(url.pathname)) throw new AISettingsError('请输入服务的基础地址，通常以 /v1 结尾。')
   return url.toString().replace(/\/+$/, '')
 }
 
@@ -33,12 +33,19 @@ function defaultDirectory(): string {
 }
 
 /** Private server settings live outside the notes folder and are scoped to its path. */
+export type ModelSlot = 'main' | 'summary' | 'embedding'
+export const MODEL_SLOTS: ModelSlot[] = ['main', 'summary', 'embedding']
+
 export class AISettings {
   readonly file: string
   private queue: Promise<unknown> = Promise.resolve()
-  constructor(workspace: string, directory = defaultDirectory(), private environment: NodeJS.ProcessEnv = process.env) {
-    this.file = path.join(directory, createHash('sha256').update(path.resolve(workspace)).digest('hex').slice(0, 24) + '.json')
+  /** One connection per slot: the main chat model, the cheap summary/check model and the embedding service. */
+  constructor(private workspace: string, private directory = defaultDirectory(), private environment: NodeJS.ProcessEnv = process.env, readonly slot: ModelSlot = 'main') {
+    this.file = path.join(directory, createHash('sha256').update(path.resolve(workspace)).digest('hex').slice(0, 24) + (slot === 'main' ? '' : '.' + slot) + '.json')
+    // Environment variables only ever describe the main connection.
+    if (slot !== 'main') this.environment = {}
   }
+  forSlot(slot: ModelSlot): AISettings { return new AISettings(this.workspace, this.directory, this.environment, slot) }
   private async read(): Promise<{ connection: AIConnection | null; source: 'saved' | 'environment' | 'none' }> {
     let raw: string
     try { raw = await fs.readFile(this.file, 'utf8') }
