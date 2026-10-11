@@ -93,9 +93,12 @@ export function entry(text: string, source: string, anchor?: string, extra?: str
   return `- ${text.replace(/\s*\n\s*/g, ' ').trim()}${tags ? ` 〔${tags}〕` : ''}`
 }
 
+/** The claim of an entry without its 〔anchor · source〕 tag, for de-duplication. */
+const claim = (line: string) => line.trim().replace(/^-\s*/, '').replace(/\s*〔[^〔〕]*〕\s*$/, '').trim()
+
 export function appendEntry(doc: MemoryDoc, title: string, line: string, order: string[] = []): boolean {
   const current = getSection(doc, title)
-  if (current.split('\n').some(existing => existing.trim() === line.trim())) return false
+  if (current.split('\n').some(existing => claim(existing) === claim(line))) return false
   setSection(doc, title, current ? current + '\n' + line : line, order)
   return true
 }

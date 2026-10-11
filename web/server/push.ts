@@ -187,12 +187,14 @@ export class PushService {
       signal.throwIfAborted()
       const transcript = conversation.transcript.slice(conversation.distilled).map(item => `${item.role === 'user' ? '用户' : '助手'}：${item.text}`).join('\n\n')
       const focus = conversation.scope.kind === 'note' ? { note: conversation.scope.name } : { folder: conversation.scope.folder }
+      // Give the model what is already remembered so it does not record the same conclusion twice.
+      const existing = await files.read(conversation.scope.kind === 'note' ? noteMemory(conversation.scope.name) : folderMemory(conversation.scope.folder)).catch(() => null)
       try {
         const reply = parseJSONReply<{ items?: { target?: string; name?: string; section?: string; text?: string; source?: string; anchor?: string }[] }>(await complete(call,
-          `从笔记应用中用户与助手的对话里，提炼以后使用这些笔记时仍然重要的关键结论，写入记忆。只要：用户的决定与约束、偏好的说法与术语、对内容的纠正、理解上的困难或已掌握的点、个人理解方式（让用户想通的比喻/例子）、复习情况、讨论得出的结论与遗留问题。不要记录寒暄、操作流水、已在正文中的内容。没有就返回空列表。
+          `从笔记应用中用户与助手的对话里，提炼以后使用这些笔记时仍然重要的关键结论，写入记忆。只要：用户的决定与约束、偏好的说法与术语、对内容的纠正、理解上的困难或已掌握的点、个人理解方式（让用户想通的比喻/例子）、复习情况、讨论得出的结论与遗留问题。不要记录寒暄、操作流水、已在正文中的内容。已经记在 already_remembered 里的不要重复。没有就返回空列表。
 输出 JSON：{"items":[{"target":"note|folder|library","name":"文章路径或文件夹路径","section":"章节名","text":"一句话","source":"用户|推断","anchor":"可选，章节"}]}
 文章记忆章节可选：${NOTE_SECTIONS.join('、')}；文件夹：${FOLDER_SECTIONS.join('、')}；全库：${LIBRARY_SECTIONS.join('、')}。`,
-          JSON.stringify({ focus, transcript: clip(transcript, 60000) }), signal))
+          JSON.stringify({ focus, already_remembered: clip(existing ?? '', 8000), transcript: clip(transcript, 60000) }), signal))
         for (const item of (reply.items ?? []).slice(0, 30)) {
           if (!item.text || !item.section) continue
           const kind = item.target === 'folder' ? 'folder' : item.target === 'library' ? 'library' : 'note'
@@ -368,7 +370,12 @@ export class PushService {
   }
 
   private async commitMessage(work: NoteWork[], report: PushReport, paths: string[], call: ModelCall | null, emit: (event: PushEvent) => Promise<void>, signal: AbortSignal): Promise<string> {
-    const lines = work.map(item => `${item.status === 'D' ? '删除' : item.status === 'A' ? '新建' : item.status === 'R' ? `重命名（原 ${item.from}）` : item.analysis.kind === 'wording' ? '措辞' : item.analysis.kind === 'addition' ? '新增内容' : '修改'} ${item.name}${item.line ? '：' + item.line : ''}`)
+    const lines = work.map(item => {
+      const verb = item.status === 'D' ? '删除' : item.status === 'A' ? '新建' : item.status === 'R' ? `重命名（原 ${item.from}）` : item.analysis.kind === 'wording' ? '措辞' : item.analysis.kind === 'addition' ? '新增内容' : '修改'
+      const text = item.line.replace(item.name, '').replace(/^[\s：:]+/, '')
+      const detail = text && !item.line.startsWith(verb) ? '：' + text : ''
+      return `${verb} ${item.name}${detail}`
+    })
     const memoryOnly = paths.filter(file => file.startsWith(this.memoryPrefix + '/')).length
     const fallback = () => {
       const subject = work.length ? `更新 ${work.length} 篇笔记` + (report.layout.length ? '与画布' : '') : report.layout.length ? '调整画布' : '更新记忆'
