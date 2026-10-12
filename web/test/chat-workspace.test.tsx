@@ -285,3 +285,58 @@ describe('organizing several compared answers', () => {
     await waitFor(() => expect(api.capture).toHaveBeenCalledWith(expect.objectContaining({ mode: 'organized', text: '共识：都是金属。分歧：钛更贵。', answers: expect.arrayContaining([expect.objectContaining({ answerId: hex(21) }), expect.objectContaining({ answerId: hex(22) })]) })))
   })
 })
+
+describe('branch graph', () => {
+  const turn = (n: number, parents: number[], answer?: string) => ({ id: hex(30 + n), parents: parents.map(parent => hex(30 + parent)), question: `问题${n}`, sourceIds: [], requestKey: 'k' + n, answers: answer ? [{ id: hex(40 + n), text: answer, createdAt: n }] : [], createdAt: n })
+  const branched: DiscussionDTO = { id: hex(1), title: '分叉', origin: { kind: 'chat' }, revision: 5, archived: false, createdAt: 1, updatedAt: 5, turns: [turn(1, [], '根回答'), turn(2, [1], 'A 回答'), turn(3, [1], 'B 回答'), turn(4, [2, 3])] }
+
+  it('is offered only when there is more than one question, shows each node with its state and merges, and jumps to the chosen question', async () => {
+    vi.mocked(api.discussions).mockResolvedValue([summary(branched)])
+    vi.mocked(api.discussionView).mockResolvedValue({ discussion: branched, captures: [], sources: {}, runs: [] })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: /分叉/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '分支图' }))
+    const graph = screen.getByRole('group', { name: '分支图' })
+    expect(within(graph).getAllByRole('button')).toHaveLength(4)
+    expect(within(graph).getByRole('button', { name: '问题：问题1（已回答）' })).toBeTruthy()
+    expect(within(graph).getByRole('button', { name: '合并比较：问题4（未回答）' })).toBeTruthy()
+    expect(within(graph).getByText(/合并 2 条/)).toBeTruthy()
+    // One path per parent into the merge, drawn dashed.
+    expect(graph.querySelectorAll('path[data-merge]')).toHaveLength(2)
+    expect(graph.querySelectorAll('path')).toHaveLength(4)
+    const scrolled = vi.mocked(HTMLElement.prototype.scrollIntoView)
+    scrolled.mockClear()
+    fireEvent.click(within(graph).getByRole('button', { name: '问题：问题3（已回答）' }))
+    expect(scrolled).toHaveBeenCalled()
+    const target = document.getElementById('turn-' + hex(33))!
+    expect(document.activeElement).toBe(target)
+    expect(target.getAttribute('data-reached')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: '收起分支图' }))
+    expect(screen.queryByRole('group', { name: '分支图' })).toBe(null)
+  })
+
+  it('is not offered for a single question', async () => {
+    const single = discussion(hex(2), '只有一个问题', '回答')
+    vi.mocked(api.discussions).mockResolvedValue([summary(single)])
+    vi.mocked(api.discussionView).mockResolvedValue({ discussion: single, captures: [], sources: {}, runs: [] })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: /只有一个问题/ }))
+    await screen.findByText('回答')
+    expect(screen.queryByRole('button', { name: '分支图' })).toBe(null)
+  })
+
+  it('shows a question that is still generating or failed distinctly from an answered one', async () => {
+    const live: DiscussionDTO = { ...branched, turns: [turn(1, [], '根回答'), turn(2, [1]), turn(3, [1])] }
+    vi.mocked(api.discussions).mockResolvedValue([summary(live)])
+    vi.mocked(api.discussionView).mockResolvedValue({ discussion: live, captures: [], sources: {}, runs: [
+      { id: hex(51), discussionId: live.id, turnId: hex(32), requestKey: 'x', status: 'running', text: '', seq: 1, createdAt: 1, updatedAt: 1 },
+      { id: hex(52), discussionId: live.id, turnId: hex(33), requestKey: 'y', status: 'failed', text: '', seq: 1, createdAt: 1, updatedAt: 1, error: '失败' },
+    ] })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: /分叉/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '分支图' }))
+    const graph = screen.getByRole('group', { name: '分支图' })
+    expect(within(graph).getByRole('button', { name: '问题：问题2（生成中）' })).toBeTruthy()
+    expect(within(graph).getByRole('button', { name: '问题：问题3（未成功）' })).toBeTruthy()
+  })
+})

@@ -5,6 +5,8 @@ import { DiscussionDialogs, DiscussionThread, clip, folderOf, message, useDiscus
 import { Button, TextArea } from './ui'
 import { composing } from './ime'
 
+const EXPLAIN = '请解释这段内容。'
+
 /** Explore a note: ask about selected passages, compare answers, write one back, and trace it to its basis. */
 export function ExplorePanel({ name, model, active, beforeSend, selection, reveal, onConfigure, onOpenNote }: {
   name: string | null; model: string | null; active: boolean; beforeSend: MutableRefObject<() => Promise<boolean>>
@@ -50,8 +52,9 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
   const collect = async (send: boolean) => {
     if (!name || !view) return
     await flush()
-    const text = question.trim()
-    if (!quote || !text) throw new Error('请先在笔记中选中文字，再写下问题。')
+    // A passage with no question means "explain this", as in ChatGit's quote-and-send.
+    const text = question.trim() || EXPLAIN
+    if (!quote) throw new Error('请先在笔记中选中文字，再写下问题。')
     const source: SourceRefDTO = await api.createSource(name, quote)
     const item = { id: crypto.randomUUID(), question: text, sourceIds: [source.id] }
     const existing = view.drafts.find(draft => !draft.discussionId)
@@ -71,12 +74,12 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
     <section className="explore-composer" aria-label="围绕选中文字提问">
       <h3 className="agent-section-title">围绕选中文字提问</h3>
       {quote ? <blockquote className="explore-quote">{clip(quote, 240)}</blockquote> : <p className="muted explore-hint">在笔记中选中一段文字。</p>}
-      <TextArea aria-label="你的问题" value={question} rows={3} placeholder="想问什么？可先收集多个问题，再一起发送。" readOnly={!!busy} disabled={!view}
+      <TextArea aria-label="你的问题" value={question} rows={3} placeholder="想问什么？不写问题就是“解释这段”。可先收集多个问题，再一起发送。" readOnly={!!busy} disabled={!view}
         onChange={event => setQuestion(event.target.value)}
         onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !composing(event)) { event.preventDefault(); if (!noModel) void guard('ask', () => collect(true)) } }}/>
       <div className="explore-actions">
-        <Button variant="ghost" size="sm" isDisabled={!!busy || !quote || !question.trim()} onPress={() => void guard('collect', () => collect(false))}>先收集</Button>
-        <Button size="sm" isDisabled={!!busy || noModel || !quote || !question.trim()} onPress={() => void guard('ask', () => collect(true))}>{busy === 'ask' ? '发送中…' : '提问'}</Button>
+        <Button variant="ghost" size="sm" isDisabled={!!busy || !quote} onPress={() => void guard('collect', () => collect(false))}>先收集</Button>
+        <Button size="sm" isDisabled={!!busy || noModel || !quote} onPress={() => void guard('ask', () => collect(true))}>{busy === 'ask' ? '发送中…' : '提问'}</Button>
       </div>
       {noModel && <p className="muted explore-hint">尚未连接模型。<Button variant="ghost" size="sm" onPress={onConfigure}>去设置</Button> 仍可先收集问题。</p>}
     </section>

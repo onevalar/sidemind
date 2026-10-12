@@ -87,6 +87,7 @@ describe('what each question sees', () => {
     const discussion = await research.createDiscussion({ title: 's' })
     const a = await research.addTurn(discussion.id, { question: '铝？', sourceIds: [one.id], requestKey: 'a' })
     const b = await research.addTurn(discussion.id, { question: '木？', sourceIds: [two.id], requestKey: 'b' })
+    await research.addAnswer(discussion.id, a.id, { text: '铝回答', runId: 'a' }); await research.addAnswer(discussion.id, b.id, { text: '木回答', runId: 'b' })
     const merged = await research.addTurn(discussion.id, { question: '比较', parents: [a.id, b.id], requestKey: 'm' })
     const all = texts(await contextFor(research, await load(discussion.id), merged))
     expect(all.match(/铝很轻。/g)).toHaveLength(1)

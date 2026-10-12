@@ -3,6 +3,7 @@ import type { AnswerVersionDTO, CaptureDTO, ChangeSetDetail, ContextPreviewDTO, 
 import { api, subscribeRun, type CaptureTarget } from './api'
 import { NoteMarkdown } from './NoteMarkdown'
 import { WriteBackDialog, type WriteBackSubject } from './WriteBackDialog'
+import { DiscussionGraph, type TurnState } from './DiscussionGraph'
 import { Button, Dialog, TextArea } from './ui'
 import { composing } from './ime'
 
@@ -155,18 +156,29 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
   notes?: { name: string; title: string }[]
 }) {
   const { busy, runs, followUp, setFollowUp, version, setVersion, picked, compareText, setCompareText } = kit
+  const [graph, setGraph] = useState(false)
+  const [reached, setReached] = useState<string | null>(null)
+  const turnState = (turn: TurnDTO): TurnState => { const live = runs[turn.id]; return live && (live.status === 'queued' || live.status === 'running') ? 'running' : turn.answers.length ? 'answered' : live && ['failed', 'cancelled', 'interrupted'].includes(live.status) ? 'failed' : 'pending' }
+  /** Jump to a turn from the graph: scroll it into view, move focus there for keyboard users, and mark it for a moment. */
+  const reach = (id: string) => {
+    const element = document.getElementById('turn-' + id)
+    element?.scrollIntoView({ block: 'center' }); element?.focus({ preventScroll: true })
+    setReached(id); window.setTimeout(() => setReached(current => current === id ? null : current), 1600)
+  }
   const noModel = !model
   const depth = new Map<string, number>(), byId = new Map(discussion.turns.map(turn => [turn.id, turn]))
   const depthOf = (turn: TurnDTO): number => { if (!depth.has(turn.id)) depth.set(turn.id, turn.parents.length ? 1 + Math.max(...turn.parents.map(id => depthOf(byId.get(id)!))) : 0); return depth.get(turn.id)! }
   const choosing = picked.discussion === discussion.id ? picked.turns : []
   const base = noteName ?? ''
   return <section className="explore-discussion" aria-label={'讨论：' + discussion.title}>
+    {discussion.turns.length > 1 && <div className="explore-actions graph-toggle"><Button variant="ghost" size="sm" aria-pressed={graph} onPress={() => setGraph(value => !value)}>{graph ? '收起分支图' : '分支图'}</Button></div>}
+    {graph && <DiscussionGraph turns={discussion.turns} states={Object.fromEntries(discussion.turns.map(turn => [turn.id, turnState(turn)]))} current={reached} onSelect={reach}/>}
     {discussion.turns.map(turn => {
       const answers = turn.answers, index = Math.min(version[turn.id] ?? answers.length - 1, answers.length - 1), shown = answers[index]
       const live = runs[turn.id], active = !!live && (live.status === 'queued' || live.status === 'running')
       const finishedBad = !!live && ['failed', 'cancelled', 'interrupted'].includes(live.status)
       const saved = shown ? captures.filter(capture => capture.answers.some(entry => entry.answerId === shown.id)) : []
-      return <article className="explore-turn" key={turn.id} data-follow-up={turn.parents.length ? 'true' : undefined} style={{ marginLeft: Math.min(depthOf(turn), 3) * 14 }}>
+      return <article className="explore-turn" id={'turn-' + turn.id} tabIndex={-1} data-reached={reached === turn.id || undefined} key={turn.id} data-follow-up={turn.parents.length ? 'true' : undefined} style={{ marginLeft: Math.min(depthOf(turn), 3) * 14 }}>
         {turn.parents.length > 1 && <p className="muted explore-merge">合并比较 · 来自 {turn.parents.length} 条分支</p>}
         {turn.sourceIds.map(id => sources[id] && <blockquote className="explore-quote" key={id}>{clip(sources[id]!.quote, 160)}<span className="explore-quote-actions">
           {noteName !== null && <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.locate(id, noteName)}>在原文中定位</Button>}

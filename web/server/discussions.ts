@@ -220,7 +220,12 @@ export class ResearchStore {
         return existing
       }
       const parents = ids(input.parents ?? [], '父节点'), sourceIds = ids(input.sourceIds ?? [], '来源')
-      for (const parent of parents) if (!discussion.turns.some(turn => turn.id === parent)) throw new BadNameError('父节点不在这段讨论中。')
+      for (const parent of parents) {
+        const found = discussion.turns.find(turn => turn.id === parent)
+        if (!found) throw new BadNameError('父节点不在这段讨论中。')
+        // As in ChatGit: a question continues, or is compared with, an answer that exists.
+        if (!found.answers.length) throw new BadNameError('「' + found.question.slice(0, 30) + '」还没有回答，不能从它继续或把它拿来比较。')
+      }
       for (const source of sourceIds) await this.getSource(source)
       const frozen: Record<string, string> = {}
       for (const ancestor of ancestry(discussion.turns, parents)) { const answer = ancestor.answers.at(-1); if (answer) frozen[ancestor.id] = answer.id }

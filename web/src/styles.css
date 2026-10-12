@@ -477,6 +477,24 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .write-field .modification-preview { max-height: 260px; overflow: auto; }
 .agent-recovery { display: flex; flex-direction: column; gap: 6px; margin: 8px 0; padding: 12px; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--warning, #b7791f) 10%, var(--surface)); font-size: 13px; line-height: 1.6; }
 .agent-recovery p { margin: 0; overflow-wrap: anywhere; }
+.graph-toggle { margin-bottom: -4px; }
+.graph-scroll { overflow: auto; max-height: 300px; padding: 12px; border-radius: var(--radius-sm); background: var(--surface-muted); display: flex; flex-direction: column; gap: 8px; }
+.graph-canvas { position: relative; flex: none; margin-inline: auto; }
+.graph-edges { position: absolute; inset: 0; pointer-events: none; overflow: visible; }
+.graph-edges path { fill: none; stroke: var(--line); stroke-width: 1.5; }
+.graph-edges path[data-merge] { stroke: var(--accent); stroke-dasharray: 5 4; }
+.graph-canvas .graph-node { position: absolute; display: block; box-sizing: border-box; padding: 6px 10px; text-align: left; background: var(--surface); border: 1px solid var(--line); overflow: hidden; }
+.graph-canvas .graph-node [data-slot="button-label"], .graph-canvas .graph-node [data-slot="button-label"] > span, .graph-canvas .graph-node [data-slot="button-label"] > span > span { display: block; width: 100% !important; min-width: 0; overflow: hidden; text-align: left; }
+.graph-node-title, .graph-node-meta { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.graph-node-title { font-size: 12px; font-weight: 550; }
+.graph-node-meta { font-size: 11px; }
+.graph-canvas .graph-node[data-state="running"] { border-color: var(--accent); }
+.graph-canvas .graph-node[data-state="failed"] { border-color: var(--danger); }
+.graph-canvas .graph-node[data-merge] { border-style: dashed; }
+.graph-canvas .graph-node[aria-current="true"] { outline: 2px solid var(--accent); outline-offset: 1px; }
+.graph-note { margin: 0; font-size: 12px; text-align: center; }
+.explore-turn:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 4px; }
+.explore-turn[data-reached] { background: color-mix(in oklab, var(--accent) 8%, transparent); transition: background .3s; }
 ::highlight(explore-source) { background: color-mix(in oklab, var(--text) 18%, transparent); }
 .explore-merge { margin: 0; font-size: 12px; }
 .explore-compare { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-sm); background: var(--surface-muted); }
