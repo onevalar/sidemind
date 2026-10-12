@@ -393,6 +393,47 @@ describe('organized and replace write-back', () => {
     expect(await call<CaptureDTO[]>('GET', '/api/captures')).toHaveLength(1)
   })
 
+  /** Two answered sibling turns in one discussion, ready to be written together. */
+  async function compared() {
+    const first = await ask('铝很轻，密度约 2.7。', '为什么铝轻？')
+    replies.push('钛合金更强但更贵。')
+    const second = await ask('只属于另一支的事实：钛很贵。', '钛怎么样？', { discussionId: first.discussionId, parentIds: [] })
+    const refs = [first, second].map(item => ({ discussionId: item.discussionId, turnId: item.turnId, answerId: item.answer.id }))
+    return { first, second, refs, text: '共识：都与材料有关。分歧：钛更贵。（需人工审阅）', target: { kind: 'append', note: 'Materials.md' } }
+  }
+
+  it('writes several compared answers once however many times the same save is submitted', async () => {
+    const { refs, text, target } = await compared()
+    const input = { requestKey: 'many-once', answers: refs, mode: 'organized', text, target }
+    const first = await call<Saved>('POST', '/api/captures', input, 201)
+    const again = await call<Saved>('POST', '/api/captures', input, 201)
+    const third = await call<Saved>('POST', '/api/captures', input, 201)
+    expect(again.capture.id).toBe(first.capture.id); expect(third.change.id).toBe(first.change.id)
+    const written = (await store.load('Materials.md')).content
+    expect((written.match(/### 比较：/g) ?? [])).toHaveLength(1)
+    expect((written.match(/共识：都与材料有关/g) ?? [])).toHaveLength(1)
+    expect(await call<CaptureDTO[]>('GET', '/api/captures')).toHaveLength(1)
+    // The same key again, even with different text, returns the first result and writes nothing more.
+    expect((await call<Saved>('POST', '/api/captures', { ...input, text: '另一段整理文字' }, 201)).capture.id).toBe(first.capture.id)
+    expect((await store.load('Materials.md')).content).toBe(written)
+  })
+
+  it('refuses to write several compared answers over a note that changed after the preview, writing nothing and recording nothing', async () => {
+    const { refs, text, target } = await compared()
+    const shown = await call<Preview>('POST', '/api/captures/preview', { answers: refs, mode: 'organized', text, target })
+    const edited = note + '\n预览之后别处加的一行。\n'
+    await store.saveContent('Materials.md', edited, note)
+    const refused = await call<{ error: string }>('POST', '/api/captures', { requestKey: 'many-stale', answers: refs, mode: 'organized', text, target, expectedVersion: shown.expectedVersion }, 409)
+    expect(refused.error).toContain('预览之后被修改')
+    expect((await store.load('Materials.md')).content).toBe(edited)
+    expect(await call<CaptureDTO[]>('GET', '/api/captures')).toHaveLength(0)
+    // Re-previewing against the current note then succeeds.
+    const fresh = await call<Preview>('POST', '/api/captures/preview', { answers: refs, mode: 'organized', text, target })
+    const { capture } = await call<Saved>('POST', '/api/captures', { requestKey: 'many-fresh', answers: refs, mode: 'organized', text, target, expectedVersion: fresh.expectedVersion }, 201)
+    expect(capture.mode).toBe('organized')
+    expect((await store.load('Materials.md')).content).toContain('预览之后别处加的一行。')
+  })
+
   it('refuses to organize an answer too long to send, and reports an unconfigured model', async () => {
     const base = await ask(QUOTE, '为什么铝轻？')
     const research = new ResearchStore(store)
