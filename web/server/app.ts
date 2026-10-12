@@ -22,10 +22,11 @@ import { SemanticIndex } from './semantic'
 import { GitError, type Git } from './git'
 import { PushService } from './push'
 import { memoryFile, type MemoryTarget } from './memory'
+import { StorageError } from './persistence'
 
 const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/
 
-export type AppOptions = { staticDir?: string; aiSettings?: AISettings; chatgpt?: ChatGPTConnection; aiTransport?: typeof fetch; openDirectory?: (root: string) => Promise<void>; git?: Git | null }
+export type AppOptions = { staticDir?: string; aiSettings?: AISettings; chatgpt?: ChatGPTConnection; aiTransport?: typeof fetch; openDirectory?: (root: string) => Promise<void>; git?: Git | null; shutdown?: AbortSignal; tasks?: Set<Promise<unknown>> }
 
 export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}) {
   const app = new Hono()
@@ -34,10 +35,14 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
   const chatgpt = opts.chatgpt ?? new ChatGPTConnection(ai.file + '.chatgpt.json', { transport: opts.aiTransport })
   const git = opts.git ?? null
   const index = new NoteIndex(store)
-  const files = new MemoryFiles(store.paths.memory)
+  const files = new MemoryFiles(store.paths.memory, store.writer)
   const changes = new ChangeEngine(store, files, bus)
-  const proposals = new ProposalStore(store.paths.cache, changes)
-  const conversations = new ConversationStore(path.join(store.paths.cache, 'conversations'))
+  const proposals = new ProposalStore(store.paths.local, changes)
+  const conversations = new ConversationStore(path.join(store.paths.local, 'conversations'), store.writer)
+  const track = async <T>(task: Promise<T>): Promise<T> => {
+    opts.tasks?.add(task)
+    try { return await task } finally { opts.tasks?.delete(task) }
+  }
   const models = new Models(ai, chatgpt, opts.aiTransport)
   let semantic: SemanticIndex | null = null
   const semanticIndex = async () => {
@@ -48,6 +53,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
   }
   const agent = new NoteAgent({ store, index, files, changes, proposals, git, models, conversations, bus, semantic: semanticIndex })
   const pusher = new PushService({ store, files, git, models, conversations, index, bus })
+  let activeAgents = 0, syncing = false
   const slotOf = (value: string | undefined): ModelSlot => { if (value === undefined) return 'main'; if (!MODEL_SLOTS.includes(value as ModelSlot)) throw new BadNameError('模型槽位无效。'); return value as ModelSlot }
   const settingsFor = (slot: ModelSlot) => slot === 'main' ? ai : ai.forSlot(slot)
 
@@ -61,13 +67,15 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
         return c.text('Expected application/json', 415)
       }
     }
-    await next()
+    if (opts.shutdown?.aborted) return c.json({ error: '服务正在停止，请稍后重试。' }, 503)
+    await track((async () => { await changes.recover(); await next() })())
   })
 
   app.onError((err, c) => {
     if (err instanceof BadNameError) return c.json({ error: err.message }, 400)
     if (err instanceof NotFoundError) return c.json({ error: 'Note not found' }, 404)
     if (err instanceof ConflictError) return c.json({ error: err.message }, 409)
+    if (err instanceof StorageError) return c.json({ error: err.message }, 503)
     if (err instanceof AISettingsError) return c.json({ error: err.message }, 400)
     if (err instanceof ChatGPTError) return c.json({ error: err.message }, 502)
     if (err instanceof FolderOpenError) return c.json({ error: err.message }, 503)
@@ -155,9 +163,14 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     return stream(c, async output => {
       const controller = new AbortController()
       output.onAbort(() => controller.abort())
-      const signal = AbortSignal.any([controller.signal, c.req.raw.signal, AbortSignal.timeout(600000)])
+      const signal = AbortSignal.any([controller.signal, c.req.raw.signal, AbortSignal.timeout(600000), ...(opts.shutdown ? [opts.shutdown] : [])])
       const emit = async (event: AgentEvent) => { if (!output.aborted) await output.write(JSON.stringify(event) + '\n') }
-      try { await agent.run({ scope, session: body.session, message: body.message.trim(), ...(scope.kind === 'note' ? { selection: body.selection } : {}) }, model, signal, emit) }
+      try {
+        if (syncing) throw new ConflictError('正在同步笔记和对话记忆，请完成后再发送。')
+        activeAgents++
+        try { await track(agent.run({ scope, session: body.session, message: body.message.trim(), ...(scope.kind === 'note' ? { selection: body.selection } : {}) }, model, signal, emit)) }
+        finally { activeAgents-- }
+      }
       catch (error) {
         if (!signal.aborted) await emit({ type: 'error', text: error instanceof BadNameError || error instanceof ConflictError || error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError ? error.message : '模型连接中断。已经完成的修改保留在记录中，请检查后再继续。' })
         if (!(error instanceof BadNameError || error instanceof ConflictError || error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError) && !signal.aborted) console.error(error)
@@ -183,10 +196,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
   app.get('/api/ai/proposals/:id', async c => c.json(proposalDetail(await proposals.get(c.req.param('id')))))
   app.post('/api/ai/proposals/:id/accept', async c => {
     const { proposal, changeset } = await proposals.accept(c.req.param('id'))
-    if (proposal.conversation) {
-      try { const conversation = await conversations.get(proposal.conversation); conversation.changesets.push(changeset.id); await conversations.save(conversation) } catch { /* conversation pruned */ }
-    }
-    return c.json({ proposal, changeset: summarize(changeset, true) })
+    return c.json({ proposal, changeset: summarize(changeset, await changes.undoable(changeset)) })
   })
   app.post('/api/ai/proposals/:id/reject', async c => c.json(await proposals.reject(c.req.param('id'))))
 
@@ -227,9 +237,14 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     return stream(c, async output => {
       const controller = new AbortController()
       output.onAbort(() => controller.abort())
-      const signal = AbortSignal.any([controller.signal, c.req.raw.signal, AbortSignal.timeout(1800000)])
+      const signal = AbortSignal.any([controller.signal, c.req.raw.signal, AbortSignal.timeout(1800000), ...(opts.shutdown ? [opts.shutdown] : [])])
       const emit = async (event: PushEvent) => { if (!output.aborted) await output.write(JSON.stringify(event) + '\n') }
-      try { await pusher.push(emit, signal) }
+      try {
+        if (activeAgents || syncing) throw new ConflictError('助手任务或同步仍在进行，请完成后再同步。')
+        syncing = true
+        try { await track(store.writer.run(() => pusher.push(emit, signal))) }
+        finally { syncing = false }
+      }
       catch (error) {
         if (!(error instanceof GitError || error instanceof ConflictError || error instanceof AIRequestError || error instanceof ChatGPTError)) console.error(error)
         await emit({ type: 'error', text: signal.aborted ? '同步已停止。已更新的记忆保留在工作区，下次同步时一起提交。' : error instanceof GitError || error instanceof ConflictError || error instanceof AIRequestError || error instanceof ChatGPTError ? error.message : '同步失败，请稍后重试。' })
@@ -257,6 +272,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
   })
 
   app.get('/api/notes/:name', async (c) => c.json(await store.load(c.req.param('name'))))
+  app.get('/api/notes/:name/identity', async (c) => c.json(await store.identity(c.req.param('name'))))
 
   app.put('/api/notes/:name/content', async (c) => {
     const body = await c.req.json().catch(() => null)

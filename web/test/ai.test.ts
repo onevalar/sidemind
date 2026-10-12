@@ -197,7 +197,9 @@ describe('note Agent through the real HTTP and file interfaces', () => {
     expect((await reopened.request('/api/ai/changes/' + id + '/undo', { method: 'POST', headers: J, body: '{}' })).status).toBe(200)
     expect((await store.load('Physics/A.md')).content).toBe(before)
     await expect(store.load('Physics/反射总结.md')).rejects.toThrow()
-    expect((await reopened.request('/api/ai/changes/' + id + '/undo', { method: 'POST', headers: J, body: '{}' })).status).toBe(409)
+    await store.saveContent('Physics/A.md', '# 撤销后新写的内容', before)
+    expect((await reopened.request('/api/ai/changes/' + id + '/undo', { method: 'POST', headers: J, body: '{}' })).status).toBe(200)
+    expect((await store.load('Physics/A.md')).content).toBe('# 撤销后新写的内容')
   })
 
   it('reads across the library from a note focus but refuses ambiguous edits and a whole rewrite after only a partial read', async () => {

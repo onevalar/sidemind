@@ -3,7 +3,7 @@ import type { AgentEvent, AgentScope, ConversationState } from '../shared/types'
 import { AIRequestError, type AIMessage } from './ai'
 import { analyze } from './analysis'
 import { executeTool, toolsFor, type ReadState, type ToolContext } from './agent-tools'
-import { summarize, type ChangeEngine } from './changes'
+import type { ChangeEngine } from './changes'
 import { ChatGPTError } from './chatgpt'
 import { scopeKey, type Conversation, type ConversationStore } from './conversations'
 import type { EventBus } from './events'
@@ -103,8 +103,8 @@ export class NoteAgent {
       }
       throw new AIRequestError('本次任务步骤较多，已暂停。已完成的修改保留在记录中，可以继续提出下一步要求。')
     } finally {
-      this.running.delete(conversation.id)
-      await conversations.save(conversation).catch(() => {})
+      try { await conversations.save(conversation) }
+      finally { this.running.delete(conversation.id) }
     }
   }
 
@@ -161,10 +161,8 @@ export class NoteAgent {
   async state(scope: AgentScope): Promise<ConversationState | null> {
     const conversation = await this.deps.conversations.latest(scope)
     if (!conversation) return null
-    const changes = []
-    for (const id of conversation.changesets) {
-      try { const set = await this.deps.changes.get(id); changes.push(summarize(set, await this.deps.changes.undoable(set))) } catch { /* pruned */ }
-    }
+    // The change record owns this relationship, even if the process died before saving history.
+    const changes = await this.deps.changes.list({ conversation: conversation.id })
     return { id: conversation.id, scope: conversation.scope, updatedAt: conversation.updatedAt, messages: conversation.transcript.map(({ role, text }) => ({ role, text })), changes, proposals: (await this.deps.proposals.list()).filter(proposal => proposal.conversation === conversation.id), plan: conversation.plan ?? [] }
   }
 }

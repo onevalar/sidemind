@@ -1,10 +1,11 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { Git } from './git'
+import { readRecord, StorageError, writeData, writeRecord } from './persistence'
 
 export const REPO_MARKER = 'canvasnote.json'
 const MIGRATION = '.canvasnote-migration.json'
-const GITIGNORE = '# Canvas Note: local caches are rebuilt on each computer and never committed.\ncache/\n.DS_Store\n'
+const GITIGNORE = '# Canvas Note: cache is rebuildable; local contains durable history included in full backups, not Git.\n/cache/\n/local/\n.DS_Store\n'
 
 /** Where each kind of data lives. Standalone mode (tests) keeps metadata beside the notes. */
 export type DataPaths = {
@@ -14,18 +15,22 @@ export type DataPaths = {
   memory: string
   canvas: string
   cache: string
+  /** Durable raw history and recovery records. Not disposable and not pushed to Git. */
+  local: string
+  /** Stable note identities and saved provenance, committed with Markdown. */
+  research: string
   /** Legacy v0.2 metadata, read only for migration fallbacks. */
   legacy: string
 }
 
 export function standalonePaths(notes: string): DataPaths {
   const root = path.resolve(notes), meta = path.join(root, '.canvasnote')
-  return { root, notes: root, memory: path.join(meta, 'memory'), canvas: path.join(meta, 'canvas'), cache: path.join(meta, 'cache'), legacy: meta }
+  return { root, notes: root, memory: path.join(meta, 'memory'), canvas: path.join(meta, 'canvas'), cache: path.join(meta, 'cache'), local: path.join(meta, 'local'), research: path.join(meta, 'research'), legacy: meta }
 }
 
 export function repoPaths(root: string): DataPaths {
   const resolved = path.resolve(root)
-  return { root: resolved, notes: path.join(resolved, 'notes'), memory: path.join(resolved, 'memory'), canvas: path.join(resolved, 'canvas'), cache: path.join(resolved, 'cache'), legacy: path.join(resolved, 'cache', 'legacy-canvasnote') }
+  return { root: resolved, notes: path.join(resolved, 'notes'), memory: path.join(resolved, 'memory'), canvas: path.join(resolved, 'canvas'), cache: path.join(resolved, 'cache'), local: path.join(resolved, 'local'), research: path.join(resolved, 'research'), legacy: path.join(resolved, 'cache', 'legacy-canvasnote') }
 }
 
 const exists = (file: string) => fs.access(file).then(() => true, () => false)
@@ -38,6 +43,8 @@ type LegacyLibrary = { version: 1; notes?: Record<string, { position: { x: numbe
  */
 export async function openDataRepo(root: string, options: { git?: boolean } = {}): Promise<{ paths: DataPaths; git: Git | null; migrated: boolean }> {
   const paths = repoPaths(root)
+  const marker = await readRecord<{ format: string; version: number }>(path.join(paths.root, REPO_MARKER))
+  if (marker && (marker.format !== 'canvas-note-repo' || ![1, 2].includes(marker.version))) throw new StorageError('不支持这个数据仓库版本，未修改任何内容。请使用兼容版本打开。')
   await fs.mkdir(paths.root, { recursive: true })
   let migrated = false
   if (!await exists(path.join(paths.root, REPO_MARKER))) {
@@ -51,7 +58,11 @@ export async function openDataRepo(root: string, options: { git?: boolean } = {}
     if (!await exists(path.join(paths.root, '.gitignore'))) await fs.writeFile(path.join(paths.root, '.gitignore'), GITIGNORE)
     await fs.writeFile(path.join(paths.root, REPO_MARKER), JSON.stringify({ format: 'canvas-note-repo', version: 1 }, null, 2) + '\n')
   }
-  for (const directory of [paths.notes, paths.memory, paths.canvas, paths.cache]) await fs.mkdir(directory, { recursive: true })
+  await preparePersistentData(paths)
+  const ignore = path.join(paths.root, '.gitignore')
+  const previous = await fs.readFile(ignore, 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error })
+  if (!previous.split('\n').some(line => line === 'local/' || line === '/local/')) await fs.writeFile(ignore, previous + '\n# Durable device history: use full backup, not Git.\n/local/\n')
+  if (marker?.version !== 2) await writeRecord(path.join(paths.root, REPO_MARKER), { format: 'canvas-note-repo', version: 2 })
   let git: Git | null = null
   if (options.git !== false) {
     const candidate = new Git(paths.root)
@@ -61,6 +72,43 @@ export async function openDataRepo(root: string, options: { git?: boolean } = {}
     }
   }
   return { paths, git, migrated }
+}
+
+/** Copy once, never delete the old history; incomplete copies are safely resumable. */
+export async function preparePersistentData(paths: DataPaths): Promise<void> {
+  for (const directory of [paths.notes, paths.memory, paths.canvas, paths.cache, paths.local, paths.research]) {
+    await fs.mkdir(directory, { recursive: true })
+    if (!(await fs.lstat(directory)).isDirectory()) throw new StorageError('数据目录不能使用符号链接：' + directory)
+  }
+  const marker = path.join(paths.local, 'history-migration.json')
+  const migration = await readRecord<{ version: number; complete: boolean }>(marker)
+  if (migration) {
+    if (migration.version !== 1 || migration.complete !== true) throw new StorageError('历史迁移记录无效，未继续迁移。')
+    return
+  }
+  const copy = async (source: string, target: string): Promise<void> => {
+    let entries: import('node:fs').Dirent[]
+    try {
+      if (!(await fs.lstat(source)).isDirectory()) throw new StorageError('历史目录不能使用符号链接：' + source)
+      entries = await fs.readdir(source, { withFileTypes: true })
+    }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
+    await fs.mkdir(target, { recursive: true })
+    if (!(await fs.lstat(target)).isDirectory()) throw new StorageError('历史目录不能使用符号链接：' + target)
+    for (const entry of entries) {
+      const from = path.join(source, entry.name), to = path.join(target, entry.name)
+      if (entry.isDirectory()) { await copy(from, to); continue }
+      if (!entry.isFile()) throw new StorageError('历史中存在非普通文件，未继续迁移：' + from)
+      try { await writeData(to, await fs.readFile(from), true) }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+        if (!(await fs.lstat(to)).isFile()) throw new StorageError('历史目标不是普通文件：' + to)
+        if (!(await fs.readFile(from)).equals(await fs.readFile(to))) throw new StorageError('历史迁移发现不同版本，保留了两份文件：' + to)
+      }
+    }
+  }
+  for (const name of ['conversations', 'changesets', 'proposals']) await copy(path.join(paths.cache, name), path.join(paths.local, name))
+  await writeRecord(marker, { version: 1, complete: true })
 }
 
 /** v0.2 layout: Markdown directly in the root plus `.canvasnote/`. Resumable if interrupted. */

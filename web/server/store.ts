@@ -7,7 +7,8 @@ import remarkParse from 'remark-parse'
 import remarkGfm from 'remark-gfm'
 import type { Nodes } from 'mdast'
 import type { CanvasFrame, CanvasLayout, NoteDTO, NotePosition, NoteSummary } from '../shared/types'
-import { standalonePaths, type DataPaths } from './repo'
+import { preparePersistentData, standalonePaths, type DataPaths } from './repo'
+import { readRecord, StorageError, workspaceWriter, writeData, writeRecord } from './persistence'
 
 export const parser = unified().use(remarkParse).use(remarkGfm)
 export function summaryText(node: Nodes): string {
@@ -30,6 +31,7 @@ const WELCOME = `# 欢迎使用画布笔记
 
 type Library = { version: 1; notes: Record<string, { position: NotePosition }>; frames?: CanvasFrame[] }
 export type LayoutPatch = { positions: Record<string, NotePosition | null>; frames?: CanvasFrame[] }
+export type NoteIdentities = { version: 1; paths: Record<string, string | null> }
 type CanvasFile = { version: 1; notes: Record<string, NotePosition>; frames: (Omit<CanvasFrame, 'space'>)[] }
 export const folderOf = (name: string) => name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : ''
 export const contentVersion = (content: string) => createHash('sha256').update(content).digest('hex')
@@ -47,16 +49,18 @@ export class NoteStore {
   /** The notes folder: every `.md` below it is an article; subfolders are canvases. */
   readonly root: string
   readonly paths: DataPaths
-  private locks = new Map<string, Promise<unknown>>()
+  readonly writer: ReturnType<typeof workspaceWriter>
 
   constructor(location: string | DataPaths) {
     this.paths = typeof location === 'string' ? standalonePaths(location) : location
     this.root = this.paths.notes
+    this.writer = workspaceWriter(this.paths.root)
   }
 
   async init(): Promise<void> {
-    for (const directory of [this.paths.canvas, this.paths.cache]) await fs.mkdir(directory, { recursive: true })
+    await preparePersistentData(this.paths)
     if (!(await this.scan()).names.length) await this.create('Welcome', WELCOME)
+    await this.identities()
   }
 
   private validate(relative: string, folder = false): void {
@@ -93,10 +97,43 @@ export class NoteStore {
     return target
   }
 
-  private async withLock<T>(name: string, action: () => Promise<T>): Promise<T> {
-    const run = (this.locks.get(name) ?? Promise.resolve()).catch(() => undefined).then(action)
-    this.locks.set(name, run)
-    try { return await run } finally { if (this.locks.get(name) === run) this.locks.delete(name) }
+  private withLock<T>(_name: string, action: () => Promise<T>): Promise<T> { return this.writer.run(action) }
+
+  /** Identity is independent of Markdown contents and survives explicit in-app moves. */
+  async identities(): Promise<NoteIdentities> {
+    return this.writer.run(async () => {
+      const file = path.join(this.paths.research, 'note-identities.json')
+      const saved = await readRecord<NoteIdentities>(file)
+      if (saved && (saved.version !== 1 || !saved.paths || Object.values(saved.paths).some(name => name !== null && typeof name !== 'string'))) throw new StorageError('笔记身份记录损坏，未重新生成。')
+      const result: NoteIdentities = saved ?? { version: 1, paths: {} }
+      const names = new Set((await this.scan()).names), known = new Set<string>()
+      let changed = !saved
+      for (const [id, name] of Object.entries(result.paths)) {
+        if (name === null) continue
+        if (known.has(name)) throw new StorageError('多份身份记录指向同一篇笔记，请检查数据冲突。')
+        known.add(name)
+        if (!names.has(name)) { result.paths[id] = null; changed = true }
+      }
+      for (const name of names) if (!known.has(name)) { result.paths[randomUUID()] = name; changed = true }
+      if (changed) await writeRecord(file, result)
+      return result
+    })
+  }
+
+  async identity(name: string): Promise<{ id: string; name: string; version: string }> {
+    return this.writer.run(async () => {
+      const note = await this.load(name), identities = await this.identities()
+      return { id: Object.keys(identities.paths).find(id => identities.paths[id] === name)!, name, version: contentVersion(note.content) }
+    })
+  }
+
+  async replaceIdentities(expected: NoteIdentities['paths'], next: NoteIdentities['paths']): Promise<void> {
+    await this.writer.run(async () => {
+      const file = path.join(this.paths.research, 'note-identities.json')
+      const current = await readRecord<NoteIdentities>(file)
+      if (!current || Object.entries(expected).some(([id, name]) => (current.paths[id] ?? null) !== name)) throw new ConflictError('笔记身份记录已变化，未覆盖。')
+      await writeRecord(file, { version: 1, paths: { ...current.paths, ...next } })
+    })
   }
 
   private async scan(): Promise<{ names: string[]; folders: string[] }> {
@@ -129,44 +166,47 @@ export class NoteStore {
       const current = await fs.readFile(file, 'utf8').catch(error => { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error })
       if (current !== expected) throw new ConflictError(expected === null ? `「${name}」已存在，未覆盖。` : `「${name}」已在其他地方修改，未覆盖新内容。`)
       if (next === null) { await fs.rm(file); return }
-      if (expected === null) { await fs.writeFile(file, next, { encoding: 'utf8', flag: 'wx' }); return }
-      const tmp = path.join(path.dirname(file), '.' + path.basename(name) + '.' + randomUUID() + '.tmp')
-      try { await fs.writeFile(tmp, next, 'utf8'); await fs.rename(tmp, file) }
-      finally { await fs.rm(tmp, { force: true }) }
+      await writeData(file, next, expected === null)
     })
   }
 
   /** Creates missing intermediate folders inside the notes root (never through symlinks). */
   async ensureFolder(folder: string): Promise<void> {
-    this.validate(folder, true)
-    let current = ''
-    for (const part of folder.split('/')) {
-      current = current ? current + '/' + part : part
-      try { await this.folderPath(current) }
-      catch (error) { if (!(error instanceof NotFoundError)) throw error; await fs.mkdir(path.join(this.root, current)).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }) }
-    }
+    return this.writer.run(async () => {
+      this.validate(folder, true)
+      let current = ''
+      for (const part of folder.split('/')) {
+        current = current ? current + '/' + part : part
+        try { await this.folderPath(current) }
+        catch (error) { if (!(error instanceof NotFoundError)) throw error; await fs.mkdir(path.join(this.root, current)).catch(error => { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }) }
+      }
+    })
   }
 
   /** Removes a folder only if it is empty of notes and subfolders (hidden temp files are ignored). */
   async removeEmptyFolder(folder: string): Promise<boolean> {
-    if (!folder) return false
-    const directory = await this.folderPath(folder)
-    const entries = await fs.readdir(directory)
-    if (entries.some(name => !name.startsWith('.'))) return false
-    await fs.rm(directory, { recursive: true })
-    return true
+    return this.writer.run(async () => {
+      if (!folder) return false
+      const directory = await this.folderPath(folder)
+      const entries = await fs.readdir(directory)
+      if (entries.some(name => !name.startsWith('.'))) return false
+      await fs.rm(directory, { recursive: true })
+      return true
+    })
   }
 
   async createFolder(folder: string): Promise<void> {
-    this.validate(folder, true)
-    if (!folder) throw new BadNameError('请输入文件夹名称。')
-    const parent = folderOf(folder)
-    await this.folderPath(parent)
-    try { await fs.mkdir(path.join(this.root, folder)) }
-    catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new BadNameError('这个文件夹已经存在。')
-      throw error
-    }
+    return this.writer.run(async () => {
+      this.validate(folder, true)
+      if (!folder) throw new BadNameError('请输入文件夹名称。')
+      const parent = folderOf(folder)
+      await this.folderPath(parent)
+      try { await fs.mkdir(path.join(this.root, folder)) }
+      catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'EEXIST') throw new BadNameError('这个文件夹已经存在。')
+        throw error
+      }
+    })
   }
 
   /** Canvas layout is split per folder (`canvas/<folder>/_canvas.json`, committed). */
@@ -211,13 +251,6 @@ export class NoteStore {
     return files
   }
 
-  private async writeAtomic(file: string, content: string): Promise<void> {
-    await fs.mkdir(path.dirname(file), { recursive: true })
-    const tmp = file + '.' + randomUUID() + '.tmp'
-    try { await fs.writeFile(tmp, content, 'utf8'); await fs.rename(tmp, file) }
-    finally { await fs.rm(tmp, { force: true }) }
-  }
-
   /** Writes only the folder files whose content changed, so a commit shows exactly which canvases moved. */
   private async writeLibrary(library: Library): Promise<void> {
     const folders = new Map<string, CanvasFile>()
@@ -233,7 +266,7 @@ export class NoteStore {
     }
     for (const [name, layout] of folders) {
       const file = path.join(this.paths.canvas, name, '_canvas.json'), next = JSON.stringify(layout, null, 2) + '\n'
-      if (await fs.readFile(file, 'utf8').catch(() => null) !== next) await this.writeAtomic(file, next)
+      if (await fs.readFile(file, 'utf8').catch(() => null) !== next) await writeData(file, next)
     }
   }
 
@@ -271,31 +304,31 @@ export class NoteStore {
   }
 
   async create(preferred?: string, content?: string, folder = ''): Promise<string> {
-    await this.folderPath(folder)
-    const stem = (preferred ?? '新笔记').replace(/\.md$/i, '').replace(/[\\/\0]/g, '-').replace(/^\.+/, '').trim() || '新笔记'
-    for (let index = 0; index < 1000; index++) {
-      const filename = `${stem}${index === 0 ? '' : ` ${index + 1}`}.md`
-      const name = folder ? folder + '/' + filename : filename
-      const target = await this.notePath(name, false)
-      try {
-        await fs.writeFile(target, content ?? `# ${stem}\n\n`, { encoding: 'utf8', flag: 'wx' })
-        return name
-      } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
-    }
-    throw new BadNameError('同名笔记过多，请使用另一个名称。')
+    return this.writer.run(async () => {
+      await this.folderPath(folder)
+      const stem = (preferred ?? '新笔记').replace(/\.md$/i, '').replace(/[\\/\0]/g, '-').replace(/^\.+/, '').trim() || '新笔记'
+      for (let index = 0; index < 1000; index++) {
+        const filename = `${stem}${index === 0 ? '' : ` ${index + 1}`}.md`
+        const name = folder ? folder + '/' + filename : filename
+        const target = await this.notePath(name, false)
+        try {
+          await writeData(target, content ?? `# ${stem}\n\n`, true)
+          return name
+        } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error }
+      }
+      throw new BadNameError('同名笔记过多，请使用另一个名称。')
+    })
   }
 
   async load(name: string): Promise<NoteDTO> {
-    return { name, content: await fs.readFile(await this.notePath(name), 'utf8'), space: folderOf(name) }
+    return this.writer.run(async () => ({ name, content: await fs.readFile(await this.notePath(name), 'utf8'), space: folderOf(name) }))
   }
 
   async saveContent(name: string, content: string, expectedContent: string): Promise<void> {
     await this.withLock(name, async () => {
       const file = await this.notePath(name), current = await fs.readFile(file, 'utf8')
       if (current !== expectedContent) throw new ConflictError('笔记已在其他地方修改，请重新载入后再保存。')
-      const tmp = path.join(path.dirname(file), '.' + path.basename(name) + '.' + randomUUID() + '.tmp')
-      try { await fs.writeFile(tmp, content, 'utf8'); await fs.rename(tmp, file) }
-      finally { await fs.rm(tmp, { force: true }) }
+      await writeData(file, content)
     })
   }
 
@@ -394,6 +427,16 @@ export class NoteStore {
     })
   }
 
+  /** Validate and capture touched layout state without creating positions or writing files. */
+  async inspectLayout(folder: string, shape: LayoutPatch): Promise<LayoutPatch> {
+    return this.withLock('library', async () => {
+      this.validate(folder, true)
+      const library = await this.readLibrary(), before = this.layoutState(library, folder, shape)
+      this.writePatch(library, folder, shape)
+      return before
+    })
+  }
+
   /** Strict variant for undo: refuses if anything touched has changed since `expected`. */
   async replaceLayout(folder: string, expected: LayoutPatch, next: LayoutPatch): Promise<void> {
     await this.withLock('library', async () => {
@@ -411,8 +454,10 @@ export class NoteStore {
   }
 
   private writePatch(library: Library, folder: string, next: LayoutPatch): void {
+    this.validate(folder, true)
     for (const [name, position] of Object.entries(next.positions)) {
       this.validate(name)
+      if (folderOf(name) !== folder) throw new BadNameError('画布修改只能包含当前文件夹的文章。')
       if (position === null) { delete library.notes[name]; continue }
       if (!validPosition(position)) throw new BadNameError('文章位置无效。')
       library.notes[name] = { position: { x: position.x, y: position.y } }

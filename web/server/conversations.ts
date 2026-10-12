@@ -3,7 +3,8 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { AgentScope, PlanStep } from '../shared/types'
 import type { AIMessage } from './ai'
-import { BadNameError, NotFoundError } from './store'
+import { BadNameError, ConflictError, NotFoundError } from './store'
+import { readRecord, StorageError, WorkspaceWriter, writeRecord } from './persistence'
 
 export type Conversation = {
   version: 1
@@ -11,6 +12,7 @@ export type Conversation = {
   scope: AgentScope
   createdAt: number
   updatedAt: number
+  revision?: number
   /** Model-facing history, possibly compacted. */
   messages: AIMessage[]
   /** What the user saw, never compacted, for restoring the panel. */
@@ -24,44 +26,42 @@ export type Conversation = {
 export const scopeKey = (scope: AgentScope) => scope.kind === 'note' ? 'note:' + scope.name : scope.kind + ':' + scope.folder
 
 /**
- * Raw conversations stay in the local cache (never committed); pushes distill their durable
- * conclusions into memory. Survives page reloads and server restarts.
+ * Raw conversations are durable local data, excluded from Git but included in full backups.
  */
 export class ConversationStore {
-  private loaded = new Map<string, Conversation>()
-  constructor(private directory: string) {}
+  constructor(private directory: string, private writer = new WorkspaceWriter()) {}
 
   create(scope: AgentScope): Conversation {
     const now = Date.now()
     const conversation: Conversation = { version: 1, id: randomUUID(), scope, createdAt: now, updatedAt: now, messages: [], transcript: [], changesets: [], distilled: 0 }
-    this.loaded.set(conversation.id, conversation)
     return conversation
   }
 
   async get(id: string): Promise<Conversation> {
     if (!/^[a-f0-9-]{36}$/.test(id)) throw new BadNameError('对话编号无效。')
-    const cached = this.loaded.get(id)
-    if (cached) return cached
-    try {
-      const conversation = JSON.parse(await fs.readFile(path.join(this.directory, id + '.json'), 'utf8')) as Conversation
-      this.loaded.set(id, conversation)
-      return conversation
-    } catch { throw new NotFoundError('找不到这段对话，请开始新对话。') }
+    const conversation = await readRecord<Conversation>(path.join(this.directory, id + '.json'))
+    if (!conversation) throw new NotFoundError('找不到这段对话，请开始新对话。')
+    if (conversation.version !== 1 || conversation.id !== id || !Array.isArray(conversation.messages) || !Array.isArray(conversation.transcript)) throw new StorageError('对话记录格式无效，请保留文件并检查备份。')
+    return conversation
   }
 
   async save(conversation: Conversation): Promise<void> {
-    conversation.updatedAt = Date.now()
-    await fs.mkdir(this.directory, { recursive: true })
-    const file = path.join(this.directory, conversation.id + '.json'), tmp = file + '.' + randomUUID() + '.tmp'
-    try { await fs.writeFile(tmp, JSON.stringify(conversation), 'utf8'); await fs.rename(tmp, file) }
-    finally { await fs.rm(tmp, { force: true }) }
+    await this.writer.run(async () => {
+      const file = path.join(this.directory, conversation.id + '.json')
+      const current = await readRecord<Conversation>(file)
+      if ((current?.revision ?? 0) !== (conversation.revision ?? 0)) throw new ConflictError('对话已在另一请求中更新，未覆盖新消息。')
+      const next = { ...conversation, updatedAt: Date.now(), revision: (conversation.revision ?? 0) + 1 }
+      await writeRecord(file, next)
+      Object.assign(conversation, next)
+    })
   }
 
   async all(): Promise<Conversation[]> {
     let files: string[]
-    try { files = (await fs.readdir(this.directory)).filter(file => /^[a-f0-9-]{36}\.json$/.test(file)) } catch { return [] }
+    try { files = (await fs.readdir(this.directory)).filter(file => /^[a-f0-9-]{36}\.json$/.test(file)) }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
     const result: Conversation[] = []
-    for (const file of files) { try { result.push(await this.get(file.slice(0, -5))) } catch { /* unreadable record */ } }
+    for (const file of files) result.push(await this.get(file.slice(0, -5)))
     return result.sort((a, b) => b.updatedAt - a.updatedAt)
   }
 

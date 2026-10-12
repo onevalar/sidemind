@@ -221,7 +221,7 @@ async function relocate(ctx: ToolContext, moves: Map<string, string>, options: {
     const heading = options.headings?.get(to)
     if (heading) next = /^#\s+.+$/m.test(next) ? next.replace(/^#\s+.+$/m, '# ' + heading) : '# ' + heading + '\n\n' + next
     deletes.push({ area: 'notes', name: from, before: text, after: null })
-    creates.push({ area: 'notes', name: to, before: null, after: next })
+    creates.push({ area: 'notes', name: to, before: null, after: next, identityFrom: from })
   }
   // Deletes first so that case-only renames on case-insensitive filesystems succeed.
   files.push(...deletes, ...creates)
@@ -680,25 +680,28 @@ export async function executeTool(ctx: ToolContext, call: AICall): Promise<unkno
   if (!args || typeof args !== 'object' || Array.isArray(args)) throw new BadNameError('工具参数无效。')
   const name = call.function.name
   if (WRITE_NAMES.has(name)) {
-    const plan = await PLANNERS[name]!(ctx, args)
-    if (!plan.files.length && !plan.layouts.length) return { ...plan.result, unchanged: true }
-    await ctx.emit({ type: 'activity', text: plan.activity })
-    ctx.signal.throwIfAborted()
-    await ctx.changes.apply(ctx.set, plan.files, plan.layouts)
-    await plan.after?.(ctx)
-    // The Agent knows what it just wrote: keep its read valid for further edits at the new version.
-    for (const op of plan.files.filter(op => op.area === 'notes')) {
-      const previous = ctx.reads.get(op.name)
-      ctx.reads.delete(op.name)
-      if (op.after !== null && previous) ctx.reads.set(op.name, { version: contentVersion(op.after), length: op.after.length, ranges: previous.ranges.some(([start, end]) => start === 0 && end >= previous.length) ? [[0, op.after.length]] : [[0, 0]] })
-    }
-    if (!ctx.conversation.changesets.includes(ctx.set.id)) ctx.conversation.changesets.push(ctx.set.id)
-    await ctx.emit({ type: 'changeset', change: summarize(ctx.set, true) })
-    const versions = Object.fromEntries(plan.files.filter(op => op.area === 'notes' && op.after !== null).map(op => [op.name, contentVersion(op.after!)]))
-    return { ...plan.result, ...(Object.keys(versions).length ? { versions } : {}), changeSet: ctx.set.id }
+    return ctx.changes.exclusive(async () => {
+      const plan = await PLANNERS[name]!(ctx, args)
+      if (!plan.files.length && !plan.layouts.length) return { ...plan.result, unchanged: true }
+      await ctx.emit({ type: 'activity', text: plan.activity })
+      ctx.signal.throwIfAborted()
+      await ctx.changes.apply(ctx.set, plan.files, plan.layouts, call.id)
+      await plan.after?.(ctx)
+      // The Agent knows what it just wrote: keep its read valid for further edits at the new version.
+      for (const op of plan.files.filter(op => op.area === 'notes')) {
+        const previous = ctx.reads.get(op.name)
+        ctx.reads.delete(op.name)
+        if (op.after !== null && previous) ctx.reads.set(op.name, { version: contentVersion(op.after), length: op.after.length, ranges: previous.ranges.some(([start, end]) => start === 0 && end >= previous.length) ? [[0, op.after.length]] : [[0, 0]] })
+      }
+      if (!ctx.conversation.changesets.includes(ctx.set.id)) ctx.conversation.changesets.push(ctx.set.id)
+      await ctx.emit({ type: 'changeset', change: summarize(ctx.set, true) })
+      const versions = Object.fromEntries(plan.files.filter(op => op.area === 'notes' && op.after !== null).map(op => [op.name, contentVersion(op.after!)]))
+      return { ...plan.result, ...(Object.keys(versions).length ? { versions } : {}), changeSet: ctx.set.id }
+    })
   }
   const reader = READERS[name]
   if (!reader) throw new BadNameError('不支持这个工具。')
+  if (name === 'propose_changes') return ctx.changes.exclusive(() => reader(ctx, args))
   return reader(ctx, args)
 }
 

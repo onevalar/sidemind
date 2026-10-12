@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
 import { BadNameError, ConflictError } from './store'
+import { WorkspaceWriter, writeData } from './persistence'
 
 export const LIBRARY_MEMORY = '_library.md'
 export const folderMemory = (folder: string) => (folder ? folder + '/' : '') + '_folder.md'
@@ -11,8 +11,7 @@ export const folderMemory = (folder: string) => (folder ? folder + '/' : '') + '
  * `_library.md` for the whole library. They are committed with the notes.
  */
 export class MemoryFiles {
-  private locks = new Map<string, Promise<unknown>>()
-  constructor(readonly root: string) {}
+  constructor(readonly root: string, private writer = new WorkspaceWriter()) {}
 
   private file(name: string): string {
     if (typeof name !== 'string' || !name.endsWith('.md') || name.length > 1000 || /[\\\0]/.test(name) || name.split('/').some(part => !part || part === '..' || (part.startsWith('.')))) throw new BadNameError('记忆文件路径无效。')
@@ -26,17 +25,12 @@ export class MemoryFiles {
 
   async replaceFile(name: string, expected: string | null, next: string | null): Promise<void> {
     const file = this.file(name)
-    const run = (this.locks.get(name) ?? Promise.resolve()).catch(() => undefined).then(async () => {
+    await this.writer.run(async () => {
       const current = await this.read(name)
       if (current !== expected) throw new ConflictError(`记忆「${name}」已被修改，未覆盖。`)
       if (next === null) { await fs.rm(file, { force: true }); await this.prune(path.dirname(file)); return }
-      await fs.mkdir(path.dirname(file), { recursive: true })
-      const tmp = file + '.' + randomUUID() + '.tmp'
-      try { await fs.writeFile(tmp, next, 'utf8'); await fs.rename(tmp, file) }
-      finally { await fs.rm(tmp, { force: true }) }
+      await writeData(file, next, expected === null)
     })
-    this.locks.set(name, run)
-    try { await run } finally { if (this.locks.get(name) === run) this.locks.delete(name) }
   }
 
   /** Writes unconditionally; for pipeline steps that already hold the latest content. */

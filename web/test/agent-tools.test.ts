@@ -196,6 +196,23 @@ describe('Agent canvas tools', () => {
 })
 
 describe('proposals, conversations and streaming', () => {
+  it('refuses synchronization during a live Agent turn and still saves the completed answer', async () => {
+    let started!: () => void, resume!: () => void
+    const entered = new Promise<void>(resolve => { started = resolve })
+    const waiting = new Promise<void>(resolve => { resume = resolve })
+    const client = app([async () => { started(); await waiting; return reply('完整回答') }])
+    const scope: AgentScope = { kind: 'folder', folder: 'Work' }
+    const pending = send(client, scope, '开始')
+    await entered
+    try {
+      const response = await client.request('/api/repo/push', { method: 'POST', headers: J, body: '{}' })
+      expect(await response.text()).toContain('助手任务或同步仍在进行')
+    } finally { resume() }
+    expect(errors(await pending)).toEqual([])
+    const state = await (await client.request('/api/ai/conversation?scope=' + encodeURIComponent(JSON.stringify(scope)), { headers: H })).json()
+    expect(state.messages).toEqual([{ role: 'user', text: '开始' }, { role: 'assistant', text: '完整回答' }])
+  })
+
   it('queues model-initiated changes until accepted, and marks stale proposals', async () => {
     let version = ''
     const events = await send(app([
@@ -214,7 +231,10 @@ describe('proposals, conversations and streaming', () => {
     expect(await read('Index.md')).toContain('# Index notes\n')
     expect(await read('Archive/Other 2.md')).toBe('# Other\n\nBack to [topic](../Work/Topic.md).\n')
     expect(await read('Work/Topic.md')).toContain('[Other](../Archive/Other%202.md#part)')
-    expect((await client.request(`/api/ai/proposals/${proposal.proposal.id}/accept`, { method: 'POST', headers: J, body: '{}' })).status).toBe(409)
+    const repeated = await client.request(`/api/ai/proposals/${proposal.proposal.id}/accept`, { method: 'POST', headers: J, body: '{}' })
+    expect(repeated.status).toBe(200)
+    expect((await repeated.json()).changeset.id).toBe((await accepted.json()).changeset.id)
+    expect(await read('Index.md')).not.toContain('# Index notes notes')
     // A second proposal goes stale when the file changes before acceptance.
     const second = await send(app([
       () => reply(null, [call('read_note', { name: 'Index.md' })]),
