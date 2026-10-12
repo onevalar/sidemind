@@ -1,0 +1,117 @@
+.root {
+  --glass-highlight: oklch(100% 0 0 / .5);
+  --glass-edge: oklch(100% 0 0 / .42);
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 4 / 5;
+  border-radius: var(--radius-surface);
+  background: var(--surface-muted);
+  box-shadow: var(--shadow-floating);
+  cursor: pointer;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  font-family: var(--font-body);
+  letter-spacing: var(--tracking-body);
+  line-height: var(--leading-body);
+  will-change: transform;
+}
+:global(:root[data-theme="dark"]) .root { --glass-highlight: oklch(100% 0 0 / .12); --glass-edge: oklch(100% 0 0 / .14); }
+
+.image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transform: scale(1.001);
+  transition: transform var(--duration-considered) var(--ease-standard);
+  pointer-events: none;
+}
+.root[data-open] .image { transform: scale(1.05); }
+
+/* A soft floor so white glass reads over bright photos; it deepens when the detail sheet opens. */
+.scrim {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to top, oklch(0% 0 0 / .22), transparent 45%);
+  opacity: .6;
+  pointer-events: none;
+  transition: opacity var(--duration-standard) var(--ease-standard);
+}
+.root[data-open] .scrim { opacity: 1; }
+
+.panel {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 1;
+  overflow: hidden;
+  max-height: calc(100% - 24px);
+  border: 1px solid var(--glass-edge);
+  background: color-mix(in oklab, var(--surface) 62%, transparent);
+  -webkit-backdrop-filter: blur(22px) saturate(1.7);
+  backdrop-filter: blur(22px) saturate(1.7);
+  box-shadow: inset 0 1px 0 var(--glass-highlight), 0 12px 32px oklch(0% 0 0 / .16), 0 2px 6px oklch(0% 0 0 / .08);
+  cursor: default;
+}
+
+/* The specular: a bright arc on the glass rim that sits where the pointer is, plus a faint sheen on the face. */
+.edge {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  padding: 1px;
+  border-radius: inherit;
+  background:
+    radial-gradient(160px circle at calc(var(--gx, -400) * 1px) calc(var(--gy, -400) * 1px), oklch(100% 0 0 / .95), oklch(100% 0 0 / 0) 70%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  opacity: var(--glare, 0);
+  pointer-events: none;
+}
+.panel::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(240px circle at calc(var(--gx, -400) * 1px) calc(var(--gy, -400) * 1px), oklch(100% 0 0 / .14), transparent 70%);
+  opacity: var(--glare, 0);
+  pointer-events: none;
+}
+
+.header {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 14px 16px;
+  border: 0;
+  background: none;
+  color: var(--foreground);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+.titles { display: grid; flex: 1; min-width: 0; gap: 1px; }
+.title { overflow: hidden; font-size: var(--text-base); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.subtitle { overflow: hidden; color: var(--text-secondary); font-size: var(--text-sm); text-overflow: ellipsis; white-space: nowrap; }
+.aside { flex: none; color: var(--foreground); font-size: var(--text-sm); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+.detail {
+  position: relative;
+  z-index: 1;
+  padding: 0 16px 16px;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .panel { background: var(--surface); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}

@@ -1,0 +1,60 @@
+.release {
+  box-sizing: border-box;
+  width: min(100%, 560px);
+  min-width: 0;
+  margin-inline: auto;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--surface);
+  color: var(--foreground);
+  font-family: var(--font-body);
+  font-size: 13px;
+  letter-spacing: var(--tracking-body);
+  line-height: var(--leading-body);
+}
+.release h2, .release p, .release ul { margin: 0; }
+.release ul { padding: 0; list-style: none; }
+
+.header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px 12px; }
+.titleBlock { display: grid; min-width: 0; gap: 2px; }
+.titleBlock h2 { font-size: var(--text-base); font-weight: 500; letter-spacing: -.01em; line-height: 1.4; }
+.titleBlock p { color: var(--text-muted); }
+.owners { display: flex; flex: none; }
+.owners > * + * { margin-left: -6px; box-shadow: 0 0 0 2px var(--surface); }
+
+/* One quiet bar; it turns green only when every check is done. */
+.progress { display: grid; gap: 8px; padding: 0 20px 16px; }
+.progressMeta { display: flex; justify-content: space-between; gap: 12px; color: var(--text-secondary); }
+.count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.track { height: 4px; overflow: hidden; border-radius: var(--radius-pill); background: var(--surface-muted); }
+/* The fill slides in from the left instead of scaling, so its rounded end never squashes. */
+.fill { display: block; height: 100%; border-radius: inherit; background: var(--accent); transition: transform var(--duration-spring) var(--ease-spring), background-color var(--duration-standard) var(--ease-standard); }
+.fill[data-complete] { background: var(--success); }
+
+.tasks { border-top: 1px solid var(--border); }
+.task { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: 4px; padding: 12px 20px; transition: background-color var(--duration-fast) var(--ease-standard); }
+/* The checkbox keeps its 44px hit area; its 18px square lines up with the header text and centers on the first line of the label. */
+.task > :first-child { margin: -12px 0 -12px -13px; }
+.task + .task { border-top: 1px solid var(--border-subtle); }
+@media (hover: hover) and (pointer: fine) { .task:hover { background: color-mix(in oklab, var(--surface-muted) 55%, var(--surface)); } }
+.taskCopy { display: grid; min-width: 0; gap: 1px; padding-top: 1px; cursor: pointer; }
+.taskLabel { font-weight: 500; transition: color var(--duration-fast) var(--ease-standard); }
+.task[data-done] .taskLabel { color: var(--text-secondary); }
+.taskDetail { color: var(--text-muted); font-size: var(--text-xs); }
+
+.footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; padding: 12px 20px; border-top: 1px solid var(--border); }
+.footerActions { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+
+.message { overflow: hidden; }
+.success, .error { padding: 0 20px 14px; font-size: var(--text-xs); }
+.success { color: var(--text-secondary); }
+.error { color: var(--danger); }
+
+@media (max-width: 420px) {
+  .header, .progress, .task, .footer { padding-inline: 16px; }
+  .success, .error { padding-inline: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .fill, .task, .taskLabel { transition: none; }
+}

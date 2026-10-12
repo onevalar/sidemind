@@ -1,0 +1,248 @@
+/* Liquid glass tab bar. One translucent capsule per surface: a light tint over a blurred, saturated backdrop, a specular
+   rim lit from above, a soft inner glow for thickness, and one float shadow that lifts it off the content. The selected
+   tab sits under a lens that turns into clear glass while it travels. Only the material layers use backdrop-filter. */
+.root {
+  --glass-tint: oklab(99% 0 0 / .56);
+  --glass-filter: blur(18px) saturate(1.8) brightness(1.04);
+  --glass-rim: oklab(100% 0 0 / .95);
+  --glass-rim-soft: oklab(100% 0 0 / .5);
+  --glass-glow: oklab(100% 0 0 / .32);
+  --glass-edge: oklab(0% 0 0 / .07);
+  --glass-shadow: 0 10px 30px -10px oklab(0% 0 0 / .3), 0 2px 8px -2px oklab(0% 0 0 / .1);
+  --glass-ink: oklab(20% 0 0 / .88);
+  --glass-active: var(--accent);
+  --lens-fill: oklab(0% 0 0 / .07);
+  --lens-edge: oklab(100% 0 0 / .45);
+  --lens-glass: oklab(100% 0 0 / .42);
+  --lens-shadow: 0 6px 18px -6px oklab(0% 0 0 / .28);
+  display: flex;
+  justify-content: center;
+  font-family: var(--font-body);
+  letter-spacing: var(--tracking-body);
+  pointer-events: none;
+}
+:global(:root:not([data-accent])) .root,
+:global(:root[data-accent="neutral"]) .root { --glass-active: var(--foreground); }
+:global(:root[data-theme="dark"]) .root {
+  --glass-tint: oklab(21% 0 0 / .58);
+  --glass-filter: blur(18px) saturate(1.6) brightness(.86);
+  --glass-rim: oklab(100% 0 0 / .36);
+  --glass-rim-soft: oklab(100% 0 0 / .14);
+  --glass-glow: oklab(100% 0 0 / .05);
+  --glass-edge: oklab(100% 0 0 / .07);
+  --glass-shadow: 0 12px 32px -10px oklab(0% 0 0 / .65), 0 2px 8px -2px oklab(0% 0 0 / .4);
+  --glass-ink: oklab(97% 0 0 / .86);
+  --lens-fill: oklab(100% 0 0 / .13);
+  --lens-edge: oklab(100% 0 0 / .1);
+  --lens-glass: oklab(100% 0 0 / .14);
+  --lens-shadow: 0 6px 18px -6px oklab(0% 0 0 / .6);
+}
+
+.group {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+}
+
+.bar {
+  position: relative;
+  display: flex;
+  padding: 0 4px;
+  border-radius: var(--radius-pill);
+  touch-action: pan-y;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* The material: tint and backdrop on one layer, the light it catches in box shadows, the specular ring on top. */
+.material {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--glass-tint);
+  -webkit-backdrop-filter: var(--glass-filter);
+  backdrop-filter: var(--glass-filter);
+  box-shadow:
+    0 0 0 .5px var(--glass-edge),
+    inset 0 1px .5px -.5px var(--glass-rim),
+    inset 0 -1px .5px -.5px var(--glass-rim-soft),
+    inset 0 0 16px var(--glass-glow),
+    var(--glass-shadow);
+  pointer-events: none;
+}
+
+/* The specular rim: a hairline ring, brightest along the top left where light enters and faint at the bottom right. */
+.material::after,
+.lens::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  padding: 1px;
+  border-radius: inherit;
+  background: linear-gradient(160deg, var(--glass-rim), oklab(100% 0 0 / .08) 30%, oklab(100% 0 0 / 0) 55%, oklab(100% 0 0 / .06) 78%, var(--glass-rim-soft));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
+}
+
+/* The lens: a soft fill under the selected tab at rest. While it travels or is held, --lift (0 to 1, set from the
+   component) brings in a clear glass layer with its own rim and shadow, so it reads as a drop of glass gliding. */
+.lens {
+  position: absolute;
+  top: 4px;
+  left: 0;
+  border-radius: var(--radius-pill);
+  background: var(--lens-fill);
+  box-shadow: inset 0 0 0 .5px var(--lens-edge);
+  pointer-events: none;
+  will-change: transform;
+}
+.lens::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: var(--lens-glass);
+  box-shadow:
+    inset 0 1px .5px -.5px var(--glass-rim),
+    inset 0 0 10px var(--glass-glow),
+    var(--lens-shadow);
+  opacity: var(--lift, 0);
+}
+.lens::after { opacity: var(--lift, 0); }
+
+.item {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-pill);
+  background: none;
+  font: inherit;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.icon {
+  position: relative;
+  display: grid;
+  place-items: center;
+  transform-origin: 50% 60%;
+  transition: scale var(--duration-fast) var(--ease-standard);
+}
+.icon svg { width: 22px; height: 22px; }
+.item:active .icon { scale: .9; }
+
+.label {
+  position: absolute;
+  bottom: 7px;
+  left: 2px;
+  right: 2px;
+  overflow: hidden;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  line-height: 16px;
+  letter-spacing: 0;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform-origin: 50% 0;
+  pointer-events: none;
+}
+
+.badge {
+  position: absolute;
+  top: -5px;
+  left: calc(100% - 8px);
+  min-width: 16px;
+  height: 16px;
+  padding-inline: 4px;
+  border-radius: var(--radius-pill);
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 16px;
+  letter-spacing: 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 0 0 1.5px var(--glass-tint);
+}
+
+.hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The action: the same glass, round, with its own lens that grows in when it is the selected tab. */
+.bubble {
+  position: relative;
+  flex: none;
+  border-radius: var(--radius-pill);
+}
+.bubbleLens {
+  position: absolute;
+  inset: 4px;
+  border-radius: inherit;
+  background: var(--lens-fill);
+  box-shadow: inset 0 0 0 .5px var(--lens-edge);
+  opacity: 0;
+  scale: .6;
+  transition: opacity var(--duration-fast) var(--ease-standard), scale var(--duration-spring) var(--ease-spring);
+  pointer-events: none;
+}
+.bubble[data-active] .bubbleLens { opacity: 1; scale: 1; }
+.bubbleButton {
+  position: relative;
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: inherit;
+  background: none;
+  color: var(--glass-ink);
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--duration-standard) var(--ease-standard);
+}
+.bubble[data-active] .bubbleButton { color: var(--glass-active); }
+.bubbleIcon { display: grid; place-items: center; transition: scale var(--duration-fast) var(--ease-standard); }
+.bubbleIcon svg { width: 22px; height: 22px; }
+.bubbleButton:active .bubbleIcon { scale: .9; }
+
+@media (prefers-reduced-motion: reduce) {
+  .icon, .bubbleIcon, .bubbleButton { transition: none; }
+  .item:active .icon, .bubbleButton:active .bubbleIcon { scale: 1; }
+  .bubbleLens { scale: 1; transition: opacity var(--duration-fast) linear; }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .root .material {
+    background: var(--surface-raised, var(--surface));
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    box-shadow: inset 0 0 0 1px var(--border), var(--glass-shadow);
+  }
+  .material::after, .lens::before, .lens::after { display: none; }
+  .root { --lens-fill: var(--surface-muted); --lens-edge: var(--border); }
+}
+
+@media (prefers-contrast: more) {
+  .root { --glass-ink: var(--foreground); --lens-edge: var(--border-strong); }
+  .root .material {
+    background: color-mix(in oklab, var(--surface) 94%, transparent);
+    box-shadow: inset 0 0 0 1px var(--border-strong), var(--glass-shadow);
+  }
+}

@@ -3,6 +3,7 @@
 ChatGit 现基于 LibreChat 开发：`app/` 是固定在 `e1dfc10449ff713faffacd60273fddcfe2c0a698` 导入的 LibreChat，`legacy/chatgit/` 只是旧版 Next.js 实现的参考，不再运行其开发服务。
 
 - 只用根目录的受保护入口：`npm run check:safety`、`npm run setup:app`（依赖安装）、`npm run build`、`npm run dev -- --port <端口>`、`npm run test:safety`。它们经过 `scripts/next_safe.py` 的独立进程组保护。不要在 `app/` 里直接运行 `npm ci`、`npm run build`、`npm run frontend`、`npx turbo`、`vite`、`npm run backend` 或 `node api/server/index.js`；客户端的上游 `build` 脚本会把 Node 堆强制提到 8 GiB，受保护构建改用 `build:file`。
+- 画布界面 `app/web/`（React 19 + Arc UI）有独立的 package-lock，安装和构建都由上面的受保护入口完成（`setup:app` 与 `build` 的最后一步）；不要在 `app/web/` 里直接运行 `npm`、`esbuild` 或 `node build.mjs`。`app/web/src/components/arc/` 含 Arc Pro 源码，仓库必须保持私有。
 - 使用 `.nvmrc` 固定的 Node 24.16.0（与上游 `app/.nvmrc` 一致），由 `.agents/setup` 安装；系统自带的 Node 26 不用于本项目。先用 `npm run check:safety` 检查环境。
 - 同时只运行一个安装、开发或构建任务。保护上限为每个进程组 32 个进程、6 GiB RSS、可用磁盘不低于 10 GiB、每个 Node 进程 2 GiB 堆。保护触发后先检查报错和资源，不自动循环重启、不提高阈值来掩盖问题。
 - 停止服务时正常中断原启动终端（或 `amp orb service stop chatgit`），等待保护脚本清理本次进程组。不要使用 `killall node`、`pkill node`、`pkill mongod`，以免影响其他应用；本 orb 中仓库外的 `librechat-eval`、`librechat-model` 实验服务不要停止。

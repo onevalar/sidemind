@@ -1,0 +1,205 @@
+.root {
+  --gutter: var(--space-6);
+  --pill-height: 56px;
+  --hairline: color-mix(in oklab, var(--foreground) 7%, transparent);
+  position: relative;
+  box-sizing: border-box;
+  isolation: isolate;
+  display: grid;
+  width: 100%;
+  /* One full screen on desktop and phones: the small viewport unit keeps it from hiding under mobile browser bars. */
+  min-height: 100vh;
+  min-height: 100svh;
+  align-content: center;
+  overflow: hidden;
+  container-type: inline-size;
+  background: color-mix(in oklab, var(--accent) 3%, var(--background));
+  color: var(--foreground);
+  font-family: var(--font-body);
+  letter-spacing: var(--tracking-body);
+  line-height: var(--leading-body);
+  text-align: center;
+}
+.root *, .root *::before, .root *::after { box-sizing: border-box; }
+
+/* The mesh fades in once its palette is known, so the first frame is never a wrong color. */
+.mesh { position: absolute; z-index: -1; inset: 0; opacity: 0; transition: opacity 1.2s var(--ease-standard); }
+.mesh[data-ready] { opacity: 1; }
+
+.inner { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; padding: clamp(72px, 12svh, 128px) var(--gutter); }
+
+.title {
+  max-width: 14ch;
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: clamp(2.125rem, 1.2rem + 5cqi, var(--text-5xl));
+  font-weight: 500;
+  letter-spacing: var(--tracking-display);
+  line-height: var(--leading-display);
+  text-wrap: balance;
+}
+.word { display: inline-block; will-change: transform, opacity, filter; }
+.description {
+  max-width: 34rem;
+  margin: var(--space-5) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-lg);
+  line-height: var(--leading-body);
+  text-wrap: pretty;
+}
+
+.formWrap { width: min(460px, 100%); margin-top: var(--space-10); }
+
+/* The field is the hero. One pill: the input, a live validity check, and the button. The confirmation grows out of the button. */
+.pill {
+  position: relative;
+  height: var(--pill-height);
+  border-radius: calc(var(--pill-height) / 2);
+  background: var(--surface-raised);
+  box-shadow: 0 0 0 1px var(--hairline), var(--shadow-raised);
+  text-align: left;
+  transition: box-shadow var(--duration-standard) var(--ease-standard);
+}
+.pill[data-invalid] { box-shadow: 0 0 0 1px color-mix(in oklab, var(--danger) 70%, transparent), var(--shadow-raised); }
+.field { position: relative; display: flex; height: 100%; align-items: center; padding: 6px 6px 6px 22px; }
+.input {
+  width: 0;
+  min-width: 0;
+  height: 100%;
+  flex: 1;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--foreground);
+  font: inherit;
+  /* 16px or more keeps iOS from zooming into the field. */
+  font-size: max(16px, var(--text-base));
+  letter-spacing: var(--tracking-body);
+  outline: none;
+  appearance: none;
+}
+.field[data-valid] .input { padding-right: 30px; }
+.input::placeholder { color: var(--text-muted); opacity: 1; }
+.input[readonly] { color: var(--text-secondary); }
+.valid { display: grid; flex: none; place-items: center; margin: 0 10px 0 -26px; color: var(--success); pointer-events: none; }
+
+.go {
+  position: relative;
+  display: grid;
+  height: 44px;
+  min-width: 44px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 22px;
+  padding: 0 20px;
+  background: var(--foreground);
+  color: var(--background);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard);
+}
+.go > * { grid-area: 1 / 1; }
+.go:active:not([data-busy]) { transform: scale(.97); }
+.go[data-busy] { cursor: progress; }
+.goLabel { transition: opacity var(--duration-fast) var(--ease-standard), filter var(--duration-fast) var(--ease-standard); }
+.goLabel[data-hidden] { opacity: 0; filter: blur(2px); }
+.labelShort { display: none; }
+.spinner { width: 18px; height: 18px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; opacity: 0; transform: scale(.6); transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-standard) var(--ease-standard); animation: spin .7s linear infinite; }
+.spinner[data-shown] { opacity: 1; transform: scale(1); }
+
+/* The confirmation. Starts clipped to the button and grows across the pill on one critically damped spring. */
+.done {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: inherit;
+  padding: 0 20px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: var(--text-base);
+  font-weight: 500;
+  outline: none;
+  opacity: 0;
+  pointer-events: none;
+  clip-path: inset(6px 6px 6px calc(100% - 50px) round 22px);
+}
+.pill[data-state="success"] .done { pointer-events: auto; }
+.doneBody { display: inline-flex; line-height: 1.25; min-width: 0; align-items: center; gap: 10px; white-space: nowrap; }
+.doneMark { display: grid; width: 22px; height: 22px; flex: none; place-items: center; border-radius: 50%; background: var(--success); color: var(--background); }
+
+/* Digits roll on reels. The soft mask fades them at the reel window's edges. */
+.roll { display: inline-flex; height: 1.25em; line-height: 1.25; vertical-align: top; font-variant-numeric: tabular-nums; }
+.digit { display: inline-block; height: 1.25em; overflow: hidden; line-height: 1.25; mask-image: linear-gradient(transparent, #000 22%, #000 78%, transparent); }
+.reel { display: flex; flex-direction: column; }
+.reel > span { height: 1.25em; }
+
+/* One line under the field that holds the privacy note, validation, a typo fix, a failure with retry, or the confirmation.
+   It reserves two lines on narrow widths, so nothing below it moves. */
+.note { display: grid; min-height: 1.5em; margin-top: 14px; justify-items: center; font-size: var(--text-sm); }
+.note > * { grid-area: 1 / 1; }
+.noteText { max-width: 100%; margin: 0; color: var(--text-muted); line-height: 1.5; text-wrap: balance; }
+.error { color: var(--danger); }
+.link {
+  position: relative;
+  display: inline;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: var(--foreground);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--foreground) 30%, transparent);
+  text-underline-offset: 3px;
+  cursor: pointer;
+  outline: none;
+  -webkit-tap-highlight-color: transparent;
+  transition: text-decoration-color var(--duration-fast) var(--ease-standard);
+}
+/* A 44px tall hit area around the inline link, without moving the text. */
+.link::after { content: ""; position: absolute; inset: -12px -6px; }
+
+.proof { display: flex; align-items: center; justify-content: center; gap: 12px; margin-top: clamp(36px, 6cqi, 56px); }
+.faces { display: flex; flex: none; }
+.face { display: block; width: 28px; height: 28px; border-radius: 50%; object-fit: cover; box-shadow: 0 0 0 2px var(--surface-raised); background: var(--surface-muted); }
+.face + .face { margin-left: -8px; }
+.proofText { margin: 0; line-height: 1.25; color: var(--text-secondary); font-size: var(--text-sm); }
+.proofStrong { color: var(--foreground); font-weight: 500; }
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (hover: hover) and (pointer: fine) {
+  .go:hover:not([data-busy]) { opacity: .88; }
+  .link:hover { text-decoration-color: currentColor; }
+}
+.pill:focus-within { box-shadow: 0 0 0 1px color-mix(in oklab, var(--foreground) 28%, transparent), var(--shadow-raised); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+@container (max-width: 560px) {
+  .inner { --gutter: var(--space-4); }
+  .description { font-size: var(--text-base); }
+  .note { min-height: 3em; }
+}
+@container (max-width: 340px) {
+  .labelLong { display: none; }
+  .labelShort { display: inline; }
+}
+@container (max-width: 420px) {
+  .field { padding-left: 18px; }
+  .go { padding: 0 16px; }
+  .proof { flex-direction: column; gap: 10px; }
+  .done { font-size: var(--text-sm); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mesh { transition: none; }
+  .spinner { animation-duration: 1.6s; }
+  .go, .goLabel, .spinner, .pill { transition: none; }
+}

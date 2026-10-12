@@ -162,8 +162,8 @@ class EntrypointTests(unittest.TestCase):
 
     def test_build_is_sequential_and_uses_heap_respecting_client_script(self):
         self.assertEqual([label for label, _, _ in BUILD_STEPS],
-                         ["data-provider", "data-schemas", "api", "client-package", "client"])
-        self.assertEqual(BUILD_STEPS[-1][2], "build:file")
+                         ["data-provider", "data-schemas", "api", "client-package", "client", "web"])
+        self.assertEqual(dict((label, script) for label, _, script in BUILD_STEPS)["client"], "build:file")
         self.assertTrue(heap_override("cross-env NODE_OPTIONS=--max-old-space-size=8192 vite build"))
         self.assertFalse(heap_override("cross-env NODE_ENV=production vite build --debug"))
 

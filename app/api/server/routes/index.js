@@ -44,9 +44,11 @@ const mcp = require('./mcp');
 const rum = require('./rum');
 const insights = require('./insights');
 const chatgit = require('./chatgit');
+const chatgitCanvas = require('./chatgitCanvas');
 
 module.exports = {
   chatgit,
+  chatgitCanvas,
   insights,
   rum,
   mcp,

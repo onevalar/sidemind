@@ -1,0 +1,95 @@
+.invoice { width: min(100%, 960px); min-width: 0; margin-inline: auto; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface); color: var(--foreground); font-family: var(--font-body); font-size: var(--text-sm); letter-spacing: var(--tracking-body); line-height: var(--leading-body); }
+.documentHeader { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; border-bottom: 1px solid var(--border); padding: 20px 32px; }
+.identity, .documentMeta { display: grid; gap: 4px; }
+.wordmark { font-size: var(--text-base); font-weight: 500; }
+.identity > span:last-child, .documentMeta > span:last-child { color: var(--text-muted); font-size: var(--text-xs); }
+.documentMeta { text-align: right; font-size: var(--text-sm); }
+.heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 36px; padding: 32px 32px 40px; }
+.heading h2 { margin: 0; font-family: var(--font-display); font-size: clamp(var(--text-3xl), 5vw, var(--text-4xl)); font-weight: 400; letter-spacing: var(--tracking-display); line-height: var(--leading-display); }
+.parties { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 38px; }
+.parties > div { min-width: 0; }
+.parties span { display: block; margin-bottom: 8px; color: var(--text-muted); font-size: var(--text-xs); }
+.parties strong { display: block; font-size: var(--text-sm); font-weight: 500; }
+.parties p { margin: 4px 0 0; color: var(--text-secondary); font-size: var(--text-xs); line-height: var(--leading-body); }
+.linesHeader, .line { display: grid; grid-template-columns: minmax(190px, 1fr) 76px 118px 116px 32px; align-items: center; gap: 12px; }
+.linesHeader { border-bottom: 1px solid var(--border); padding: 0 32px 10px; color: var(--text-muted); font-size: var(--text-xs); }
+.linesHeader span:nth-child(4) { text-align: right; }
+/* Each row eases its height in and out, so the add button and totals glide instead of jumping. */
+.lineSlot { overflow: hidden; }
+.line { min-width: 0; border-bottom: 1px solid var(--border-subtle); padding: 6px 32px; }
+.line label { position: relative; display: block; min-width: 0; }
+.line input { width: 100%; min-width: 0; min-height: 36px; border: 1px solid transparent; border-radius: 10px; padding: 0 10px; outline: none; background: transparent; color: var(--foreground); font: inherit; font-size: var(--text-sm); transition: border-color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard); }
+.line input:hover { background: var(--surface-muted); }
+.line input:focus { border-color: var(--border-strong); background: var(--surface); }
+.line input::placeholder { color: var(--text-muted); }
+.line input::-webkit-inner-spin-button, .line input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+.numberCell input { text-align: right; font-variant-numeric: tabular-nums; }
+.currencyPrefix { position: absolute; top: 50%; left: 10px; transform: translateY(-50%); color: var(--text-muted); font-size: var(--text-sm); pointer-events: none; }
+.numberCell:has(.currencyPrefix) input { padding-left: 25px; }
+.amountCell { display: grid; min-width: 0; justify-items: end; text-align: right; font-size: var(--text-sm); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.amountCell span, .moneySlot span { grid-area: 1 / 1; }
+.removeButton { display: grid; width: 32px; height: 32px; place-items: center; border: 0; border-radius: 10px; background: transparent; color: var(--text-muted); cursor: pointer; transition: color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.removeButton:hover:not(:disabled) { background: var(--surface-muted); color: var(--danger); }
+.removeButton:disabled { opacity: .3; cursor: not-allowed; }
+.mobileLabel { display: none; }
+.addRow { padding: 10px 24px 28px; }
+.addRow button { display: inline-flex; min-height: 32px; align-items: center; gap: 6px; border: 0; border-radius: 10px; padding: 0 10px 0 8px; background: transparent; color: var(--foreground); font: inherit; font-size: var(--text-sm); font-weight: 500; cursor: pointer; transition: background-color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.addRow button:hover { background: var(--surface-muted); }
+.addRow button:active, .removeButton:active:not(:disabled) { transform: scale(.96); }
+.bottom { display: flex; justify-content: space-between; gap: 40px; padding: 0 32px 28px; }
+.note { max-width: 300px; margin: 0; color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-body); }
+.totals { display: grid; width: min(100%, 270px); flex: none; gap: 12px; font-size: var(--text-sm); }
+.totals > div { display: flex; justify-content: space-between; gap: 24px; font-variant-numeric: tabular-nums; }
+.moneySlot { display: grid; min-width: 105px; justify-items: end; }
+.totals > div:not(.totalLine) span:first-child { color: var(--text-muted); }
+.totalLine { align-items: baseline; border-top: 1px solid var(--border); margin-top: 4px; padding-top: 16px; }
+.totalLine strong { font-weight: 500; }
+.totalLine output { display: grid; justify-items: end; min-width: 120px; font-family: var(--font-display); font-size: var(--text-2xl); letter-spacing: var(--tracking-display); line-height: var(--leading-display); }
+.totalLine output span { grid-area: 1 / 1; }
+.footer { display: flex; min-height: 64px; align-items: center; justify-content: flex-end; gap: 24px; border-top: 1px solid var(--border); padding: 12px 20px 12px 32px; }
+.footer p { min-width: 0; margin: 0; color: var(--text-secondary); font-size: var(--text-xs); }
+.saveButton { width: 132px; flex: none; }
+.saveLabel { display: inline-flex; align-items: center; gap: 6px; }
+@media (max-width: 760px) {
+  .documentHeader, .heading, .footer { padding-inline: 24px; }
+  .heading { display: grid; gap: 24px; padding-bottom: 36px; }
+  .parties { gap: 20px; }
+  .linesHeader, .line { grid-template-columns: minmax(150px, 1fr) 64px 94px 92px 32px; gap: 5px; padding-inline: 20px; }
+  .addRow { padding-inline: 20px; }
+  .bottom { padding-inline: 24px; }
+}
+@media (max-width: 620px) {
+  .invoice { border-radius: var(--radius-control); }
+  .documentHeader { padding: 22px 20px; }
+  .heading { padding: 28px 20px 32px; }
+  .heading h2 { font-size: var(--text-3xl); }
+  .parties { gap: 18px; }
+  .linesHeader { display: none; }
+  .line { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 32px; gap: 8px; margin-inline: 20px; padding: 14px 0; }
+  .descriptionCell { grid-column: 1 / -1; }
+  .numberCell { grid-row: 2; }
+  .removeButton { grid-column: 3; grid-row: 2; align-self: end; margin-bottom: 2px; }
+  .amountCell { grid-column: 1 / -1; grid-row: 3; justify-items: end; padding-right: 42px; color: var(--text-secondary); }
+  .mobileLabel { display: block; margin: 0 0 4px 10px; color: var(--text-muted); font-size: var(--text-xs); }
+  /* Stacked, the cells read as a small form: without a hover to reveal them, the fields show their edges and are easier to tap. */
+  .line input { min-height: 40px; border-color: var(--border); background: var(--surface); }
+  .currencyPrefix { top: calc(50% + 8px); }
+  .addRow { padding: 12px 20px 24px; }
+  .bottom { display: grid; justify-content: stretch; gap: 28px; padding: 0 20px 28px; }
+  .note { order: 2; }
+  .totals { width: 100%; max-width: none; }
+  .footer { padding: 14px 20px; }
+}
+@media (max-width: 380px) {
+  .parties { grid-template-columns: 1fr; gap: 16px; }
+  .parties span { margin-bottom: 4px; }
+  .parties p { margin-top: 3px; }
+  .footer { gap: 8px; }
+  .saveButton { width: 128px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .line input, .removeButton, .addRow button { transition: none; }
+  .addRow button:active, .removeButton:active:not(:disabled) { transform: none; }
+}
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

@@ -1,0 +1,162 @@
+.root {
+  --board: oklch(97% 0 0);
+  --board-edge: oklch(0% 0 0 / .07);
+  --cap-top: oklch(100% 0 0);
+  --cap-bottom: oklch(96.5% 0 0);
+  --cap-edge: oklch(0% 0 0 / .09);
+  --face-top: oklch(96.8% 0 0);
+  --face-bottom: oklch(99.6% 0 0);
+  --housing: oklch(84% 0 0);
+  --legend: oklch(40% 0 0);
+  --legend-soft: oklch(56% 0 0);
+  --shade: oklch(0% 0 0 / .1);
+  /* The accent blooms under a pressed cap and tints its face. */
+  --glow: color-mix(in oklab, var(--accent) 30%, transparent);
+  --tint: color-mix(in oklab, var(--accent) 12%, transparent);
+  display: grid;
+  width: 100%;
+  max-width: 760px;
+  gap: 20px;
+  margin-inline: auto;
+  container-type: inline-size;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+:global(:root[data-theme="dark"]) .root {
+  --board: oklch(17.5% 0 0);
+  --board-edge: oklch(100% 0 0 / .07);
+  --cap-top: oklch(29% 0 0);
+  --cap-bottom: oklch(25.5% 0 0);
+  --cap-edge: oklch(100% 0 0 / .07);
+  --face-top: oklch(26.5% 0 0);
+  --face-bottom: oklch(29.5% 0 0);
+  --housing: oklch(11% 0 0);
+  --legend: oklch(86% 0 0);
+  --legend-soft: oklch(66% 0 0);
+  --shade: oklch(0% 0 0 / .4);
+  --glow: color-mix(in oklab, var(--accent) 34%, transparent);
+  --tint: color-mix(in oklab, var(--accent) 14%, transparent);
+}
+
+/* Typed text: wraps between words, and the newest line stays in view without any scroll code. */
+.output {
+  display: flex;
+  height: calc(1.3em * 2 + 4px);
+  flex-direction: column-reverse;
+  overflow-y: auto;
+  color: var(--foreground);
+  font-family: var(--font-display);
+  font-size: clamp(1.25rem, 4.4cqw, 2rem);
+  letter-spacing: var(--tracking-display);
+  line-height: 1.3;
+  scrollbar-width: none;
+  cursor: text;
+}
+.output::-webkit-scrollbar { display: none; }
+.text { margin: 0; padding-inline: 8px; text-align: center; white-space: pre-wrap; overflow-wrap: anywhere; }
+.char { animation: arrive 140ms var(--ease-standard) both; }
+.placeholder { color: var(--text-muted); }
+.caret { display: inline-block; width: 2px; height: 1.08em; margin: 0 1px 0 2px; border-radius: 1px; background: var(--accent); vertical-align: -.16em; animation: blink 1.06s steps(1) infinite; }
+.output[data-typing] .caret { animation: none; }
+@keyframes arrive { from { opacity: 0; filter: blur(2px); } }
+@keyframes blink { 50% { opacity: 0; } }
+
+/* Sizes come from the board's width: one unit fits every row, capped for wide screens. */
+.plate {
+  --pad: clamp(6px, 2.2cqw, 16px);
+  --u: min(54px, calc((100cqw - var(--pad) * 2 - 2px) / (var(--units) + (var(--units) - 1) * .14)));
+  --gap: calc(var(--u) * .14);
+  --travel: clamp(2px, calc(var(--u) * .085), 4.5px);
+  --r: calc(var(--u) * .2);
+  box-sizing: border-box;
+  display: grid;
+  justify-self: center;
+  justify-content: center;
+  gap: var(--gap);
+  padding: var(--pad);
+  border: 1px solid var(--board-edge);
+  border-radius: calc(var(--r) + var(--pad));
+  background: var(--board);
+  box-shadow: var(--shadow-resting);
+}
+.row { display: flex; justify-content: center; gap: var(--gap); }
+/* While the plate morphs between boards, the rows are clipped to it. */
+.plate[data-morphing] { overflow: hidden; }
+
+.key {
+  position: relative;
+  width: calc(var(--u) * var(--w) + var(--gap) * (var(--w) - 1));
+  height: calc(var(--u) + var(--travel));
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+
+/* A faint bloom on the board under a pressed cap, fading after release. */
+.glow { position: absolute; inset: calc(var(--u) * -.22); border-radius: calc(var(--r) * 2); background: radial-gradient(closest-side, var(--glow), transparent); opacity: 0; transition: opacity 700ms var(--ease-standard); pointer-events: none; }
+
+/* The switch housing: the dark gap a cap travels into. */
+.housing { position: absolute; inset: var(--travel) 0 0; border-radius: var(--r); background: var(--housing); box-shadow: 0 1px 2px var(--shade), 0 calc(var(--travel) * .8) calc(var(--travel) * 2) var(--shade); }
+
+/* The cap body. Its lower band reads as the skirt; the face sits inset on top. */
+.cap {
+  position: absolute;
+  inset: 0 0 var(--travel);
+  border-radius: var(--r);
+  background: linear-gradient(to bottom, var(--cap-top), var(--cap-bottom));
+  box-shadow: inset 0 0 0 1px var(--cap-edge), inset 0 calc(var(--u) * -.07) 0 var(--shade);
+  transition: transform 200ms cubic-bezier(.25, 1.55, .5, 1);
+  will-change: transform;
+}
+.cap::after { position: absolute; inset: 0; border-radius: inherit; background: var(--tint); content: ""; opacity: 0; transition: opacity 600ms var(--ease-standard); }
+
+/* A shallow concave top: darker where the dish dips away from the light, brighter toward the front lip. */
+.face {
+  position: absolute;
+  z-index: 1;
+  inset: calc(var(--u) * .05) calc(var(--u) * .09) calc(var(--u) * .15);
+  display: grid;
+  place-items: center;
+  border-radius: calc(var(--r) * .78);
+  background: linear-gradient(to bottom, var(--face-top), var(--face-bottom));
+  box-shadow: inset 0 1px 1.5px var(--shade), inset 0 -1px 0 oklch(100% 0 0 / .5);
+}
+:global(:root[data-theme="dark"]) .face { box-shadow: inset 0 1px 1.5px oklch(0% 0 0 / .35), inset 0 -1px 0 oklch(100% 0 0 / .05); }
+
+.legend { display: grid; place-items: center; color: var(--legend); font-family: var(--font-body); font-size: clamp(9px, calc(var(--u) * .3), 16px); font-weight: 400; line-height: 1; transition: color 400ms var(--ease-standard); }
+.legend svg { width: clamp(10px, calc(var(--u) * .3), 16px); height: auto; }
+/* Modifiers set their legend small in the lower left corner, like a real board. */
+.key[data-corner] .face { place-items: end start; padding: calc(var(--u) * .1) calc(var(--u) * .13); }
+.key[data-corner] .legend { color: var(--legend-soft); font-size: clamp(7px, calc(var(--u) * .21), 12px); }
+
+/* Down: the cap drops almost its full travel, fast. The release above springs it back with a small lift. */
+.key[data-pressed] .cap { transform: translate3d(0, calc(var(--travel) * .92), 0); transition: transform 35ms cubic-bezier(.2, .8, .2, 1); }
+.key[data-pressed] .cap::after, .key[data-latched] .cap::after { opacity: 1; transition-duration: 40ms; }
+.key[data-pressed] .glow { opacity: 1; transition: opacity 40ms linear; }
+.key[data-pressed] .legend, .key[data-latched] .legend { color: var(--foreground); transition-duration: 40ms; }
+.key[data-latched] .cap { transform: translate3d(0, calc(var(--travel) * .5), 0); }
+
+@media (hover: hover) and (pointer: fine) {
+  .key:hover .legend { color: var(--foreground); }
+}
+
+/* The one colored cap: Return on the full board, the space bar on the letters board. */
+.key[data-accent] {
+  --cap-top: color-mix(in oklab, var(--accent) 86%, oklch(100% 0 0));
+  --cap-bottom: var(--accent);
+  --face-top: color-mix(in oklab, var(--accent) 92%, oklch(0% 0 0));
+  --face-bottom: color-mix(in oklab, var(--accent) 88%, oklch(100% 0 0));
+  --tint: oklch(100% 0 0 / .08);
+}
+.root .key[data-accent] .legend { color: var(--accent-foreground); }
+
+@media (prefers-reduced-motion: reduce) {
+  .cap, .key[data-pressed] .cap, .key[data-latched] .cap { transform: none; transition: none; }
+  .char { animation: none; }
+  .caret { animation: none; }
+  .glow { transition-duration: 200ms; }
+}

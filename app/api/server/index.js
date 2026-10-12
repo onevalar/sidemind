@@ -369,6 +369,31 @@ const startServer = async () => {
     console.warn('Response compression has been disabled via DISABLE_COMPRESSION.');
   }
 
+  /* ChatGit canvas UI (app/web, React 19 + Arc). It is the default entry; the
+     LibreChat client stays reachable at its own routes during the migration. */
+  const canvasDist = path.join(appConfig.paths.root, 'web', 'dist');
+  const canvasIndexPath = path.join(canvasDist, 'index.html');
+  const canvasIndexHTML = fs.existsSync(canvasIndexPath) ? fs.readFileSync(canvasIndexPath, 'utf8') : null;
+  const sendCanvasIndex = (req, res) => {
+    if (!canvasIndexHTML) {
+      res.status(503).type('text').send('ChatGit canvas UI is not built. Run `npm run build` at the repository root.');
+      return;
+    }
+    res.set(shellCache);
+    let html = canvasIndexHTML;
+    if (cspPolicy) {
+      const csp = issueCsp(cspPolicy);
+      res.set(csp.headerName, csp.headerValue);
+      html = applyCspNonce(html, csp.nonce);
+    }
+    res.type('html');
+    res.send(html);
+  };
+  app.get('/', (_req, res) => res.redirect(302, '/canvas/'));
+  app.get(/^\/canvas$/, (_req, res) => res.redirect(301, '/canvas/'));
+  app.use('/canvas', staticCache(canvasDist));
+  app.get(['/canvas/', '/canvas/*splat'], sendCanvasIndex);
+
   app.get('/index.html', sendIndexHtml);
   app.use(staticCache(appConfig.paths.dist));
   app.use(staticCache(appConfig.paths.fonts));
@@ -405,6 +430,7 @@ const startServer = async () => {
   app.use('/oauth', preAuthTenantMiddleware, routes.oauth);
   /* API Endpoints */
   app.use('/api', routes.chatgit);
+  app.use('/api/chatgit', routes.chatgitCanvas);
   app.use('/api/auth', preAuthTenantMiddleware, routes.auth);
   app.use('/api/insights', routes.insights);
   app.use('/api/admin', routes.adminAuth);

@@ -1,0 +1,119 @@
+.root { container-type: inline-size; width: min(100%, 1000px); min-width: 0; margin-inline: auto; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--foreground); font-family: var(--font-body); font-size: var(--text-sm); letter-spacing: var(--tracking-body); line-height: var(--leading-body); }
+.header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; border-bottom: 1px solid var(--border); padding: 12px 16px; }
+.header h2 { margin: 0; font-size: var(--text-sm); font-weight: 500; letter-spacing: var(--tracking-body); }
+.controls { display: flex; align-items: center; gap: 8px; }
+.tabs { display: inline-flex; min-width: 0; flex: none; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-muted); }
+/* The track owns the stacking context, so the gliding indicator passes under every label. */
+.tabTrack { position: relative; isolation: isolate; display: flex; gap: 2px; padding: 3px; }
+.indicator { position: absolute; z-index: -1; top: 3px; bottom: 3px; left: 0; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); box-shadow: var(--shadow-resting); will-change: transform, width; }
+.tab { position: relative; height: 26px; flex: none; border: 0; border-radius: 7px; padding: 0 12px; background: transparent; color: var(--text-muted); font: inherit; font-size: var(--text-xs); font-weight: 500; white-space: nowrap; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color var(--duration-fast) var(--ease-standard); }
+@media (hover: hover) and (pointer: fine) { .tab:hover { color: var(--foreground); } }
+.tab[aria-pressed="true"] { color: var(--foreground); }
+/* Before the indicator is measured, the pressed tab carries the same fill so the first paint already shows the selection. */
+.tabTrack:not([data-ready]) .tab[aria-pressed="true"] { background: var(--surface); box-shadow: inset 0 0 0 1px var(--border), var(--shadow-resting); }
+.compare { display: inline-flex; height: 34px; align-items: center; gap: 6px; border: 1px solid var(--border); border-radius: 9px; padding: 0 10px; background: var(--surface); color: var(--text-secondary); font: inherit; font-size: var(--text-xs); font-weight: 500; cursor: pointer; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard); }
+.compare:active { transform: scale(.97); }
+.compare[aria-pressed="true"] { border-color: color-mix(in oklab, var(--accent) 40%, var(--border)); background: var(--accent-subtle); color: var(--accent-strong); }
+
+.body { --pad: 16px; position: relative; display: grid; align-content: start; min-height: 580px; padding: var(--pad); }
+/* The grid keeps its own height, so the body can grow around a taller detail without stretching the cards underneath. */
+.grid { display: grid; min-height: calc(580px - var(--pad) * 2); grid-template-columns: repeat(3, minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); gap: 12px; margin: 0; padding: 0; list-style: none; }
+.card { display: flex; width: 100%; height: 100%; flex-direction: column; gap: 6px; border: 1px solid var(--border); border-radius: 14px; padding: 16px; background: var(--surface); color: inherit; font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: border-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard); }
+.card:active { transform: scale(.985); }
+.card[data-hidden] { visibility: hidden; }
+@media (hover: hover) and (pointer: fine) { .card:hover { border-color: var(--border-strong); box-shadow: var(--shadow-resting); } }
+.cardTop { display: flex; min-height: 20px; align-items: center; justify-content: space-between; gap: 8px; }
+.label { overflow: hidden; margin: 0; color: var(--text-secondary); font-size: var(--text-sm); font-weight: 400; line-height: 20px; text-overflow: ellipsis; white-space: nowrap; }
+.valueRow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.value { font-family: var(--font-display); font-size: var(--text-2xl); font-weight: 500; letter-spacing: var(--tracking-display); line-height: var(--leading-display); font-variant-numeric: tabular-nums; }
+.value > span { font: inherit; letter-spacing: inherit; }
+.delta { display: inline-flex; align-items: center; gap: 2px; color: var(--danger); font-size: var(--text-xs); font-weight: 500; font-variant-numeric: tabular-nums; white-space: nowrap; transition: color var(--duration-fast) var(--ease-standard); }
+/* Counters nested in text take the text's size and face instead of the display scale. */
+.delta > span:not(.deltaIcon), .table td.num span, .percent > span { font: inherit; letter-spacing: inherit; }
+.delta > span, .rowDelta span, .percent > span { color: inherit; }
+.deltaIcon { width: 13px; height: 13px; }
+.deltaIcon svg { display: block; }
+.delta[data-good] { color: var(--success); }
+.delta[data-flat] { color: var(--text-muted); }
+.spark { display: block; width: 100%; min-height: 44px; flex: 1; margin-top: auto; padding-top: 12px; overflow: visible; }
+.sparkLine { fill: none; stroke: var(--accent); stroke-width: 1.5; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.sparkArea { fill: color-mix(in oklab, var(--accent) 9%, transparent); }
+
+/* Detail. The veil only quiets the grid; the panel is the card, grown. */
+.veil { position: absolute; z-index: 3; inset: 0; border-radius: 0 0 16px 16px; background: color-mix(in oklab, var(--surface) 70%, transparent); }
+.panel { box-sizing: border-box; position: absolute; z-index: 4; top: 0; left: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-raised); box-shadow: var(--shadow-floating); will-change: transform; transition: background-color var(--duration-considered) var(--ease-standard), box-shadow var(--duration-considered) var(--ease-standard); }
+/* Folding back, the panel settles into the card's own fill and flat edge, so the hand-over at the end is invisible. */
+.panel[data-closing] { background: var(--surface); box-shadow: 0 0 0 transparent; }
+.panelContent { box-sizing: border-box; padding: 15px 16px 16px; }
+.panelHead { display: grid; gap: 6px; }
+.close { display: grid; width: 30px; height: 30px; flex: none; place-items: center; margin: -6px -6px -6px 0; border: 0; border-radius: 9px; background: transparent; color: var(--text-muted); cursor: pointer; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
+@media (hover: hover) and (pointer: fine) { .close:hover { background: var(--surface-muted); color: var(--foreground); } }
+.versus { color: var(--text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+
+/* Old and new text share one cell while they crossfade. */
+.swap { display: inline-grid; }
+.swap > * { grid-area: 1 / 1; white-space: nowrap; }
+.panelBody { display: grid; gap: 12px; margin-top: 10px; }
+.description { margin: 0; color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-body); }
+.chart { position: relative; margin-top: 4px; cursor: crosshair; touch-action: pan-y; }
+.chart svg { display: block; overflow: visible; }
+.gridLine { stroke: var(--border-subtle); stroke-width: 1; }
+.axisText { fill: var(--text-muted); font-family: var(--font-body); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.chartArea { fill: color-mix(in oklab, var(--accent) 10%, transparent); }
+.chartLine { fill: none; stroke: var(--accent); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.chartBefore { fill: none; stroke: var(--text-muted); stroke-width: 1.5; stroke-dasharray: 3 4; stroke-linecap: round; }
+.cursor line { stroke: var(--border-strong); stroke-width: 1; }
+.cursor circle { fill: var(--surface-raised); stroke: var(--accent); stroke-width: 1.75; }
+.cursor .cursorBefore { stroke: var(--text-muted); }
+.tip { position: absolute; top: 0; z-index: 2; display: grid; gap: 1px; min-width: 128px; transform: translateX(-50%); border: 1px solid var(--border); border-radius: 10px; padding: 7px 10px; background: var(--surface-raised); box-shadow: var(--shadow-raised); pointer-events: none; white-space: nowrap; }
+.tip span, .tip small { color: var(--text-muted); font-size: var(--text-xs); }
+.tip strong { font-size: var(--text-sm); font-weight: 500; font-variant-numeric: tabular-nums; }
+.legend { display: flex; gap: 16px; color: var(--text-muted); font-size: var(--text-xs); }
+.legend > span { display: inline-flex; align-items: center; gap: 6px; }
+.legend > span::before { content: ""; width: 14px; height: 0; border-top: 1.75px solid var(--accent); }
+.legend .legendBefore::before { border-top: 1.5px dashed var(--text-muted); }
+
+.breakdown { margin-top: 8px; border-top: 1px solid var(--border-subtle); padding-top: 14px; }
+.breakdownHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.breakdownHead h4 { margin: 0; font-size: var(--text-sm); font-weight: 500; }
+/* Fixed columns: switching dimension changes names, never the column edges. */
+.table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--text-sm); }
+.nameHead { width: 30%; }
+.valueHead { width: 96px; }
+.changeHead { width: 88px; }
+.table th, .table td { padding: 9px 12px 9px 0; text-align: left; }
+.table thead th { padding-top: 4px; color: var(--text-muted); font-size: var(--text-xs); font-weight: 400; }
+.table tbody th { overflow: hidden; font-weight: 500; white-space: nowrap; }
+/* Long names truncate cleanly instead of being cut mid-letter by the fixed columns. */
+.table tbody th .swap { display: grid; }
+.table tbody th .swap > * { overflow: hidden; text-overflow: ellipsis; }
+.table tbody tr > * { border-top: 1px solid var(--border-subtle); }
+.table .num { padding-right: 0; text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.table .num + .num { padding-left: 12px; }
+.share { white-space: nowrap; }
+.percent { display: inline-block; width: 44px; color: var(--text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; text-align: right; vertical-align: middle; }
+.bar { display: inline-block; width: calc(100% - 44px); height: 6px; overflow: hidden; vertical-align: middle; border-radius: var(--radius-pill); background: var(--surface-muted); }
+.bar > span { display: block; height: 100%; border-radius: inherit; transform-origin: left center; background: var(--accent); }
+.rowDelta { color: var(--danger); transition: color var(--duration-fast) var(--ease-standard); }
+.rowDelta[data-good] { color: var(--success); }
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@container (max-width: 760px) {
+  .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@container (max-width: 520px) {
+  .header { padding-inline: 12px; }
+  .body { --pad: 12px; }
+  .nameHead { width: auto; }
+  .valueHead { width: 76px; }
+  .changeHead { width: 68px; }
+  .grid { grid-template-columns: minmax(0, 1fr); grid-auto-rows: auto; gap: 10px; }
+  .spark { height: 44px; flex: none; }
+  .value { font-size: var(--text-xl); }
+  .shareHead, .share { display: none; }
+  .compare span { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card, .compare, .close, .tab, .delta, .rowDelta { transition: none; }
+}

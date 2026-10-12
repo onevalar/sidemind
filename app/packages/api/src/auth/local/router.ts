@@ -94,7 +94,7 @@ function bootstrapPage(nonce: string): string {
     if (!response.ok) {
       throw new Error('refused');
     }
-    window.location.replace('/c/new');
+    window.location.replace('/canvas/');
   }).catch(function () {
     show(retry);
   });
@@ -167,7 +167,7 @@ export function createLocalAccessRouter<U extends LocalOwnerRecord, B = unknown>
       }
       await deps.setAuthTokens(resolved.value.userId, res, null, req);
       noStore(res);
-      return res.redirect('/c/new');
+      return res.redirect('/canvas/');
     } catch (error) {
       logger.error('[localAccess] Portal entry failed', {
         name: error instanceof Error ? error.name : typeof error,

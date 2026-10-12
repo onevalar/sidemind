@@ -1,0 +1,121 @@
+.root { container-type: inline-size; width: min(100%, 680px); min-width: 0; margin-inline: auto; color: var(--foreground); font-family: var(--font-body); font-size: var(--text-sm); letter-spacing: var(--tracking-body); line-height: var(--leading-body); }
+/* Settings density: shared controls inside drop from 44px to 36px. */
+.card { --control-height-md: var(--control-height-sm); border: 1px solid var(--border); border-radius: 16px; padding: var(--space-6); background: var(--surface); }
+.root p { margin: 0; }
+
+.top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-4); }
+.plan { display: grid; min-width: 0; gap: 2px; }
+.planName { font-weight: 500; }
+.planMeta { color: var(--text-muted); font-size: var(--text-xs); }
+
+/* Slim progress: three hairline segments that fill on a spring, labelled underneath. */
+.progress { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); margin: var(--space-5) 0 0; padding: 0; list-style: none; }
+.step { display: grid; min-width: 0; gap: var(--space-2); }
+.bar { position: relative; height: 2px; overflow: hidden; border-radius: var(--radius-pill); background: var(--border); }
+.barFill { position: absolute; inset: 0; border-radius: inherit; background: var(--accent); transform-origin: left center; }
+.stepLabel { overflow: hidden; color: var(--text-muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; transition: color var(--duration-standard) var(--ease-standard); }
+.step[data-status="complete"] .stepLabel { color: var(--text-secondary); }
+.step[data-status="current"] .stepLabel { color: var(--foreground); }
+
+/* The region clips while it springs between step heights; the padding with a matching negative margin leaves presses room at the edges. */
+.region { box-sizing: content-box; overflow: hidden; margin: var(--space-6) calc(var(--space-2) * -1) calc(var(--space-2) * -1); padding: var(--space-2); }
+.regionInner { position: relative; }
+.view { display: grid; min-width: 0; }
+.morph { overflow: hidden; }
+.morphInner { position: relative; }
+
+.head { display: grid; gap: var(--space-1); }
+.title { margin: 0; font-family: var(--font-body); font-size: var(--text-xl); font-weight: 500; letter-spacing: var(--tracking-body); line-height: 1.25; text-wrap: balance; }
+.lead { max-width: 56ch; color: var(--text-secondary); font-size: var(--text-sm); text-wrap: pretty; }
+.swap { position: relative; display: block; min-width: 0; }
+.swapText { display: block; }
+
+/* Reasons: the selection is one shared highlight that glides between cards. */
+.reasons { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); margin-top: var(--space-5); }
+.reason { position: relative; isolation: isolate; display: grid; min-width: 0; align-content: start; gap: 2px; border: 1px solid var(--border); border-radius: 12px; padding: var(--space-3) var(--space-4); background: var(--surface); color: var(--foreground); font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: border-color var(--duration-fast) var(--ease-standard); }
+.highlight { position: absolute; z-index: -1; inset: -1px; border: 1px solid var(--accent); border-radius: 13px; background: color-mix(in oklab, var(--accent) 5%, transparent); pointer-events: none; }
+.reasonHead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.reasonLabel { font-weight: 500; }
+.reasonDetail { color: var(--text-muted); font-size: var(--text-xs); }
+.radio { position: relative; width: 16px; height: 16px; flex: none; border: 1.5px solid var(--border-strong); border-radius: 50%; transition: border-color var(--duration-fast) var(--ease-standard); }
+.radio::after { position: absolute; inset: 2.5px; border-radius: 50%; background: var(--control-on); content: ""; transform: scale(0); transition: transform var(--duration-spring) var(--ease-spring); }
+.reason[aria-checked="true"] .radio { border-color: var(--control-on); }
+.reason[aria-checked="true"] .radio::after { transform: scale(1); }
+.noteSlot { overflow: hidden; }
+.note { padding-top: var(--space-5); }
+
+.actions { position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-3); margin-top: var(--space-5); border-top: 1px solid var(--border-subtle); padding-top: var(--space-4); }
+.actionsEnd { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-2); margin-left: auto; }
+.inert[aria-disabled="true"] { cursor: not-allowed; opacity: .52; }
+.hint { padding-top: var(--space-2); color: var(--text-muted); font-size: var(--text-xs); text-align: right; }
+
+/* Offer panel: a quiet inset that reshapes into the receipt once the offer is accepted. */
+.panel { margin-top: var(--space-5); border: 1px solid var(--border); border-radius: 12px; background: color-mix(in oklab, var(--surface-muted) 55%, var(--surface)); }
+.offerBody { display: grid; padding: var(--space-5); }
+.figureRow { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-3) var(--space-4); }
+.figure { display: inline-flex; min-width: 0; align-items: baseline; gap: var(--space-2); font-family: var(--font-display); font-size: var(--text-3xl); font-weight: 400; letter-spacing: var(--tracking-display); line-height: 1; font-variant-numeric: tabular-nums; }
+.figure[role="spinbutton"] { cursor: default; }
+.figureNum { display: inline-flex; }
+.figureNum > span { color: inherit; font: inherit; letter-spacing: inherit; line-height: inherit; }
+.figureUnit { color: var(--text-secondary); font-family: var(--font-body); font-size: var(--text-sm); letter-spacing: var(--tracking-body); line-height: var(--leading-body); }
+.was { color: var(--text-muted); font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.was s { text-decoration-thickness: 1px; }
+.monthControls { display: flex; gap: var(--space-2); }
+.monthControls .iconButton { width: var(--control-height-sm); padding: 0; }
+.monthControls .iconButton[aria-disabled="true"] { cursor: not-allowed; opacity: .45; }
+.person { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: start; gap: var(--space-3); margin-top: var(--space-4); border-top: 1px solid var(--border); padding-top: var(--space-4); }
+.personName { font-weight: 500; }
+.personName span { margin-left: var(--space-1); color: var(--text-muted); font-weight: 400; }
+.quote { padding-top: 2px; color: var(--text-secondary); overflow-wrap: anywhere; }
+.facts { display: grid; gap: var(--space-2); margin: var(--space-4) 0 0; border-top: 1px solid var(--border); padding: var(--space-4) 0 0; list-style: none; }
+.facts li { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: var(--space-3); }
+.facts svg { margin-top: 2px; color: var(--success); }
+
+.receipt { display: grid; justify-items: start; gap: var(--space-3); padding: var(--space-5); }
+.mark { display: grid; place-items: center; color: var(--success); }
+.rows { display: grid; width: 100%; margin: 0; }
+.row { display: flex; justify-content: space-between; gap: var(--space-4); border-top: 1px solid var(--border-subtle); padding: 10px 0; }
+.row:last-child { padding-bottom: 0; }
+.row dt { min-width: 0; color: var(--text-secondary); }
+.row dd { margin: 0; font-weight: 500; font-variant-numeric: tabular-nums; text-align: right; }
+.footnote { color: var(--text-muted); font-size: var(--text-xs); }
+
+/* What cancelling means: plain icons beside each consequence; only deletion carries the danger colour. */
+.impacts { display: grid; margin: var(--space-5) 0 0; padding: 0; list-style: none; }
+.impact { display: grid; grid-template-columns: 16px minmax(0, 1fr); gap: var(--space-3); border-top: 1px solid var(--border-subtle); padding: var(--space-3) 0; }
+.impact:first-child { border-top: 0; padding-top: 0; }
+.impact:last-child { padding-bottom: 0; }
+.impact svg { margin-top: 2px; color: var(--text-secondary); }
+.impact[data-danger] svg { color: var(--danger); }
+.impactTitle { font-weight: 500; }
+.impactDetail { padding-top: 2px; color: var(--text-muted); font-size: var(--text-xs); }
+
+.subhead { margin: var(--space-6) 0 0; font-size: var(--text-sm); font-weight: 500; }
+.timeline { display: grid; margin: var(--space-3) 0 0; padding: 0; list-style: none; }
+.event { position: relative; display: grid; grid-template-columns: 56px 16px minmax(0, 1fr); column-gap: var(--space-3); padding-bottom: var(--space-5); }
+.event:last-child { padding-bottom: 0; }
+.event:not(:last-child)::after { position: absolute; top: 22px; bottom: 2px; left: calc(56px + var(--space-3) + 7.5px); width: 1px; background: var(--border); content: ""; }
+.eventDate { padding-top: 1px; color: var(--text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.eventDot { display: grid; width: 10px; height: 10px; justify-self: center; place-items: center; margin-top: 5px; border: 1.5px solid var(--border-strong); border-radius: 50%; background: var(--surface); }
+.event[data-done] .eventDot { width: 16px; height: 16px; margin-top: 2px; border: 0; background: var(--success); color: var(--surface); }
+.eventTitle { font-weight: 500; }
+.eventDetail { padding-top: 2px; color: var(--text-muted); font-size: var(--text-xs); }
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (hover: hover) and (pointer: fine) {
+  .reason:hover { border-color: var(--border-strong); }
+}
+
+@container (max-width: 520px) {
+  .card { padding: var(--space-5) var(--space-4); }
+  .reasons { grid-template-columns: minmax(0, 1fr); }
+  .figure { font-size: var(--text-2xl); }
+  .offerBody, .receipt { padding: var(--space-4); }
+  .actionsEnd { width: 100%; }
+  .actionsEnd > * { flex: 1 1 auto; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .reason, .radio, .radio::after, .stepLabel { transition: none; }
+}

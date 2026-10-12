@@ -1,0 +1,178 @@
+/* The root reserves the button's size with an invisible copy; the shape floats from its top corner and grows down over the page. */
+.root { --ss-origin-x: 100%; position: relative; z-index: 20; display: inline-grid; vertical-align: top; color: var(--foreground); font-family: var(--font-body); font-size: var(--text-sm); letter-spacing: var(--tracking-body); line-height: var(--leading-body); }
+.root[data-align="start"] { --ss-origin-x: 0%; }
+
+.pill { box-sizing: border-box; display: inline-flex; height: var(--control-height-sm); align-items: center; gap: var(--space-2); padding: 0 var(--space-4) 0 14px; font-size: var(--text-sm); font-weight: 500; white-space: nowrap; }
+.ghost { visibility: hidden; pointer-events: none; }
+
+/* One shape for every state. At rest it is the solid button; open it is a raised surface. The border is an overlay so it never changes a measurement. */
+.shape { position: absolute; top: 0; right: 0; overflow: clip; background: var(--foreground); color: var(--background); box-shadow: var(--shadow-resting); transform-origin: var(--ss-origin-x) 0; transition: background-color var(--duration-standard) var(--ease-standard), color var(--duration-standard) var(--ease-standard), box-shadow var(--duration-considered) var(--ease-standard); }
+.shape::after { content: ""; position: absolute; inset: 0; border: 1px solid transparent; border-radius: inherit; pointer-events: none; transition: border-color var(--duration-standard) var(--ease-standard); }
+.root[data-align="start"] .shape { right: auto; left: 0; }
+.root:not([data-view="button"]) .shape { background: var(--surface-raised); color: var(--foreground); box-shadow: var(--shadow-floating); }
+.root:not([data-view="button"]) .shape::after { border-color: var(--border); }
+@media (hover: hover) and (pointer: fine) { .root[data-view="button"] .shape:hover { background: color-mix(in oklab, var(--foreground) 86%, var(--background)); } }
+
+.face { position: absolute; top: 0; right: 0; box-sizing: border-box; transform-origin: var(--ss-origin-x) 0; }
+.root[data-align="start"] .face { right: auto; left: 0; }
+/* Centered: the shape and every face grow evenly around the button's middle, so it opens in place. */
+.root[data-align="center"] .shape, .root[data-align="center"] .face { top: 50%; right: auto; left: 50%; translate: -50% -50%; transform-origin: 50% 50%; }
+.face[inert] { pointer-events: none; }
+
+.trigger { margin: 0; border: 0; background: transparent; color: inherit; cursor: pointer; font-family: inherit; letter-spacing: inherit; -webkit-tap-highlight-color: transparent; touch-action: manipulation; transition: transform var(--duration-instant) var(--ease-standard); }
+.trigger:active { transform: scale(.97); }
+
+/* Set --share-sheet-width on an ancestor to fit a narrower container. */
+.panel { container-type: inline-size; width: var(--share-sheet-width, min(24rem, calc(100vw - 2rem))); padding: 8px; }
+.panelBody { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--space-3); }
+/* Avatars in flight ride above every row, so the scrolling chips row never clips them. */
+.flyers { position: absolute; z-index: 3; inset: 0; pointer-events: none; }
+.flyer { position: absolute; display: block; border-radius: 50%; object-fit: cover; box-shadow: var(--shadow-raised); }
+.header { display: flex; min-height: 36px; align-items: center; gap: var(--space-2); padding-left: 8px; }
+.title { min-width: 0; flex: 1; margin: 0; overflow: hidden; font-size: var(--text-base); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.iconButton { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
+.muted { display: grid; flex: none; place-items: center; color: var(--text-muted); }
+
+/* Link and access share one quiet group; a hairline separates them. */
+.linkGroup { display: grid; grid-template-columns: minmax(0, 1fr); overflow: clip; border-radius: 20px; background: color-mix(in oklab, var(--surface-muted) 70%, transparent); box-shadow: inset 0 0 0 1px var(--border-subtle); }
+.linkRow { display: flex; height: 48px; align-items: center; gap: 10px; padding: 0 6px 0 14px; }
+.link { min-width: 0; flex: 1; overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.copy { position: relative; display: grid; height: 34px; flex: none; padding: 0 12px; border: 0; border-radius: var(--radius-pill); background: var(--surface-raised); box-shadow: var(--shadow-resting), inset 0 0 0 1px var(--border); color: var(--foreground); cursor: pointer; font: inherit; font-weight: 500; -webkit-tap-highlight-color: transparent; transition: color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.copy:active { transform: scale(.96); }
+.copy[data-state="done"] { color: var(--success); }
+.copy[data-state="error"] { color: var(--danger); }
+/* Every label stacks in one cell, so the button is always as wide as its longest state. */
+.sizer, .copyFace { grid-area: 1 / 1; }
+.sizer { display: grid; visibility: hidden; }
+.sizer > span { grid-area: 1 / 1; padding-left: 20px; }
+.copyFace { position: relative; display: grid; align-items: center; justify-items: center; }
+.copyLabel { display: inline-flex; align-items: center; gap: 6px; }
+
+.accessTrigger { display: flex; min-height: 52px; align-items: center; gap: 10px; padding: 6px 14px; border: 0; border-top: 1px solid var(--border-subtle); background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard); }
+.accessIcon { display: grid; width: 16px; height: 16px; flex: none; place-items: center; color: var(--text-secondary); }
+.accessIcon > svg { width: 16px; height: 16px; }
+.accessText { position: relative; display: grid; min-width: 0; flex: 1; }
+.accessLines { display: grid; min-width: 0; gap: 1px; }
+.accessLabel { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.accessDescription { color: var(--text-secondary); font-size: var(--text-xs); }
+.accessList { overflow: clip; }
+.accessOptions { display: grid; gap: 2px; padding: 0 6px 6px; }
+.accessOption { display: flex; align-items: center; gap: 10px; padding: 8px; border: 0; border-radius: 14px; background: transparent; color: inherit; cursor: pointer; font: inherit; text-align: left; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard); }
+.accessOption .accessLines { flex: 1; }
+.accessCheck { flex: none; color: var(--foreground); opacity: 0; transition: opacity var(--duration-fast) var(--ease-standard); }
+.accessOption[aria-selected="true"] { background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.accessOption[aria-selected="true"] .accessCheck { opacity: 1; }
+
+.channels { display: grid; gap: 6px; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.channel { display: flex; height: 40px; min-width: 0; align-items: center; justify-content: center; gap: 8px; padding: 0 8px; border: 0; border-radius: var(--radius-pill); background: transparent; box-shadow: inset 0 0 0 1px var(--border); color: var(--foreground); cursor: pointer; font: inherit; font-weight: 500; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.channel:active { transform: scale(.96); }
+.channel[data-state="done"] { color: var(--success); }
+.channel[data-state="error"] { color: var(--danger); }
+.channelIcon { position: relative; display: grid; width: 16px; height: 16px; flex: none; place-items: center; }
+.channelGlyph { display: grid; place-items: center; }
+.channelGlyph svg { width: 16px; height: 16px; }
+.channelLabel { position: relative; display: grid; min-width: 0; overflow: hidden; white-space: nowrap; }
+
+/* In a narrow panel the channels tighten so their labels keep room. */
+@container (max-width: 280px) {
+  .channel { gap: 6px; padding: 0 4px; }
+}
+
+.divider { height: 1px; margin: 2px 6px; background: var(--border-subtle); }
+
+.toBlock { display: grid; gap: 6px; }
+.sectionLabel { padding-left: 8px; color: var(--text-muted); font-size: var(--text-xs); }
+/* One line that scrolls sideways, so a new chip never changes the panel's height. */
+.toRow { position: relative; height: 36px; }
+.toEmpty { position: absolute; inset: 0; display: flex; align-items: center; padding-left: 8px; color: var(--text-muted); pointer-events: none; transition: color var(--duration-fast) var(--ease-standard); }
+.toEmpty[data-hint] { color: var(--danger); }
+.chips { display: flex; height: 100%; align-items: center; gap: 6px; margin: 0; padding: 0 4px; overflow-x: auto; overflow-y: hidden; list-style: none; scrollbar-width: none; mask-image: linear-gradient(90deg, #000 calc(100% - 24px), transparent); }
+.chips::-webkit-scrollbar { display: none; }
+.chip { position: relative; display: inline-flex; height: 32px; flex: none; align-items: center; gap: 6px; padding: 0 4px 0 4px; }
+.chipFill { position: absolute; inset: 0; border-radius: var(--radius-pill); background: color-mix(in oklab, var(--foreground) 7%, transparent); }
+.chipAvatar { position: relative; z-index: 1; display: block; width: 24px; height: 24px; flex: none; }
+.chipAvatar[data-hidden] { visibility: hidden; }
+.chipAvatar img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.chipName { position: relative; font-weight: 500; white-space: nowrap; }
+.chipRemove { position: relative; display: grid; width: 24px; height: 24px; place-items: center; padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
+
+.recents { display: grid; gap: 4px; grid-template-columns: repeat(auto-fit, minmax(2.75rem, 1fr)); }
+.person { display: grid; min-width: 0; justify-items: center; gap: 6px; padding: 8px 2px 6px; border: 0; border-radius: 18px; background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: var(--text-xs); -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
+.person[data-on] { color: var(--foreground); }
+.personAvatar { position: relative; display: block; width: 40px; height: 40px; border-radius: 50%; transition: box-shadow var(--duration-fast) var(--ease-standard), transform var(--duration-spring) var(--ease-spring); }
+.person:active .personAvatar { transform: scale(.92); }
+.personAvatar img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+/* Selection is the one accent moment: a ring and a small check. */
+.person[data-on] .personAvatar { box-shadow: 0 0 0 2px var(--surface-raised), 0 0 0 4px var(--accent); }
+.badge { position: absolute; right: -3px; bottom: -3px; display: grid; width: 16px; height: 16px; place-items: center; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface-raised); color: var(--accent-foreground); opacity: 0; transform: scale(.4); transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-spring) var(--ease-spring); }
+.person[data-on] .badge { opacity: 1; transform: none; }
+.personName { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.footer { display: grid; gap: 8px; }
+.error { display: flex; align-items: center; gap: 6px; margin: 0; overflow: clip; padding-left: 8px; color: var(--danger); font-size: var(--text-xs); }
+.send { position: relative; display: grid; height: 44px; place-items: center; overflow: clip; border: 0; border-radius: var(--radius-pill); background: var(--foreground); color: var(--background); cursor: pointer; font: inherit; font-weight: 500; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.send:active { transform: scale(.98); }
+.send[data-empty] { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--text-muted); }
+.send[aria-disabled="true"] { cursor: progress; }
+/* The label's own spaces set the rhythm; a flex gap on top of them doubled the space around the count. */
+.sendLabel { display: inline-flex; grid-area: 1 / 1; align-items: center; white-space: pre; }
+.sendLabel > .spinner { margin-right: 6px; }
+.count { position: relative; display: inline-grid; overflow: clip; font-variant-numeric: tabular-nums; }
+.countDigit { display: block; }
+
+/* Confirmation. */
+.sent { width: min(19rem, calc(100vw - 2rem)); padding: 20px 16px 14px; }
+.sentBody { display: grid; justify-items: center; gap: 4px; text-align: center; }
+.stack { position: relative; display: flex; margin-bottom: 10px; }
+.stackAvatar { position: relative; display: grid; width: 44px; height: 44px; place-items: center; border-radius: 50%; box-shadow: 0 0 0 3px var(--surface-raised); }
+.stackAvatar + .stackAvatar { margin-left: -12px; }
+.stackAvatar img { display: block; width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
+.more { background: var(--surface-muted); color: var(--text-secondary); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+.sentCheck { position: absolute; z-index: 4; right: -6px; bottom: -4px; display: grid; width: 22px; height: 22px; place-items: center; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px var(--surface-raised); color: var(--background); }
+.sentTitle { max-width: 100%; margin: 0; font-size: var(--text-base); font-weight: 500; text-wrap: balance; }
+.sentMeta { margin: 0; color: var(--text-secondary); font-size: var(--text-xs); }
+.sentActions { display: grid; width: 100%; gap: 8px; margin-top: 14px; grid-template-columns: 1fr 1fr; }
+.ghostButton, .doneButton { height: 40px; border: 0; border-radius: var(--radius-pill); cursor: pointer; font: inherit; font-weight: 500; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.ghostButton { background: transparent; box-shadow: inset 0 0 0 1px var(--border); color: var(--foreground); }
+.doneButton { background: var(--foreground); color: var(--background); }
+.ghostButton:active, .doneButton:active { transform: scale(.97); }
+
+.spinner { animation: spin .8s linear infinite; }
+@keyframes spin { to { rotate: 360deg; } }
+
+@media (hover: hover) and (pointer: fine) {
+  .iconButton:hover, .chipRemove:hover { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--foreground); }
+  .accessTrigger:hover, .accessOption:hover { background: color-mix(in oklab, var(--foreground) 4%, transparent); }
+  .channel:hover, .ghostButton:hover { background: color-mix(in oklab, var(--foreground) 5%, transparent); }
+  .person:hover { background: color-mix(in oklab, var(--foreground) 5%, transparent); color: var(--foreground); }
+  .send:not([data-empty]):hover, .doneButton:hover { background: color-mix(in oklab, var(--foreground) 86%, var(--background)); }
+}
+.iconButton:focus-visible, .chipRemove:focus-visible { background: color-mix(in oklab, var(--foreground) 8%, transparent); color: var(--foreground); }
+.person:focus-visible, .channel:focus-visible, .accessTrigger:focus-visible, .accessOption:focus-visible { background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+
+/* Phones: a sheet that floats a little above the bottom edge, clear of the home indicator, with a grabber to pull it down. */
+.scrim { position: fixed; z-index: 60; inset: 0; background: oklch(16% 0 0 / .34); -webkit-tap-highlight-color: transparent; }
+:global(:root[data-theme="dark"]) .scrim { background: oklch(0% 0 0 / .52); }
+.sheet { position: fixed; z-index: 61; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); left: 8px; display: grid; max-width: 30rem; margin-inline: auto; overflow: clip; border-radius: 30px; background: var(--surface-raised); box-shadow: var(--shadow-floating); color: var(--foreground); font-family: var(--font-body); font-size: var(--text-sm); letter-spacing: var(--tracking-body); line-height: var(--leading-body); will-change: transform; }
+.sheet::after { content: ""; position: absolute; inset: 0; border: 1px solid var(--border); border-radius: inherit; pointer-events: none; }
+.grabber { display: grid; height: 22px; place-items: center; cursor: grab; touch-action: none; }
+.grabber::before { content: ""; width: 36px; height: 4px; border-radius: var(--radius-pill); background: var(--border-strong); }
+.sheetFaces { position: relative; overflow: clip; }
+.sheetFaces > .face { right: 0; left: 0; }
+.sheetFaces > .panel { width: auto; padding: 0 10px 10px; }
+.sheetFaces > .sent { width: auto; padding: 8px 16px 16px; }
+.sheetFaces .sentActions { max-width: 20rem; justify-self: center; }
+/* Bigger touch targets where the sheet is used. */
+.sheetFaces .iconButton { width: 36px; height: 36px; }
+.sheetFaces .send { height: 48px; }
+.sheetFaces .sentActions > button { height: 44px; }
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); clip-path: inset(50%); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .shape, .badge, .personAvatar, .copy, .channel, .send { transition-duration: 0ms; }
+  .spinner { animation-duration: 2.4s; }
+}
+@media (prefers-contrast: more) {
+  .root:not([data-view="button"]) .shape::after, .sheet::after { border-color: var(--border-strong); }
+}

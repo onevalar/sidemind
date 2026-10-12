@@ -1,0 +1,21 @@
+.root {
+  --morph-loader-success: var(--success);
+  --morph-loader-error: var(--danger);
+  position: relative;
+  display: inline-grid;
+  flex: none;
+  place-items: center;
+  vertical-align: middle;
+  color: currentColor;
+  transition: color var(--duration-standard) var(--ease-standard);
+}
+.root[data-tone][data-status="success"] { color: var(--morph-loader-success); }
+.root[data-tone][data-status="error"] { color: var(--morph-loader-error); }
+
+.svg { display: block; overflow: visible; }
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .root { transition-duration: var(--duration-instant); }
+}

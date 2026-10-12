@@ -1,0 +1,165 @@
+# ChatGit canvas browser check: the product config plus a local fixture model
+# (app/e2e/chatgit/fake-openai.js on 127.0.0.1:8890). Never the default config.
+# ChatGit application config (LibreChat librechat.yaml schema).
+# Loaded through CONFIG_PATH by `npm run dev` (scripts/chatgit_runtime.py).
+# The app title comes from APP_TITLE=ChatGit in the runtime environment; the
+# yaml schema has no appTitle field. Local overrides (e.g. a verification
+# fixture) belong in an ignored file referenced from .chatgit/local.env.
+version: 1.3.17
+cache: true
+
+interface:
+  # Use the localized greeting instead of overriding it with fixed English copy.
+  # Arc Free foundation, adapted to ChatGit's existing versioned theme contract.
+  # Do not import Arc's global CSS: its color variables have incompatible types.
+  # Attribution and component migration boundaries: ARC_UI.md.
+  theme:
+    version: 1
+    name: ChatGit Arc
+    modes:
+      light:
+        colors:
+          rgb-text-primary: '24 24 24'
+          rgb-text-secondary: '82 82 82'
+          rgb-text-muted: '105 105 105'
+          rgb-text-tertiary: '105 105 105'
+          rgb-surface-primary: '255 255 255'
+          rgb-surface-primary-alt: '250 250 250'
+          rgb-surface-secondary: '247 247 247'
+          rgb-surface-tertiary: '242 242 242'
+          rgb-surface-canvas: '250 250 250'
+          rgb-surface-dialog: '255 255 255'
+          rgb-surface-chat: '255 255 255'
+          rgb-surface-hover: '242 242 242'
+          rgb-surface-active-alt: '237 237 237'
+          rgb-surface-nav-selected: '237 237 237'
+          rgb-surface-nav-hover: '242 242 242'
+          rgb-presentation: '255 255 255'
+          rgb-border-light: '229 229 229'
+          rgb-border-medium: '211 211 211'
+          # The outline is stronger than Arc's decorative dividers: fields
+          # must remain identifiable without hover or a placeholder.
+          rgb-border-control: '143 143 143'
+          rgb-border-field-focus: '24 24 24'
+          rgb-field-fill: '255 255 255'
+          rgb-button-primary: '24 24 24'
+          rgb-button-primary-hover: '48 48 48'
+        appearance: &arc-appearance
+          controlRadius: '0.75rem'
+          surfaceRadius: '1.25rem'
+          largeSurfaceRadius: '1.5rem'
+          radiusLg: '0.75rem'
+          radiusXl: '1rem'
+          radius2xl: '1.25rem'
+          composerActionRadius: '0.75rem'
+          buttonHeight: '2.75rem'
+          buttonHeightLg: '3.125rem'
+          fieldHeight: '2.75rem'
+          fieldFillStyle: 'fill'
+          fieldFocusStyle: 'border'
+          dialogStroke: '1px'
+          dialogTitleFontWeight: '500'
+          scrimOpacity: '0.46'
+          modalScrimOpacity: '0.46'
+          shadowXs: '0 1px 2px rgb(0 0 0 / 0.035)'
+          shadowLg: '0 6px 18px rgb(0 0 0 / 0.065), 0 1px 3px rgb(0 0 0 / 0.035)'
+          shadow2xl: '0 20px 48px rgb(0 0 0 / 0.105), 0 3px 10px rgb(0 0 0 / 0.045)'
+          menuShadow: '0 6px 18px rgb(0 0 0 / 0.065), 0 1px 3px rgb(0 0 0 / 0.035)'
+          motionFast: '160ms'
+          motionNormal: '240ms'
+      dark:
+        colors:
+          rgb-text-primary: '242 242 242'
+          rgb-text-secondary: '180 180 180'
+          rgb-text-muted: '150 150 150'
+          rgb-text-tertiary: '150 150 150'
+          rgb-surface-primary: '26 26 26'
+          rgb-surface-primary-alt: '20 20 20'
+          rgb-surface-secondary: '32 32 32'
+          rgb-surface-tertiary: '40 40 40'
+          rgb-surface-canvas: '20 20 20'
+          rgb-surface-dialog: '31 31 31'
+          rgb-surface-chat: '26 26 26'
+          rgb-surface-hover: '40 40 40'
+          rgb-surface-active-alt: '46 46 46'
+          rgb-surface-nav-selected: '40 40 40'
+          rgb-surface-nav-hover: '32 32 32'
+          rgb-presentation: '26 26 26'
+          rgb-border-light: '46 46 46'
+          rgb-border-medium: '63 63 63'
+          rgb-border-control: '113 113 113'
+          rgb-border-field-focus: '242 242 242'
+          rgb-field-fill: '26 26 26'
+          rgb-button-primary: '242 242 242'
+          rgb-button-primary-hover: '219 219 219'
+        appearance:
+          <<: *arc-appearance
+          shadowLg: '0 6px 18px rgb(0 0 0 / 0.25), 0 1px 3px rgb(0 0 0 / 0.16)'
+          shadow2xl: '0 20px 48px rgb(0 0 0 / 0.4), 0 3px 10px rgb(0 0 0 / 0.2)'
+          menuShadow: '0 6px 18px rgb(0 0 0 / 0.25), 0 1px 3px rgb(0 0 0 / 0.16)'
+  # Keep conversations and model/endpoint selection.
+  modelSelect: true
+  # Model parameters and presets live in Settings > General > Advanced Settings.
+  parameters: false
+  presets: false
+  # Features outside ChatGit's scope.
+  agents: false
+  prompts: false
+  memories: false
+  bookmarks: false
+  multiConvo: false
+  webSearch: false
+  runCode: false
+  fileSearch: false
+  skills: false
+  marketplace:
+    use: false
+  remoteAgents:
+    use: false
+    create: false
+    share: false
+    public: false
+  mcpServers:
+    use: false
+    create: false
+    share: false
+    public: false
+
+endpoints:
+  # Plain chats with a custom endpoint run as ephemeral agents, so the agents
+  # endpoint stays enabled server-side but only offers "Upload as Text".
+  agents:
+    disableBuilder: true
+    capabilities:
+      - context
+  custom:
+    - name: 'ChatGit Fixture'
+      apiKey: 'fixture-not-a-real-key'
+      baseURL: 'http://127.0.0.1:8890/v1'
+      models:
+        default:
+          - 'chatgit-fixture'
+        fetch: false
+      titleConvo: false
+      modelDisplayLabel: 'ChatGit Fixture'
+    # Real OpenAI-compatible provider. Each user enters their own API key and
+    # base URL (e.g. https://api.openai.com/v1) in the UI; stored keys are
+    # encrypted with CREDS_KEY/CREDS_IV. No mock model is configured here.
+    - name: 'OpenAI-Compatible'
+      apiKey: 'user_provided'
+      baseURL: 'user_provided'
+      models:
+        default:
+          - 'gpt-4.1-mini'
+          - 'gpt-4.1'
+        # Fetched from <baseURL>/models with the user's key once provided.
+        fetch: true
+      titleConvo: true
+      titleModel: 'current_model'
+      modelDisplayLabel: 'OpenAI-compatible'
+    # Official ChatGPT plan authorization. Disabled at the credential boundary in
+    # remote preview mode; no API-key fallback and no hardcoded available models.
+    - name: 'ChatGPT'
+      authMode: 'chatgpt'
+      titleConvo: false
+      modelDisplayLabel: 'ChatGPT'

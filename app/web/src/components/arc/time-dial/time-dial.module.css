@@ -1,0 +1,106 @@
+/* The dial sizes itself from its own width: the cities sit under it on a phone and beside it when there is room. */
+.root { container-type: inline-size; width: 100%; max-width: 720px; margin-inline: auto; color: var(--foreground); font-family: var(--font-body); letter-spacing: var(--tracking-body); line-height: var(--leading-body); }
+.layout { display: grid; justify-items: center; gap: var(--space-5); }
+
+/* The stage is the slider. Everything drawn on it ignores the pointer, so a turn can start anywhere on the face. */
+.stage { position: relative; width: min(100%, 256px); aspect-ratio: 1; container-type: inline-size; border-radius: 50%; outline: none; touch-action: none; user-select: none; -webkit-user-select: none; cursor: grab; -webkit-tap-highlight-color: transparent; }
+.stage[data-dragging] { cursor: grabbing; }
+.svg { position: absolute; inset: 0; display: block; width: 100%; height: 100%; overflow: visible; pointer-events: none; }
+
+/* Noon at the top, midnight at the bottom. The one tinted shape is the working day; a city inside it is at work. */
+.plate { fill: var(--surface-raised); }
+.work { fill: color-mix(in oklab, var(--success) 9%, transparent); stroke: color-mix(in oklab, var(--success) 22%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.rim { fill: none; stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.core { fill: var(--surface-raised); stroke: var(--border-subtle); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.homeTrack { fill: none; stroke: var(--border); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.track { fill: none; stroke: var(--border-strong); stroke-width: 1; stroke-dasharray: 1 5; stroke-linecap: round; vector-effect: non-scaling-stroke; opacity: .7; }
+.major { stroke: var(--text-secondary); stroke-width: 1.4; stroke-linecap: round; }
+.hour { stroke: var(--border-strong); stroke-width: 1; stroke-linecap: round; }
+.numeral { fill: var(--text-muted); font-family: var(--font-body); font-size: 9.5px; font-weight: 500; font-variant-numeric: tabular-nums; letter-spacing: 0; }
+/* The arc swept since the finger went down. */
+.sweep { fill: none; stroke: color-mix(in oklab, var(--foreground) 12%, transparent); stroke-width: 9; stroke-linecap: round; }
+
+/* Each city turns on its own arm; the anchor sits on the arm's track and counter-turns to stay upright. */
+.orbits { position: absolute; inset: 0; pointer-events: none; }
+.arm { position: absolute; inset: 0; }
+.arm[data-home] { z-index: 1; }
+.anchor { position: absolute; top: 50%; left: 50%; width: 0; height: 0; }
+/* The hand runs from the core to the home city, so the reading is a line you can follow, not a guess. */
+.hand { position: absolute; top: calc(50% - 30cqi); left: 50%; width: 1.5px; height: 11.4cqi; border-radius: var(--radius-pill); background: var(--foreground); translate: -50% 0; }
+
+/* One shape for both roles. Full size it is the home knob; scaled down it is a city's mark, filled while that city is at work. */
+.bead { position: absolute; top: 0; left: 0; display: grid; width: 10.5cqi; height: 10.5cqi; box-sizing: border-box; place-items: center; translate: -50% -50%; border-radius: 50%; background: var(--surface-raised); box-shadow: inset 0 0 0 1.6cqi var(--text-muted); color: var(--background); transition: background-color var(--duration-standard) var(--ease-standard), box-shadow var(--duration-standard) var(--ease-standard); }
+.bead[data-working] { background: var(--success); box-shadow: inset 0 0 0 0 transparent; }
+.arm[data-home] .bead { background: var(--foreground); box-shadow: var(--shadow-raised); }
+.stage[data-dragging] .arm[data-home] .bead { box-shadow: var(--shadow-floating); }
+.glyph { display: grid; width: 100%; height: 100%; place-items: center; }
+.glyph svg { width: 5cqi; height: 5cqi; stroke-width: 2; }
+.code { position: absolute; top: 0; left: 0; translate: -50% -50%; color: var(--text-secondary); font-size: 3.4cqi; font-weight: 500; line-height: 1; white-space: nowrap; }
+
+/* The readout in the core: city, a rolling clock, and the weekday, which gives way to the distance turned while a drag is on. */
+.readout { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: .4cqi; pointer-events: none; }
+.readoutCity { color: var(--text-secondary); font-size: 4.2cqi; font-weight: 500; line-height: 1.25; }
+.readoutTime { font-family: var(--font-display); font-size: 10.5cqi; font-weight: 500; letter-spacing: var(--tracking-display); }
+.readoutNote { color: var(--text-muted); font-size: 3.8cqi; line-height: 1.25; font-variant-numeric: tabular-nums; }
+
+/* Each digit pair is a clipped wheel whose window feathers out, so a turning digit fades at the edge instead of being cut. */
+.clock { display: inline-flex; align-items: baseline; font-variant-numeric: tabular-nums; line-height: 1; white-space: nowrap; }
+.colon { display: inline-block; padding-inline: .03em; translate: 0 -.05em; }
+.wheel { --feather: .22em; position: relative; display: inline-block; overflow: hidden; vertical-align: bottom; -webkit-mask-image: linear-gradient(to bottom, transparent, #000 var(--feather), #000 calc(100% - var(--feather)), transparent); mask-image: linear-gradient(to bottom, transparent, #000 var(--feather), #000 calc(100% - var(--feather)), transparent); }
+.sizer { display: block; height: 1.3em; line-height: 1.3em; visibility: hidden; }
+.strip { position: absolute; top: 0; right: 0; left: 0; display: flex; flex-direction: column; }
+.face { display: block; height: 1.3em; line-height: 1.3em; text-align: center; }
+/* Twelve hour faces sit against the colon, so 9:30 and 10:30 share one edge. */
+.clock[data-cycle="12"] .wheel:first-child .face { text-align: right; }
+.meridiem { margin-left: .28em; color: var(--text-secondary); font-family: var(--font-body); font-size: .42em; font-weight: 500; letter-spacing: 0; }
+.rowTime .meridiem { font-size: .62em; }
+
+.swap { position: relative; display: inline-flex; justify-content: inherit; }
+.swapItem { display: inline-block; white-space: nowrap; }
+.iconSwap { position: relative; display: grid; place-items: center; }
+.iconItem { display: grid; place-items: center; }
+
+/* Cities. The home row carries one highlight that slides between rows. */
+.list { display: grid; width: 100%; max-width: 420px; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.item { display: block; }
+.row { position: relative; isolation: isolate; display: grid; width: 100%; min-height: 52px; align-items: center; grid-template-columns: 20px minmax(0, 1fr) auto auto; column-gap: var(--space-3); padding: 6px var(--space-3) 6px var(--space-4); border: 0; border-radius: var(--radius-control); background: transparent; color: var(--foreground); font: inherit; text-align: left; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard); }
+@media (hover: hover) and (pointer: fine) { .row:not([aria-pressed="true"]):hover { background: color-mix(in oklab, var(--surface-muted) 70%, transparent); } }
+.row:active { transform: scale(.985); transition: transform var(--duration-instant) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard); }
+.highlight { position: absolute; z-index: -1; inset: 0; border: 1px solid var(--border); border-radius: inherit; background: var(--surface-muted); }
+/* A plain icon: the moon by night, the sun by day, and green while the city is at work. */
+.rowIcon { display: grid; place-items: center; color: var(--text-muted); transition: color var(--duration-standard) var(--ease-standard); }
+.rowIcon[data-day] { color: var(--text-secondary); }
+.rowIcon[data-working] { color: var(--success); }
+.rowIcon svg { width: 16px; height: 16px; stroke-width: 1.75; }
+.rowText { display: grid; min-width: 0; }
+.rowCity { overflow: hidden; font-size: var(--text-sm); font-weight: 500; line-height: 1.3; text-overflow: ellipsis; white-space: nowrap; }
+.rowMeta { color: var(--text-muted); font-size: var(--text-xs); line-height: 1.35; }
+.chipSlot { position: relative; display: flex; justify-content: flex-end; }
+.chip { display: inline-flex; height: 20px; align-items: center; padding: 0 var(--space-2); border-radius: var(--radius-pill); background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--text-secondary); font-size: var(--text-xs); font-weight: 500; font-variant-numeric: tabular-nums; line-height: 1; white-space: nowrap; }
+.rowTime { min-width: 5.6em; justify-content: flex-end; font-size: var(--text-lg); font-weight: 500; }
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@container (min-width: 600px) {
+  .layout { grid-template-columns: auto minmax(0, 1fr); align-items: center; justify-items: stretch; column-gap: var(--space-10); }
+  .stage { width: 288px; }
+  .row { min-height: 56px; }
+}
+/* Narrow rows let the offset note wrap under the city instead of running into the day chip. */
+@container (max-width: 440px) {
+  .rowMeta { display: flex; }
+  .rowMeta .swapItem { white-space: normal; }
+}
+/* Very narrow: the day chip drops under the offset note, so the city name keeps the width. */
+@container (max-width: 360px) {
+  .row { grid-template-columns: 16px minmax(0, 1fr) auto; column-gap: var(--space-2); padding-inline: var(--space-3) var(--space-2); }
+  .rowIcon { grid-row: 1 / span 2; }
+  .rowText { grid-column: 2; grid-row: 1; }
+  .chipSlot { grid-column: 2; grid-row: 2; justify-content: flex-start; }
+  .chipSlot:empty { display: none; }
+  .rowTime { grid-column: 3; grid-row: 1 / span 2; font-size: var(--text-base); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bead, .row, .rowIcon { transition: none; }
+}

@@ -1,0 +1,72 @@
+.figure { display: grid; min-width: 0; gap: var(--space-4); margin: 0; color: var(--foreground); font-family: var(--font-body); letter-spacing: var(--tracking-body); container-type: inline-size; }
+
+/* Series colors (--series-1 to --series-4) come from registry/foundation.css. */
+
+/* Breadcrumb: each level slides in beside the last and the trail reflows on a spring. */
+.crumbs { min-width: 0; }
+.crumbList { display: flex; min-width: 0; min-height: 32px; flex-wrap: wrap; align-items: center; gap: 0; margin: 0; padding: 0; list-style: none; }
+.crumb { display: inline-flex; align-items: center; min-width: 0; }
+.crumbSep { padding: 0 4px; color: var(--border-strong); font-size: var(--text-sm); }
+.crumbButton { min-height: 32px; padding: 0 6px; margin: 0 -2px; border: 0; border-radius: 10px; background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: var(--text-sm); line-height: var(--leading-body); white-space: nowrap; -webkit-tap-highlight-color: transparent; transition: color var(--duration-fast) var(--ease-standard), background-color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.crumbButton:active { transform: scale(.97); }
+.crumbCurrent { display: inline-flex; min-height: 32px; align-items: center; padding: 0 4px; color: var(--foreground); font-size: var(--text-sm); font-weight: 500; line-height: var(--leading-body); white-space: nowrap; }
+/* The first level lines its text up with the content edge, whether it is the current level or a link back. */
+.crumb:first-child .crumbButton { margin-inline-start: -6px; }
+.crumb:first-child .crumbCurrent { padding-inline-start: 0; }
+@media (hover: hover) and (pointer: fine) { .crumbButton:hover { background: color-mix(in oklab, var(--foreground) 5%, transparent); color: var(--foreground); } }
+
+.body { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; justify-content: center; gap: var(--space-6) var(--space-8); }
+.ring { position: relative; max-width: 100%; aspect-ratio: 1; flex: none; outline: none; container-type: inline-size; -webkit-tap-highlight-color: transparent; }
+.svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.track { fill: none; stroke: color-mix(in oklab, var(--foreground) 3%, transparent); }
+
+.arc { fill: var(--fill); cursor: pointer; transition: fill var(--duration-fast) var(--ease-standard), filter var(--duration-fast) var(--ease-standard); }
+.arc[data-active] { fill: var(--hue); }
+.ring[data-active] .arc[data-dim] { filter: opacity(.42); }
+.arcLabel { fill: var(--foreground); font-weight: 500; paint-order: stroke; stroke: var(--surface); stroke-width: 3px; stroke-opacity: .85; stroke-linejoin: round; pointer-events: none; transition: opacity var(--duration-standard) var(--ease-standard); }
+.ring[data-active] .arcLabel[data-dim] { opacity: 0 !important; }
+
+/* The centre names what is in focus, or the arc under the pointer. Each line keeps its height, so nothing moves the ring. */
+.center { position: absolute; top: 50%; left: 50%; display: grid; aspect-ratio: 1; place-content: center; justify-items: center; gap: 2px; padding: 0 8px; border: 0; border-radius: 50%; background: transparent; color: inherit; font: inherit; text-align: center; translate: -50% -50%; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.center:enabled { cursor: zoom-out; }
+.center:enabled:active { transform: scale(.97); }
+@media (hover: hover) and (pointer: fine) { .center:enabled:hover { background: color-mix(in oklab, var(--foreground) 3.5%, transparent); } }
+.centerLabel { max-width: 100%; min-width: 0; color: var(--text-secondary); font-size: clamp(10px, 3.6cqi, 12px); line-height: var(--leading-body); }
+.centerValue { color: var(--foreground); font-family: var(--font-display, inherit); font-size: clamp(15px, 6.4cqi, 22px); font-weight: 500; letter-spacing: -.02em; line-height: 1.15; font-variant-numeric: tabular-nums; }
+.centerMeta { max-width: 100%; min-width: 0; color: var(--text-muted); font-size: clamp(10px, 3.6cqi, 12px); line-height: var(--leading-body); font-variant-numeric: tabular-nums; }
+.swap { position: relative; display: block; min-width: 0; max-width: 100%; }
+.swapText { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.roll { position: relative; display: inline-flex; justify-content: flex-end; overflow-x: clip; overflow-y: visible; white-space: pre; }
+.digits { position: relative; display: inline-flex; flex: none; }
+.digit { position: relative; display: inline-block; white-space: pre; }
+.sizer { position: absolute; top: 0; left: 0; visibility: hidden; white-space: pre; pointer-events: none; }
+
+.tooltip { position: absolute; top: 0; left: 0; z-index: 2; display: grid; min-width: 150px; max-width: min(240px, 100%); gap: 2px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 14px; background: var(--surface-raised); box-shadow: var(--shadow-floating); opacity: 0; pointer-events: none; scale: .96; transition: opacity var(--duration-fast) var(--ease-standard), scale var(--duration-fast) var(--ease-standard); }
+.ring[data-active] .tooltip { opacity: 1; scale: 1; }
+.tipTitle { margin: 0; overflow: hidden; color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-body); text-overflow: ellipsis; white-space: nowrap; }
+.tipValue { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin: 0; font-size: var(--text-sm); line-height: 1.35; }
+.tipName { min-width: 0; overflow: hidden; color: var(--foreground); text-overflow: ellipsis; white-space: nowrap; }
+.tipAmount { flex: none; color: var(--foreground); font-weight: 500; font-variant-numeric: tabular-nums; }
+.tipNote { margin: 0; color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-body); font-variant-numeric: tabular-nums; }
+
+/* Legend: the parts of what is in focus. A row with children zooms in. */
+/* The box clips rows arriving while its height springs. It is not positioned, so rows leaving the list fade out where they stood. */
+.legendBox { min-width: 0; flex: 1 1 220px; max-width: 320px; overflow: clip; overflow-clip-margin: 4px; }
+.legend { display: grid; min-width: 0; gap: 2px; margin: 0; padding: 0; list-style: none; }
+.row { display: grid; width: 100%; min-height: 36px; grid-template-columns: 8px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; padding: 0 10px; border: 0; border-radius: 12px; background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: var(--text-sm); line-height: var(--leading-body); text-align: left; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.row:active { transform: scale(.985); }
+.row[data-active] { background: color-mix(in oklab, var(--foreground) 5%, transparent); color: var(--foreground); }
+.row[data-dim] { opacity: .55; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--fill); transition: background-color var(--duration-fast) var(--ease-standard); }
+.row[data-active] .dot { background: var(--hue); }
+.rowLabel { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rowValue { color: var(--foreground); font-variant-numeric: tabular-nums; }
+.rowShare { min-width: 3.2em; color: var(--text-muted); font-variant-numeric: tabular-nums; text-align: right; }
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@container (max-width: 560px) { .legendBox { max-width: none; flex-basis: 100%; } }
+@container (max-width: 300px) { .row { grid-template-columns: 8px minmax(0, 1fr) auto; } .rowShare { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .arc, .arcLabel, .tooltip, .row, .crumbButton, .center { transition: none; }
+}

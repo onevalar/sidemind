@@ -1,0 +1,199 @@
+/* One card holds the whole flow: pick people, check seats, send, and watch the invites land. Nothing inside clips, so avatars can travel between sections. */
+.root { position: relative; box-sizing: border-box; width: min(100%, 600px); min-width: 0; margin-inline: auto; padding: 20px; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); color: var(--foreground); container-type: inline-size; font-family: var(--font-body); font-size: 13px; letter-spacing: var(--tracking-body); line-height: var(--leading-body); }
+.root *, .root *::before, .root *::after { box-sizing: border-box; }
+.srOnly { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+.collapse { overflow: hidden; }
+.num { display: inline-flex; font-variant-numeric: tabular-nums; }
+.num > span { color: inherit; font-family: inherit; font-size: inherit; font-weight: inherit; letter-spacing: inherit; line-height: inherit; }
+
+/* Text helpers */
+.autoWidth { display: inline-flex; overflow-x: clip; overflow-clip-margin: 2px; white-space: nowrap; vertical-align: bottom; }
+.autoWidthInner { display: inline-flex; flex: none; align-items: center; }
+.swap { position: relative; display: inline-flex; }
+.swapItem { display: inline-flex; align-items: center; white-space: nowrap; }
+
+/* Avatars share one circle shape wherever they travel. */
+.avatar { position: relative; display: inline-grid; flex: none; place-items: center; overflow: hidden; background: var(--surface-muted); color: var(--text-secondary); }
+.avatar img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; user-select: none; }
+.initial { font-size: var(--text-xs); font-weight: 500; line-height: 1; }
+.mailAvatar { border-radius: 50%; box-shadow: inset 0 0 0 1px var(--border); background: transparent; }
+
+/* Header */
+.header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px 16px; }
+.heading { display: grid; min-width: 0; gap: 2px; }
+.title { margin: 0; font-size: var(--text-base); font-weight: 500; line-height: var(--leading-body); }
+.subtitle { margin: 0; color: var(--text-secondary); }
+.team { display: flex; align-items: center; margin: 0; padding: 0 0 0 8px; list-style: none; }
+.teamItem { display: flex; margin-left: -8px; border-radius: 50%; box-shadow: 0 0 0 2px var(--surface); }
+.teamMore { display: grid; min-width: 28px; height: 28px; padding: 0 7px; place-items: center; border-radius: var(--radius-pill); background: var(--surface-muted); color: var(--text-secondary); font-size: var(--text-xs); font-weight: 500; font-variant-numeric: tabular-nums; }
+
+/* Field */
+.fieldWrap { position: relative; z-index: 2; margin-top: 16px; }
+/* The skin fills the height-animated shell, so the border grows with a new chip row instead of jumping ahead of the content below. */
+.fieldShell { position: relative; }
+.fieldSkin { position: absolute; inset: 0; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); pointer-events: none; transition: border-color var(--duration-fast) var(--ease-standard); }
+.field { position: relative; display: flex; min-height: 40px; padding: 4px; cursor: text; }
+@media (hover: hover) and (pointer: fine) { .fieldShell:hover .fieldSkin { border-color: var(--border-strong); } }
+.fieldShell:has(.field[data-focused]) .fieldSkin { border-color: var(--border-strong); }
+.chips { display: flex; min-width: 0; flex: 1; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.inputItem { display: flex; min-width: 8rem; flex: 1 1 8rem; }
+.input { width: 100%; height: 32px; padding: 0 9px; border: 0; background: transparent; color: var(--foreground); font: inherit; outline: none; text-overflow: ellipsis; }
+.input::placeholder { color: var(--text-muted); }
+
+/* Chips: the skin materializes around the avatar that flew in. */
+.chip { position: relative; z-index: 0; display: inline-flex; max-width: 100%; height: 32px; align-items: center; gap: 6px; padding: 0 3px 0 5px; border-radius: var(--radius-pill); cursor: default; }
+.chipSkin { position: absolute; z-index: -1; inset: 0; border-radius: inherit; background: var(--surface-muted); box-shadow: inset 0 0 0 1px var(--border-subtle); transition: background-color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard); }
+.chip[data-armed] .chipSkin { background: color-mix(in oklab, var(--foreground) 11%, var(--surface)); box-shadow: inset 0 0 0 1px var(--border-strong); }
+.chipBody { display: inline-flex; min-width: 0; align-items: center; gap: 2px; }
+.chipLabel { max-width: 12rem; min-width: 0; overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.role { display: inline-flex; height: 24px; flex: none; align-items: center; gap: 2px; margin-left: 4px; padding: 0 6px 0 8px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); cursor: pointer; font: inherit; font-size: var(--text-xs); -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
+.role[data-open] { background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--foreground); }
+.role:focus-visible { background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--foreground); }
+.chipRemove { display: grid; width: 24px; height: 24px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-muted); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.chipRemove:active { transform: scale(.92); }
+.chipRemove:focus-visible { background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--foreground); }
+
+.chip[data-kind="error"] { gap: 0; padding-left: 0; }
+.chip[data-kind="error"] .chipSkin { background: color-mix(in oklab, var(--danger) 8%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--danger) 32%, transparent); }
+.chip[data-kind="error"][data-armed] .chipSkin { box-shadow: inset 0 0 0 1px var(--danger); }
+.chip[data-kind="error"] .chipLabel { font-weight: 400; }
+.chip[data-kind="error"] .chipRemove { color: color-mix(in oklab, var(--danger) 75%, var(--text-muted)); }
+.errorEdit { display: inline-flex; min-width: 0; height: 100%; align-items: center; gap: 6px; padding: 0 2px 0 9px; border: 0; border-radius: var(--radius-pill); background: transparent; color: var(--danger); cursor: text; font: inherit; -webkit-tap-highlight-color: transparent; }
+.errorEdit > svg { flex: none; }
+
+/* Suggestions float over the card below the field. */
+.popover { position: absolute; z-index: 5; top: calc(100% + 6px); right: 0; left: 0; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow-floating); transform-origin: top center; }
+.popHeading { margin: 0; padding: 6px 10px 4px; color: var(--text-muted); font-size: var(--text-xs); }
+.options { display: grid; margin: 0; padding: 0; gap: 2px; list-style: none; }
+.option { position: relative; z-index: 0; display: flex; min-width: 0; align-items: center; gap: 10px; padding: 7px 10px 7px 8px; border-radius: calc(var(--radius-panel) - 6px); cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.option[aria-disabled="true"] { cursor: default; }
+.option[aria-disabled="true"] .avatar { opacity: .55; }
+.option[aria-disabled="true"] .optionName { color: var(--text-secondary); }
+.optionHighlight { position: absolute; z-index: -1; inset: 0; border-radius: inherit; background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.optionText { display: grid; min-width: 0; flex: 1; }
+.optionName, .optionEmail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.optionName { font-weight: 500; }
+.optionEmail { color: var(--text-secondary); font-size: var(--text-xs); }
+.optionNote { flex: none; color: var(--text-muted); font-size: var(--text-xs); }
+.popEmpty { margin: 0; padding: 10px; color: var(--text-secondary); text-wrap: pretty; }
+
+/* Hint row */
+.hintRow { display: flex; min-height: 28px; align-items: center; justify-content: space-between; gap: 12px; margin-top: 6px; padding-left: 6px; }
+.hint { min-width: 0; margin: 0; overflow: hidden; color: var(--text-muted); font-size: var(--text-xs); }
+.hint .swapItem { white-space: normal; }
+
+/* Buttons */
+.textButton, .ghost { display: inline-flex; flex: none; align-items: center; justify-content: center; gap: 6px; border: 0; font: inherit; font-weight: 500; white-space: nowrap; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard); }
+.textButton { height: 28px; padding: 0 10px; border-radius: var(--radius-pill); background: transparent; color: var(--text-secondary); font-size: var(--text-xs); }
+.ghost { height: 32px; padding: 0 12px; border-radius: var(--radius-control); background: var(--surface); box-shadow: inset 0 0 0 1px var(--border); color: var(--foreground); font-size: var(--text-xs); }
+.iconButton { display: grid; width: var(--control-height-sm); height: var(--control-height-sm); flex: none; place-items: center; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--text-secondary); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard); }
+.iconButton[data-size="sm"] { width: 28px; height: 28px; border-radius: 50%; }
+.textButton:active, .ghost:active, .iconButton:active { transform: scale(.97); }
+.textButton:disabled, .iconButton:disabled { opacity: .4; cursor: default; transform: none; }
+.textButton[aria-disabled="true"] { cursor: default; transform: none; }
+.textButton:focus-visible, .iconButton:focus-visible { background: var(--surface-muted); color: var(--foreground); }
+.stack { display: inline-grid; }
+.stack > span { display: inline-flex; align-items: center; justify-content: center; gap: 4px; grid-area: 1 / 1; transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-standard) var(--ease-enter), filter var(--duration-fast) var(--ease-standard); }
+.stack > span:not([data-on]) { opacity: 0; transform: translateY(.3em); filter: blur(2px); visibility: hidden; transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard), filter var(--duration-fast) var(--ease-standard), visibility 0s var(--duration-fast); }
+
+/* Errors: a quiet tinted note that lists what went wrong in plain words. */
+.errors { display: grid; gap: 6px; margin-top: 8px; padding: 12px 14px; border-radius: var(--radius-control); background: color-mix(in oklab, var(--danger) 6%, var(--surface)); }
+.errorsHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; margin-right: -8px; }
+.errorsTitle { display: inline-flex; min-width: 0; align-items: center; gap: 8px; color: var(--danger); font-weight: 500; }
+.errorsTitle > svg { flex: none; }
+.errorList { display: grid; margin: 0; padding: 0 0 0 24px; list-style: none; color: var(--text-secondary); }
+.errorLine { display: block; padding-block: 1px; text-wrap: pretty; }
+.errorsFoot { margin: 0; padding-left: 24px; color: var(--text-muted); font-size: var(--text-xs); }
+
+/* Seats: members, invites out, and the new selection stack along one track. */
+.seats { display: grid; gap: 8px; margin-top: 16px; }
+.seatsHead { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; }
+.seatsCount { display: inline-flex; align-items: baseline; gap: .3em; font-weight: 500; font-variant-numeric: tabular-nums; }
+.seatsCount > .num:first-child { transition: color var(--duration-standard) var(--ease-standard); }
+.seatsCount[data-over] > .num:first-child { color: var(--danger); }
+.seatsOf { color: var(--text-secondary); font-weight: 400; }
+.plan { color: var(--text-secondary); font-size: var(--text-xs); }
+.track { position: relative; height: 6px; overflow: hidden; border-radius: var(--radius-pill); background: var(--surface-muted); }
+.segment { position: absolute; top: 0; bottom: 0; left: 0; border-radius: var(--radius-pill); transition: background-color var(--duration-standard) var(--ease-standard); }
+.segment[data-edge] { box-shadow: 2px 0 0 var(--surface); }
+.segment[data-kind="members"], .swatch[data-kind="members"] { background: var(--text-muted); }
+.segment[data-kind="pending"], .swatch[data-kind="pending"] { background: var(--border-strong); }
+.segment[data-kind="new"], .swatch[data-kind="new"] { background: var(--accent); }
+.segment[data-kind="over"], .swatch[data-kind="over"] { background: var(--danger); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin: 0; padding: 0; color: var(--text-secondary); font-size: var(--text-xs); font-variant-numeric: tabular-nums; list-style: none; }
+.legend li { display: inline-flex; align-items: center; gap: 6px; }
+.swatch { width: 8px; height: 8px; border-radius: 50%; transition: background-color var(--duration-standard) var(--ease-standard); }
+.over { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding-top: 4px; color: var(--danger); }
+.over > svg { flex: none; }
+.overText { min-width: 0; flex: 1; font-weight: 500; }
+.overHelp { color: var(--text-secondary); font-size: var(--text-xs); }
+
+/* Footer */
+.footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--border); }
+.note { margin: 0; color: var(--text-muted); font-size: var(--text-xs); }
+.footerActions { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.send { display: inline-flex; height: var(--control-height-sm); flex: none; align-items: center; gap: 8px; padding: 0 16px 0 14px; border: 0; border-radius: var(--radius-control); background: var(--accent); color: var(--accent-foreground); cursor: pointer; font: inherit; font-weight: 500; white-space: nowrap; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.send:active:not([aria-disabled="true"]) { transform: scale(.97); }
+.send[aria-disabled="true"] { background: var(--surface-muted); color: var(--text-muted); cursor: default; }
+.send > svg { flex: none; }
+.sendLabel { display: inline-flex; align-items: center; }
+.sendCount { display: inline-flex; overflow-x: clip; overflow-clip-margin: 2px; }
+.sendCount > .num { padding-left: .28em; }
+.sendWord { margin-left: .28em; }
+
+/* Pending */
+.pending { margin: 16px -20px -20px; padding: 12px 20px 8px; border-top: 1px solid var(--border); }
+.pendingHead { display: flex; align-items: baseline; gap: 8px; margin: 0 0 2px; font-size: 13px; font-weight: 500; outline: none; }
+.pendingCount { color: var(--text-muted); font-weight: 400; }
+.rows { margin: 0; padding: 0; list-style: none; }
+.row { position: relative; }
+.row + .row .rowInner { border-top: 1px solid var(--border-subtle); }
+.rowInner { display: grid; min-height: 52px; align-items: center; gap: 1px 12px; padding: 8px 0; grid-template-areas: "avatar text status actions"; grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.rowInner > .avatar { grid-area: avatar; }
+.rowText { display: grid; min-width: 0; grid-area: text; }
+.rowName, .rowMeta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rowName { font-size: 13px; font-weight: 500; }
+.rowMeta { color: var(--text-muted); font-size: var(--text-xs); }
+.status { display: inline-flex; grid-area: status; color: var(--text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; transition: color var(--duration-standard) var(--ease-standard); }
+.status[data-status="sending"] { color: var(--text-secondary); }
+.status[data-status="joined"] { color: var(--success); }
+.statusInner { display: inline-flex; align-items: center; gap: 5px; }
+.rowActions { display: flex; align-items: center; gap: 2px; grid-area: actions; }
+.rowActions[data-hidden] { pointer-events: none; }
+.empty { margin: 0; padding: 10px 0 2px; color: var(--text-muted); }
+.spin { animation: spin .8s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Role menu, anchored under the chip that opened it. */
+.menu { position: absolute; z-index: 30; display: grid; width: 232px; gap: 2px; padding: 6px; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--surface-raised); box-shadow: var(--shadow-floating); transform-origin: top left; }
+.menuItem { display: grid; align-items: center; column-gap: 8px; padding: 8px 10px; border: 0; border-radius: calc(var(--radius-panel) - 6px); background: transparent; color: var(--foreground); cursor: pointer; font: inherit; text-align: left; -webkit-tap-highlight-color: transparent; grid-template-columns: minmax(0, 1fr) 16px; transition: background-color var(--duration-fast) var(--ease-standard); }
+.menuItem:focus { background: color-mix(in oklab, var(--foreground) 6%, transparent); }
+.menuLabel { font-weight: 500; grid-column: 1; }
+.menuDescription { color: var(--text-secondary); font-size: var(--text-xs); grid-column: 1; }
+.menuCheck { color: var(--accent); grid-column: 2; grid-row: 1 / span 2; }
+
+@media (hover: hover) and (pointer: fine) {
+  .role:hover, .chipRemove:hover { background: color-mix(in oklab, var(--foreground) 7%, transparent); color: var(--foreground); }
+  .chip[data-kind="error"] .chipRemove:hover { background: color-mix(in oklab, var(--danger) 12%, transparent); color: var(--danger); }
+  .textButton:not(:disabled):not([aria-disabled="true"]):hover, .iconButton:not(:disabled):hover { background: var(--surface-muted); color: var(--foreground); }
+  .ghost:hover { background: var(--surface-muted); }
+  .send:not([aria-disabled="true"]):hover { background: var(--accent-strong); }
+}
+
+@container (max-width: 440px) {
+  .rowInner { grid-template-areas: "avatar text actions" "avatar status actions"; grid-template-columns: auto minmax(0, 1fr) auto; }
+  .status { justify-self: start; }
+  .option:not([aria-disabled="true"]) .optionNote { display: none; }
+  .chipLabel { max-width: 8.5rem; }
+  .note { flex-basis: 100%; }
+}
+
+@media (max-width: 480px) {
+  .root { padding: 16px; }
+  .pending { margin-inline: -16px; margin-bottom: -16px; padding-inline: 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spin { animation: none; }
+  .stack > span, .chipSkin, .segment, .swatch, .status, .send, .fieldSkin { transition-duration: 0ms; }
+}

@@ -1,0 +1,60 @@
+.root { position: relative; display: flex; min-height: 0; flex-direction: column; gap: 12px; color: var(--foreground); font-family: var(--font-body); letter-spacing: var(--tracking-body); -webkit-tap-highlight-color: transparent; }
+
+/* The thread keeps its newest message at the bottom, right above the composer. */
+.thread { display: flex; min-height: 0; flex: 1; flex-direction: column; gap: 12px; margin: 0; padding: 4px 2px; overflow-y: auto; list-style: none; overscroll-behavior: contain; scrollbar-width: none; }
+.thread > :first-child { margin-top: auto; }
+.message { display: flex; align-items: flex-end; gap: 8px; }
+.message[data-mine] { justify-content: flex-end; }
+.avatar { width: 28px; height: 28px; flex: none; margin-bottom: 20px; border-radius: 50%; background: var(--surface-muted); object-fit: cover; }
+.messageBody { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); justify-items: start; gap: 4px; }
+.message[data-mine] .messageBody { justify-items: end; }
+.meta { padding: 0 6px; color: var(--text-muted); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
+
+.bubble { display: flex; max-width: 100%; height: 44px; box-sizing: border-box; align-items: center; gap: 10px; padding: 6px 14px 6px 6px; background: var(--surface-muted); color: var(--foreground); }
+.message[data-mine] .bubble { background: var(--foreground); color: var(--background); }
+.bubblePlay { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 50%; background: var(--foreground); color: var(--background); cursor: pointer; transition: scale var(--duration-fast) var(--ease-standard); }
+.message[data-mine] .bubblePlay { background: var(--background); color: var(--foreground); }
+.bubblePlay:active { scale: .92; }
+/* On a narrow thread the bars thin out rather than pushing the time out of the bubble. */
+.bubbleWave { display: block; height: 22px; min-width: 0; flex: 0 1 auto; overflow: hidden; cursor: pointer; touch-action: pan-y; }
+.bubbleWave .barsLayer > span { flex: 0 1 3px; min-width: 1.5px; }
+.bubbleTime { min-width: 3.4ch; flex: none; font-size: var(--text-xs); font-variant-numeric: tabular-nums; opacity: .8; text-align: right; }
+
+.bars { position: relative; display: block; height: 100%; }
+.barsLayer { display: flex; height: 100%; align-items: center; gap: 2px; }
+.barsLayer[data-played] { position: absolute; inset: 0; }
+.barsLayer > span { width: 3px; flex: none; border-radius: 2px; background: color-mix(in oklab, currentColor 28%, transparent); }
+.barsLayer[data-played] > span { background: currentColor; }
+
+/* Composer: a fixed height row. The mic, the recording bar, the review, and the sent bubble are one shape. */
+.composer { display: flex; height: 48px; box-sizing: content-box; flex: none; align-items: center; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.hint { min-width: 0; flex: 1; overflow: hidden; color: var(--text-muted); font-size: var(--text-sm); text-overflow: ellipsis; white-space: nowrap; }
+.mic, .stop, .send { display: grid; width: 48px; height: 48px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 50%; cursor: pointer; }
+.mic { background: var(--foreground); color: var(--background); }
+/* Stop and send move the take forward, so they wear the selected accent; red stays on the live dot. */
+.stop, .send { background: var(--accent); color: var(--accent-foreground); transition: background-color var(--duration-fast) var(--ease-standard); }
+@media (hover: hover) and (pointer: fine) { .stop:hover, .send:hover { background: var(--accent-strong); } }
+.micIcon { display: grid; place-items: center; }
+.discard { display: grid; width: 40px; height: 40px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--text-secondary); cursor: pointer; transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard); }
+.discard:active { background: var(--surface-muted); color: var(--danger); }
+@media (hover: hover) and (pointer: fine) { .discard:hover { background: var(--surface-muted); color: var(--danger); } }
+
+.capsule { display: flex; height: 48px; min-width: 0; flex: 1; box-sizing: border-box; overflow: hidden; padding: 0 14px 0 8px; background: var(--surface-muted); }
+.capsule[data-phase="recording"] { padding-left: 16px; background: color-mix(in oklab, var(--accent) 7%, var(--surface-muted)); }
+.capsuleRow { display: flex; width: 100%; min-width: 0; align-items: center; gap: 10px; }
+.recDot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--danger); animation: rec 1.2s ease-in-out infinite; }
+@keyframes rec { 50% { opacity: .35; } }
+.timer { flex: none; font-size: var(--text-sm); font-variant-numeric: tabular-nums; }
+.live { display: block; height: 28px; min-width: 0; flex: 1; color: var(--foreground); }
+.reviewPlay { display: grid; width: 32px; height: 32px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 50%; background: var(--foreground); color: var(--background); cursor: pointer; transition: scale var(--duration-fast) var(--ease-standard); }
+.reviewPlay:active { scale: .92; }
+.reviewWave { height: 24px; min-width: 0; flex: 1; overflow: hidden; cursor: pointer; touch-action: pan-y; }
+.reviewWave .barsLayer { justify-content: space-between; }
+.reviewWave .barsLayer > span { width: auto; min-width: 1.5px; max-width: 3px; flex: 1 1 0; }
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .recDot { animation: none; }
+  .discard, .bubblePlay, .reviewPlay, .stop, .send { transition: none; }
+}

@@ -1,0 +1,49 @@
+.stage { container: quotes / inline-size; box-sizing: border-box; width: min(100%, 1040px); min-width: 0; margin-inline: auto; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-surface); background: var(--surface); color: var(--foreground); font-family: var(--font-body); font-size: var(--text-sm); letter-spacing: var(--tracking-body); line-height: var(--leading-body); }
+.stage *, .stage *::before, .stage *::after { box-sizing: border-box; }
+.layout { display: grid; grid-template-columns: minmax(0, .9fr) minmax(0, 1.1fr); min-height: 520px; }
+
+.imageColumn { position: relative; min-height: 100%; overflow: hidden; background: var(--surface-muted); }
+.imageWrap { position: absolute; inset: 0; }
+.imageWrap img { object-fit: cover; object-position: center 30%; }
+
+.contentColumn { display: flex; min-width: 0; flex-direction: column; gap: 32px; padding: 40px 44px 32px; }
+.title { margin: 0; color: var(--text-secondary); font-size: var(--text-base); font-weight: 500; line-height: var(--leading-body); }
+
+.quoteArea { display: flex; flex: 1; flex-direction: column; justify-content: center; gap: 24px; margin: 0; }
+/* Both quotes share one grid cell while they cross-fade, so neither leaves the slot. The quote slot reserves room for the longest quote, so the author and controls never jump. */
+.quoteSlot { display: grid; min-height: 7.2em; font-family: var(--font-display); font-size: var(--text-2xl); letter-spacing: var(--tracking-display); line-height: 1.25; }
+.quote { grid-area: 1 / 1; margin: 0; }
+.quote p { max-width: 30ch; margin: 0; font-weight: 400; text-wrap: pretty; hanging-punctuation: first; }
+.author { display: grid; }
+.authorInner { grid-area: 1 / 1; display: grid; gap: 2px; }
+.authorName { font-weight: 500; }
+.authorRole { color: var(--text-secondary); }
+
+.footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-top: 20px; border-top: 1px solid var(--border-subtle); }
+/* Pulled in by the tab's side padding so the first bar lines up with the text above. */
+.tabs { display: flex; align-items: center; gap: 4px; margin-inline-start: -4px; }
+.tab { display: grid; width: 32px; height: 32px; place-items: center; padding: 0; border: 0; background: transparent; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.tabBar { position: relative; display: block; width: 24px; height: 2px; border-radius: 1px; background: var(--border-strong); transition: background-color var(--duration-fast) var(--ease-standard); }
+.tabFill { position: absolute; inset: 0; border-radius: inherit; background: var(--accent); }
+.arrows { display: flex; gap: 8px; }
+.arrow { display: grid; width: var(--control-height-sm); height: var(--control-height-sm); place-items: center; padding: 0; border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface); color: var(--foreground); cursor: pointer; transition: background-color var(--duration-fast) var(--ease-standard), transform var(--duration-fast) var(--ease-standard); -webkit-tap-highlight-color: transparent; }
+.arrow:active { transform: scale(.96); }
+@media (hover: hover) and (pointer: fine) {
+  .arrow:hover { background: var(--surface-muted); }
+  .tab[aria-selected="false"]:hover .tabBar { background: var(--text-muted); }
+}
+
+@container quotes (max-width: 719px) {
+  .layout { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .imageColumn { height: auto; aspect-ratio: 16 / 10; min-height: 0; }
+  .contentColumn { gap: 24px; padding: 24px 20px 20px; }
+  .quoteSlot { min-height: 6.4em; font-size: var(--text-xl); }
+}
+@container quotes (max-width: 359px) {
+  .quoteSlot { min-height: 8.2em; font-size: var(--text-lg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arrow, .tabBar { transition-duration: 0ms; }
+  .arrow:active { transform: none; }
+}

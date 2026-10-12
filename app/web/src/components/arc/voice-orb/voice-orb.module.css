@@ -1,0 +1,45 @@
+.orb { display: block; flex: none; }
+
+/* Transcript: two lines tall, anchored to the bottom, so older lines lift away as new ones wrap in. */
+.transcript {
+  position: relative; display: flex; flex-direction: column; justify-content: flex-end; width: 100%; max-width: 30rem;
+  height: calc(2em * var(--leading-body)); overflow: hidden; font-family: var(--font-body); font-size: var(--text-base);
+  line-height: var(--leading-body); letter-spacing: var(--tracking-body); text-align: center;
+  mask-image: linear-gradient(to bottom, transparent, black 40%);
+}
+.line { margin: 0; color: var(--foreground); text-wrap: balance; }
+.line[data-speaker="user"] { color: var(--text-secondary); }
+.line[data-speaker="system"] { color: var(--text-muted); font-size: var(--text-sm); }
+.word { display: inline-block; }
+
+/* Controls: one pill that springs between a start button and the live call controls. */
+.controls {
+  /* Content box: the animated width is the content's own width, and the border sits outside it. */
+  position: relative; display: flex; justify-content: center; box-sizing: content-box; height: calc(var(--control-height-lg) - 2px); overflow: hidden;
+  border: 1px solid var(--border); border-radius: var(--radius-pill); background: var(--surface-raised); box-shadow: var(--shadow-resting);
+  font-family: var(--font-body); letter-spacing: var(--tracking-body);
+}
+.idle, .live { display: flex; flex: none; align-items: center; height: 100%; }
+.live { gap: 4px; padding: 0 4px; }
+.start {
+  display: inline-flex; align-items: center; gap: 8px; height: 100%; padding: 0 20px 0 16px; border: 0; background: transparent;
+  color: var(--foreground); font: inherit; font-size: var(--text-sm); font-weight: 500; white-space: nowrap; cursor: pointer; -webkit-tap-highlight-color: transparent;
+}
+.round, .end {
+  display: grid; place-items: center; width: 40px; height: 40px; padding: 0; border: 0; border-radius: var(--radius-pill);
+  background: transparent; color: var(--foreground); cursor: pointer; -webkit-tap-highlight-color: transparent;
+  transition: background-color var(--duration-fast) var(--ease-standard), color var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard);
+}
+.round[aria-pressed="true"] { background: var(--foreground); color: var(--background); }
+.end { background: color-mix(in oklab, var(--danger) 12%, transparent); color: var(--danger); }
+.round:active, .end:active { transform: scale(.94); }
+.glyph { display: grid; place-items: center; }
+.clock { min-width: 4.5ch; padding: 0 8px; color: var(--text-secondary); font-size: var(--text-sm); font-variant-numeric: tabular-nums; text-align: center; }
+
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+@media (hover: hover) and (pointer: fine) {
+  .start:hover { background: var(--surface-muted); }
+  .round:not([aria-pressed="true"]):hover { background: var(--surface-muted); }
+  .end:hover { background: color-mix(in oklab, var(--danger) 18%, transparent); }
+}

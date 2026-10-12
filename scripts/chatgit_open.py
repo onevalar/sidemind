@@ -9,7 +9,7 @@ Contract (see scripts/chatgit_runtime.py for the runtime side):
      local owner on an empty database and returns a 60-second single-use ticket.
   3. Open <origin>/api/local/open#ticket=<ticket> in the default browser. The
      fragment never reaches the server; the bootstrap page strips it, exchanges
-     the ticket for the normal session cookie and continues to /c/new.
+     the ticket for the normal session cookie and continues to /canvas/.
 The key and the ticket are never printed. Without a graphical browser this
 fails closed instead of showing the link.
 """

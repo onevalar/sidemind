@@ -39,6 +39,23 @@ LibreChat control. Further Arc components must be adapted against React 18 and
 the existing theme/interaction contracts before adoption. Keep the conversation,
 streaming, Markdown, authentication and React Flow implementations authoritative.
 
+## Canvas UI: the full Arc source (2026-10-12)
+
+The canvas UI in `app/web/` is built entirely on Arc. `app/web/src/components/arc/` is a copy of the private
+`onevalar/arc-ui` repository's `custom/arc/` at `fd56e8e37a3194a2a03270b090371a85aefc9c18`, **including Pro
+components**. Pro source may only live in private repositories: keep `chat-git` private, and never publish a package,
+template or registry that contains it. Update by copying `custom/arc/` again and re-applying the changes below.
+
+ChatGit changes to that copy (kept minimal and backward compatible):
+
+- `copy-button`: optional `messages` (`copied`, `failed`, `couldNotCopy`) so the visible status is translated.
+- `inline-edit`: optional `messages` (`activate`, `saveCancel`, `saveNewlineCancel`) for the screen-reader hints.
+
+Arc has no branching-graph canvas (`data-flow` is a fixed pipeline animation, `semantic-zoom` is bound to its demo
+data and has no edges), so the canvas layer is drawn by ChatGit with Arc's design variables. Arc buttons never
+truncate their label, so long-title list rows (canvas list, branch list) are native buttons on Arc variables.
+Some Arc components still contain English screen-reader text (for example toast type names).
+
 ## MIT License
 
 Copyright (c) 2026 Elia Kuratli

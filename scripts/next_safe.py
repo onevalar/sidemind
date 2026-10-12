@@ -57,6 +57,8 @@ BUILD_STEPS = (
     ("client-package", "packages/client", "build"),
     # build:file keeps the supervisor heap bound; `build` forces 8 GiB.
     ("client", "client", "build:file"),
+    # ChatGit canvas UI (React 19 + Arc): one esbuild process, separate package and lock.
+    ("web", "web", "build"),
 )
 BUILD_OUTPUTS = (
     "packages/data-provider/dist",
@@ -64,7 +66,10 @@ BUILD_OUTPUTS = (
     "packages/api/dist",
     "packages/client/dist",
     "client/dist/index.html",
+    "web/dist/index.html",
 )
+# Packages installed with `npm ci`, each with its own lock and stamp (relative to app/).
+INSTALL_DIRS = (".", "web")
 
 
 def node_runtime():
@@ -226,17 +231,21 @@ def supervise(command, project=PROJECT, limits=Limits(), sample_interval=0.5):
     return supervise_steps([Step("command", list(command))], project, limits, sample_interval)
 
 
-def lock_digest(node_version):
-    digest = hashlib.sha256((APP / "package-lock.json").read_bytes()).hexdigest()
+def lock_digest(node_version, directory="."):
+    digest = hashlib.sha256((APP / directory / "package-lock.json").read_bytes()).hexdigest()
     return {"package_lock_sha256": digest, "node": node_version}
 
 
-def install_current(node_version):
+def package_current(node_version, directory="."):
     try:
-        stamp = json.loads((APP / INSTALL_STAMP).read_text())
+        stamp = json.loads((APP / directory / INSTALL_STAMP).read_text())
     except (OSError, ValueError):
         return False
-    return stamp == lock_digest(node_version)
+    return stamp == lock_digest(node_version, directory)
+
+
+def install_current(node_version):
+    return all(package_current(node_version, directory) for directory in INSTALL_DIRS)
 
 
 def heap_override(script):
@@ -284,17 +293,22 @@ def check(node, version):
 
 
 def install(node, version, force=False):
-    if not force and install_current(version):
-        print("[next-safe] app 依赖已与 package-lock.json 一致，跳过 npm ci。", flush=True)
+    stale = [d for d in INSTALL_DIRS if force or not package_current(version, d)]
+    if not stale:
+        print("[next-safe] app 与 app/web 依赖已与 package-lock.json 一致，跳过 npm ci。", flush=True)
         return 0
-    stamp = APP / INSTALL_STAMP
-    if stamp.exists():
-        stamp.unlink()
-    step = Step("npm ci", [*npm_command(node), "ci", "--no-audit", "--no-fund"], APP,
-                {"HUSKY": "0"})
-    code = supervise_steps([step], path_dir=Path(node).parent)
+    steps = []
+    for directory in stale:
+        stamp = APP / directory / INSTALL_STAMP
+        if stamp.exists():
+            stamp.unlink()
+        label = "npm ci" if directory == "." else f"npm ci ({directory})"
+        steps.append(Step(label, [*npm_command(node), "ci", "--no-audit", "--no-fund"], APP / directory,
+                          {"HUSKY": "0"}))
+    code = supervise_steps(steps, path_dir=Path(node).parent)
     if code == 0:
-        stamp.write_text(json.dumps(lock_digest(version)))
+        for directory in stale:
+            (APP / directory / INSTALL_STAMP).write_text(json.dumps(lock_digest(version, directory)))
     return code
 
 

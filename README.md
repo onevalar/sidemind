@@ -5,6 +5,8 @@ ChatGit is being built on [LibreChat](https://github.com/LibreChat-AI/LibreChat)
 | Path | Contents |
 | --- | --- |
 | `app/` | LibreChat v0.8.8 at [the pinned upstream revision](https://github.com/LibreChat-AI/LibreChat/commit/e1dfc10449ff713faffacd60273fddcfe2c0a698), customized for ChatGit |
+| `app/web/` | The ChatGit canvas UI (React 19 + Arc UI), its own package and lock; served at `/canvas/` |
+| `docs/canvas-design.md` | Interaction and architecture decisions for the canvas |
 | `legacy/chatgit/` | The previous Next.js ChatGit, kept for reference only |
 | `scripts/` | Protected task supervisor (`next_safe.py`), toolchain installer, runtime launcher, and their tests |
 | `.agents/setup`, `.amp/services.yaml` | Amp orb setup and the supervised `chatgit` service |
@@ -20,10 +22,10 @@ Read [AGENTS.md](AGENTS.md) before running anything. Every heavy task goes throu
 ## Commands
 
 ```bash
-.agents/setup              # idempotent: Node + mongod + `npm ci` in app/ (skipped if lock unchanged)
+.agents/setup              # idempotent: Node + mongod + `npm ci` in app/ and app/web/ (each skipped if its lock is unchanged)
 npm run check:safety       # JSON environment report; exit 2 if Node/deps/disk are not ready
-npm run build              # sequential: data-provider → data-schemas → api → client-package → client build:file
-npm run dev -- --port 3080 # persistent mongod + LibreChat Express serving app/client/dist
+npm run build              # sequential: data-provider → data-schemas → api → client-package → client build:file → web
+npm run dev -- --port 3080 # persistent mongod + Express serving the canvas UI (app/web/dist) and the API
 npm run open              # in another terminal on the same device: opens your private workspace
 npm run test:safety        # supervisor, cleanup, runtime and toolchain unit tests
 npm run setup:app          # dependency step alone (`-- --force` to reinstall)
@@ -41,7 +43,7 @@ Conversations are stored on the device running ChatGit. In an Amp orb, that mean
 
 ### Optional ChatGPT plan connection
 
-In Settings → Data & Privacy → Model connections, choose **Continue with ChatGPT**, or configure the separate **OpenAI-Compatible** URL/key connection. The ChatGPT option uses OpenAI's documented [open-source Sign in with ChatGPT flow](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), using the same account you use for Codex; it does not reuse Codex's client identity or read its credential files. You grant access yourself in OpenAI's browser page. Eligibility and available models depend on your account and OpenAI's current offering.
+In the canvas UI's **Model connections & settings** (gear icon), choose **Connect with ChatGPT**, or configure the separate **OpenAI-Compatible** URL/key connection. The ChatGPT option uses OpenAI's documented [open-source Sign in with ChatGPT flow](https://developers.openai.com/siwc/token-sharing-open-source/sign-in), using the same account you use for Codex; it does not reuse Codex's client identity or read its credential files. You grant access yourself in OpenAI's browser page. Eligibility and available models depend on your account and OpenAI's current offering.
 
 This implementation holds one ChatGPT connection per local workspace. Tokens and the host identity are written atomically with owner-only permissions under `<state>/chatgpt/`; refresh is serialized and disconnect removes local tokens, attempts remote revocation, and reports unconfirmed revocation. Models come from the authorized account. Inference uses the official Responses endpoint with `store:false`, streams replies, and replays ChatGit's own ordered context. It never silently falls back to API-key billing. It does not import ChatGPT conversations or run Codex tools. The real consent/token/inference round trip still needs testing with a user's eligible account; automated tests use a simulated provider.
 
@@ -101,7 +103,19 @@ The managed mongod listens on 127.0.0.1 only, with a 0.25 GiB WiredTiger cache. 
 
 It configures no mock model. The separate [browser regression setup](app/e2e/chatgit/README.md) uses a local HTTP fixture without changing this default.
 
-## ChatGit conversation contract
+## ChatGit canvas
+
+`/` opens the canvas UI (`/canvas/`); the launcher and the Web Portal land there. Decisions are recorded in [docs/canvas-design.md](docs/canvas-design.md).
+
+- **Own graph model.** Canvases (`chatgit_canvases`) hold drafts and the reading position; nodes (`chatgit_nodes`) are one question and answer each, with `parentIds` as context sources. It does not use LibreChat's message tree.
+- **Context is assembled on the server** (`app/api/server/services/ChatGit/canvasContext.js`): the union of the sources' ancestor paths in creation order, each shared turn once; unselected sibling branches never appear. Quoted passages travel with the question. When a path is long, turns older than the newest three are replaced by their stored summary; direct sources and turns without a summary stay verbatim, so nothing is silently dropped. Limits: 12 sources, 20 quoted passages, 8,000 characters per question, 1,500 per quote.
+- **Generation** (`app/api/server/routes/chatgitCanvas.js`, `/api/chatgit/*`) streams over SSE and continues if the page closes; partial text is saved as it arrives and a reload picks the result up. Stop keeps the partial answer. After an answer, one small extra model call stores a short summary (used for compression) and three suggested follow-ups, shown only as buttons.
+- **Models** come from LibreChat's configured endpoints (OpenAI-compatible, ChatGPT) via the same provider options as LibreChat's own calls; the model is chosen per canvas.
+- The UI ships in Simplified Chinese, Traditional Chinese and English (`app/web/src/locales.ts`; `npm run build` fails if a string is untranslated).
+
+Not yet in the canvas UI: attachments, voice input and importing old conversations. The LibreChat chat UI and its message canvas below remain reachable at `/c/new` during the migration.
+
+## Legacy LibreChat message canvas
 
 Chat and Message canvas read the same stored messages. A normal parent link remains LibreChat's primary conversation path; `canvasSources` adds explicit cross-branch references without turning alternative branches into one linear chat.
 

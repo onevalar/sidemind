@@ -28,6 +28,24 @@ The test fixture is a separate service and the test app still runs through the r
 
 Browser outputs go to `/tmp/chatgit-browser-tests` and `/tmp/chatgit-browser-evidence`. `EVAL_ARTIFACT_DIR` can select a review-output directory. `/tmp/chatgit-browser-state.json` holds private test login state: never commit or share it. Screenshots contain fixture answers, not actual LLM output.
 
+## Canvas UI check (`/canvas/`)
+
+Uses the real launcher, a separate empty state directory and a local OpenAI-compatible fixture that calls no
+external model. `canvas.yaml` is the product config plus the fixture endpoint; it is never the default.
+
+```bash
+amp orb service start chatgit-canvas-fixture --command "$HOME/.local/share/chatgit/node/node-v24.16.0-linux-x64/bin/node app/e2e/chatgit/fake-openai.js"
+amp orb service start chatgit-canvas-check --command 'CHATGIT_LOCAL_MODE=true CHATGIT_STATE_DIR="$PWD/.chatgit/canvas-check" CONFIG_PATH=app/e2e/chatgit/canvas.yaml npm run dev -- --port "$PORT"'
+```
+
+Enter through the launcher (`npm run open` with `CHATGIT_STATE_DIR` set to the same directory). The fixture records
+what the model received at `GET http://127.0.0.1:8890/__requests`; `POST /__behavior {"fail":true}` or
+`{"delayMs":300}` exercises errors and stopping. Stop `chatgit-canvas-check` before rebuilding: the build waits for
+the shared lock.
+
+Unit tests for context assembly (from `app/api`):
+`node ../node_modules/jest/bin/jest.js --runInBand --coverage=false server/services/ChatGit/canvasContext.spec.js`.
+
 ## Account-free local app and ChatGPT connection
 
 Stop the preview first. This check uses a separate empty database, the real Python launcher request, real browser session/refresh, and the default real-provider config. No external model is called. The authorization browser page is intercepted; cancellation and declined callbacks go to the real backend. Connected/model-list rendering uses explicitly simulated status responses. It does **not** prove that an actual OpenAI account can authorize or perform inference.

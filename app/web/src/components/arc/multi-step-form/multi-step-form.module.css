@@ -1,0 +1,265 @@
+.form {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-surface);
+  padding: var(--space-5);
+  background: var(--surface);
+  box-shadow: var(--shadow-resting);
+}
+
+.progress {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  margin: calc(var(--space-5) * -1) calc(var(--space-5) * -1) var(--space-6);
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.progressList {
+  display: flex;
+  min-width: 0;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  overflow-x: auto;
+  list-style: none;
+  scrollbar-width: none;
+}
+
+.progressList::-webkit-scrollbar { display: none; }
+
+.progressItem {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  line-height: var(--leading-body);
+  white-space: nowrap;
+  transition: color var(--duration-standard) var(--ease-standard);
+}
+
+/* Labels reserve their medium weight width, so the current step never nudges the others. */
+.progressLabel { display: inline-flex; flex-direction: column; }
+
+.progressLabel::after {
+  height: 0;
+  overflow: hidden;
+  content: attr(data-label);
+  font-weight: 500;
+  visibility: hidden;
+  user-select: none;
+  pointer-events: none;
+}
+
+.progressMarker {
+  display: grid;
+  width: 1.25rem;
+  height: 1.25rem;
+  place-items: center;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-pill);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  transition: border-color var(--duration-standard) var(--ease-standard), background-color var(--duration-standard) var(--ease-standard), color var(--duration-standard) var(--ease-standard);
+}
+
+.markerGlyph { display: grid; grid-area: 1 / 1; place-items: center; }
+
+.progressItem.current {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.progressItem.current .progressMarker {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+.progressItem.complete { color: var(--text-secondary); }
+
+.progressItem.complete .progressMarker {
+  border-color: var(--success);
+  color: var(--success);
+}
+
+.progressCount {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.viewport { display: grid; min-height: 14rem; }
+
+/* While the shell changes height it clips vertically only, so the sideways step slide is never cut off. */
+.viewport[data-resizing="true"] { overflow: visible clip; }
+
+.swap { display: inline-grid; }
+
+.swap > span { grid-area: 1 / 1; }
+
+.countValue { min-width: 1ch; text-align: center; }
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.step,
+.success {
+  grid-area: 1 / 1;
+  min-width: 0;
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+/* Content sits one step below the title when a step has no description. */
+.step legend + .content { margin-top: var(--space-5); }
+
+.step legend {
+  max-width: 100%;
+  padding: 0;
+  color: var(--foreground);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  line-height: var(--leading-body);
+}
+
+/* Two classes, so a host's generic `p` rule cannot strip the spacing or size. */
+.step .description {
+  margin: var(--space-2) 0 var(--space-5);
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+}
+
+.actionsShell { display: flow-root; }
+
+.actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+
+.back,
+.next {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  min-height: var(--control-height-sm);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-control);
+  padding: 0 var(--space-3);
+  background: var(--surface);
+  color: var(--foreground);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  line-height: 1;
+  cursor: pointer;
+  transition: border-color var(--duration-fast), background-color var(--duration-fast), color var(--duration-fast), box-shadow var(--duration-fast), transform var(--duration-spring) var(--ease-spring);
+}
+
+.back:active:not(:disabled),
+.next:active {
+  transform: scale(.97);
+  transition-duration: var(--duration-fast), var(--duration-fast), var(--duration-fast), var(--duration-fast), 100ms;
+  transition-timing-function: ease, ease, ease, ease, ease-out;
+}
+
+/* The submit label can change on the last step; its box follows the new width on a spring. */
+.morph { position: relative; display: inline-flex; }
+
+.morphBox { display: inline-flex; overflow-x: clip; white-space: nowrap; }
+
+.sizer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  white-space: nowrap;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.next {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .back:hover:not(:disabled) { border-color: var(--foreground); background: var(--surface-muted); }
+  .next:hover { border-color: var(--accent-strong); background: var(--accent-strong); }
+}
+
+.back:disabled { cursor: not-allowed; opacity: .45; }
+
+.success {
+  display: flex;
+  min-height: 14rem;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.successIcon {
+  display: grid;
+  width: 2rem;
+  height: 2rem;
+  place-items: center;
+  color: var(--success);
+}
+
+.success h2 {
+  margin: var(--space-3) 0 0;
+  color: var(--foreground);
+  font-size: var(--text-lg);
+  font-weight: 500;
+  line-height: var(--leading-body);
+}
+
+.success .successNote {
+  margin: var(--space-2) 0 0;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: var(--leading-body);
+}
+
+@media (max-width: 420px) {
+  .form { padding: var(--space-4); }
+  .progress {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin: calc(var(--space-4) * -1) calc(var(--space-4) * -1) var(--space-5);
+    padding: var(--space-3) var(--space-4);
+  }
+  .progressList { width: 100%; gap: var(--space-3); }
+  .progressCount { order: -1; }
+  .viewport { min-height: 15rem; }
+  .actions { margin-top: var(--space-5); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .back,
+  .next,
+  .progressItem,
+  .progressMarker { transition: none; }
+  .back:active:not(:disabled),
+  .next:active { transform: none; }
+}

@@ -1,0 +1,145 @@
+/* Media and details sit side by side; below 680px of available width they stack, and below 520px the rail moves under the photo. */
+.root {
+  container-type: inline-size;
+  color: var(--foreground);
+  font-family: var(--font-body);
+  font-size: var(--text-sm);
+  letter-spacing: var(--tracking-body);
+  line-height: var(--leading-body);
+}
+.layout { display: grid; align-items: start; gap: var(--space-8); grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); }
+
+.media { display: grid; min-width: 0; gap: 12px; grid-template-areas: "rail stage"; grid-template-columns: 64px minmax(0, 1fr); }
+
+/* The stage is one button: click opens fullscreen, arrows step through photos, a finger swipes the track. */
+.stage {
+  position: relative;
+  display: block;
+  width: 100%;
+  overflow: clip;
+  padding: 0;
+  border: 0;
+  border-radius: 22px;
+  aspect-ratio: var(--ratio);
+  background: var(--surface-muted);
+  color: inherit;
+  cursor: zoom-in;
+  grid-area: stage;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+.stage::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 6%, transparent); pointer-events: none; }
+.track { position: absolute; inset: 0; display: flex; will-change: transform; }
+.slide { display: block; height: 100%; flex: 0 0 100%; }
+.photo { display: block; width: 100%; height: 100%; object-fit: cover; -webkit-user-drag: none; user-select: none; }
+
+/* The lens: a round window onto the same photo at higher magnification, with a bright rim like glass catching light. */
+.lens { position: absolute; z-index: 2; top: 0; left: 0; width: 176px; height: 176px; overflow: hidden; border-radius: 50%; background: var(--surface-muted); box-shadow: var(--shadow-floating); pointer-events: none; }
+.lens::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1.5px oklch(100% 0 0 / .72), inset 0 0 0 2.5px oklch(0% 0 0 / .08); }
+.lensPhoto { position: absolute; top: 0; left: 0; max-width: none; object-fit: cover; }
+
+.expand { position: absolute; z-index: 3; top: 12px; right: 12px; display: grid; width: 34px; height: 34px; place-items: center; border-radius: 50%; background: color-mix(in oklab, var(--surface-raised) 82%, transparent); color: var(--foreground); opacity: 0; -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px); transition: opacity var(--duration-fast) var(--ease-standard); }
+.stage[data-lens] .expand { opacity: 0; }
+.stage:focus-visible .expand { opacity: 1; }
+
+.dots { position: absolute; z-index: 3; bottom: 12px; left: 50%; display: none; gap: 5px; translate: -50% 0; }
+.dot { display: block; width: 6px; height: 6px; border-radius: var(--radius-pill); background: oklch(100% 0 0 / .55); transition: width var(--duration-spring) var(--ease-spring), background-color var(--duration-fast) var(--ease-standard); }
+.dot[data-active] { width: 16px; background: oklch(100% 0 0); }
+
+/* The rail. One ring glides between thumbnails. */
+.rail { position: relative; display: flex; min-height: 0; contain: size; flex-direction: column; gap: 8px; overflow: auto; margin: -4px; padding: 4px; grid-area: rail; scrollbar-width: none; }
+.rail::-webkit-scrollbar { display: none; }
+.railIndicator { position: absolute; z-index: 1; top: 0; left: 0; border-radius: 12px; box-shadow: 0 0 0 2px var(--background), 0 0 0 3.5px var(--foreground); pointer-events: none; }
+.thumb { position: relative; display: block; width: 100%; flex: none; overflow: hidden; padding: 0; border: 0; border-radius: 12px; aspect-ratio: var(--ratio); background: var(--surface-muted); cursor: pointer; opacity: .64; -webkit-tap-highlight-color: transparent; transition: opacity var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.thumb[data-active] { opacity: 1; }
+.thumb:active { transform: scale(.96); }
+.thumbPhoto { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; -webkit-user-drag: none; }
+
+/* Details: header slot, pickers, footer slot. */
+.details { display: grid; min-width: 0; align-content: start; gap: var(--space-6); }
+.picker { display: grid; gap: 10px; }
+.pickerLabel { display: flex; margin: 0; align-items: baseline; gap: 8px; color: var(--text-secondary); }
+.pickerValue { position: relative; display: inline-flex; min-width: 0; color: var(--foreground); font-weight: 500; }
+
+.swatches { position: relative; display: flex; flex-wrap: wrap; gap: 12px; padding: 4px; margin: -4px; }
+.swatchRing { position: absolute; top: 0; left: 0; border-radius: 50%; box-shadow: 0 0 0 2.5px var(--background), 0 0 0 4px var(--foreground); pointer-events: none; }
+.swatch { position: relative; display: block; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 50%; background: transparent; cursor: pointer; -webkit-tap-highlight-color: transparent; transition: transform var(--duration-instant) var(--ease-standard); }
+.swatch:active { transform: scale(.92); }
+.swatchFill { display: block; width: 100%; height: 100%; border-radius: inherit; box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--foreground) 14%, transparent); }
+.swatch[data-sold-out]::after { content: ""; position: absolute; inset: 0; border-radius: inherit; background: linear-gradient(135deg, transparent calc(50% - 1px), var(--background) calc(50% - 1px), var(--background) calc(50% + 1px), transparent calc(50% + 1px)); }
+
+.sizes { position: relative; display: grid; gap: 8px; grid-template-columns: repeat(auto-fill, minmax(76px, 1fr)); }
+.sizeFill { position: absolute; top: 0; left: 0; border-radius: 14px; background: var(--accent); pointer-events: none; }
+.size {
+  position: relative;
+  height: var(--control-height-md);
+  padding: 0 10px;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--foreground);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 500;
+  -webkit-tap-highlight-color: transparent;
+  transition: color var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard);
+}
+.size[data-active] { box-shadow: inset 0 0 0 1px transparent; color: var(--accent-foreground); }
+.size:active:not([data-sold-out]) { transform: scale(.97); }
+.size[data-sold-out] { background: var(--surface-muted); box-shadow: none; color: var(--text-muted); cursor: not-allowed; text-decoration: line-through; text-decoration-color: color-mix(in oklab, var(--text-muted) 70%, transparent); }
+
+@media (hover: hover) and (pointer: fine) {
+  .stage:hover .expand { opacity: 1; }
+  .stage[data-lens]:hover .expand { opacity: 0; }
+  .thumb:hover { opacity: 1; }
+  .size:not([data-sold-out], [data-active]):hover { box-shadow: inset 0 0 0 1px var(--border-strong); }
+  .viewerButton:not(:disabled):hover { background: var(--surface-muted); }
+}
+@media (hover: none) {
+  .dots { display: flex; }
+  .expand { opacity: 1; }
+}
+.size:focus-visible:not([data-active]) { box-shadow: inset 0 0 0 1px var(--border-strong); }
+.thumb:focus-visible { opacity: 1; }
+
+@container (max-width: 680px) {
+  .layout { gap: var(--space-6); grid-template-columns: minmax(0, 1fr); }
+}
+@container (max-width: 520px) {
+  .media { grid-template-areas: "stage" "rail"; grid-template-columns: minmax(0, 1fr); }
+  .rail { flex-direction: row; contain: none; }
+  .thumb { width: 56px; }
+  .stage { border-radius: 18px; }
+}
+
+/* Fullscreen viewer. */
+.viewer { position: fixed; z-index: 1000; inset: 0; color: var(--foreground); font-family: var(--font-body); font-size: var(--text-sm); letter-spacing: var(--tracking-body); }
+.backdrop { position: absolute; inset: 0; background: color-mix(in oklab, var(--background) 92%, transparent); -webkit-backdrop-filter: blur(20px) saturate(1.2); backdrop-filter: blur(20px) saturate(1.2); }
+.frame { position: absolute; overflow: hidden; background: var(--surface-muted); cursor: zoom-in; touch-action: none; user-select: none; will-change: transform; }
+.frame[data-zoomed] { cursor: zoom-out; }
+.zoomLayer { position: absolute; inset: 0; }
+.frameSlide { position: absolute; inset: 0; }
+.viewerTop { position: absolute; top: 0; right: 0; left: 0; display: flex; height: 64px; box-sizing: border-box; align-items: center; justify-content: space-between; gap: 12px; padding: 0 16px 0 24px; }
+.counter { font-variant-numeric: tabular-nums; font-weight: 500; }
+.hint { overflow: hidden; color: var(--text-muted); font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; }
+.viewerButton { display: grid; width: 40px; height: 40px; flex: none; place-items: center; padding: 0; border: 0; border-radius: 50%; background: var(--surface-raised); box-shadow: inset 0 0 0 1px var(--border); color: var(--foreground); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard), transform var(--duration-instant) var(--ease-standard); }
+.viewerButton:active:not(:disabled) { transform: scale(.94); }
+.viewerButton:disabled { cursor: default; opacity: .35; }
+.viewerNav { position: absolute; bottom: 16px; left: 50%; display: flex; align-items: center; gap: 14px; translate: -50% 0; }
+.viewerDots { display: flex; gap: 5px; }
+.viewerDots .dot { background: color-mix(in oklab, var(--foreground) 22%, transparent); }
+.viewerDots .dot[data-active] { background: var(--foreground); }
+
+@media (max-width: 640px) {
+  .viewerTop { height: 56px; padding: 0 12px 0 16px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dot, .thumb, .size, .swatch, .viewerButton, .expand { transition-duration: 0ms; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .backdrop { background: var(--background); -webkit-backdrop-filter: none; backdrop-filter: none; }
+  .expand { background: var(--surface-raised); -webkit-backdrop-filter: none; backdrop-filter: none; }
+}

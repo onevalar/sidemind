@@ -188,7 +188,7 @@ describe('orb portal access', () => {
     const ownerId = JSON.parse(await fs.readFile(config.ownerFile, 'utf8')).userId;
     const entered = await request(app).get('/api/local/portal').set(PORTAL_HEADERS);
     expect(entered.status).toBe(302);
-    expect(entered.headers.location).toBe('/c/new');
+    expect(entered.headers.location).toBe('/canvas/');
     expect(entered.headers['cache-control']).toBe('no-store');
     expect(entered.headers['content-security-policy']).toBe(
       "frame-ancestors 'self' https://ampcode.com",

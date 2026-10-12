@@ -1,0 +1,110 @@
+/* The block is its own container, so the split follows the space it is given rather than the viewport. */
+.root { container: login-split / inline-size; position: relative; width: 100%; min-width: 0; min-height: 640px; overflow: hidden; border: 1px solid var(--border); border-radius: var(--radius-panel); background: var(--background); color: var(--foreground); font-family: var(--font-body); letter-spacing: var(--tracking-body); }
+.root[data-full-screen] { min-height: 100dvh; border: 0; border-radius: 0; }
+.layout { display: grid; min-height: inherit; grid-template-columns: minmax(0, 1fr); }
+
+.formSide { display: grid; min-width: 0; min-height: 600px; grid-template-rows: auto 1fr auto; }
+.root[data-full-screen] .formSide { min-height: 100dvh; }
+
+.topBar { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); padding: var(--space-5) var(--space-5) 0; }
+.brand { display: inline-flex; align-items: center; gap: var(--space-2); font-size: var(--text-base); font-weight: 500; letter-spacing: var(--tracking-body); line-height: 1; }
+.brand svg { flex: none; color: var(--accent); }
+.signUp { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); white-space: nowrap; }
+.signUp .textLink { color: var(--foreground); font-weight: 500; }
+
+.main { display: grid; min-width: 0; align-content: center; justify-items: center; padding: var(--space-10) var(--space-5); }
+/* Clips the leaving step while the height glides. The box reaches past the column so a shaking field is never cut. */
+.viewport { width: calc(100% + var(--space-6)); max-width: calc(22.5rem + var(--space-6)); margin-inline: calc(var(--space-3) * -1); overflow: hidden; }
+/* The leaving step pops out against this box. */
+.track { position: relative; }
+.step { display: grid; min-width: 0; padding: var(--space-2) var(--space-3); }
+
+.heading { display: grid; justify-items: start; gap: var(--space-2); margin-bottom: var(--space-6); }
+.heading :is(h1, h2) { margin: 0; font-family: var(--font-display); font-size: var(--text-3xl); font-weight: 400; letter-spacing: var(--tracking-display); line-height: var(--leading-display); text-wrap: balance; }
+.heading p { margin: 0; color: var(--text-secondary); font-size: var(--text-sm); line-height: var(--leading-body); text-wrap: pretty; }
+/* Lines whose copy changes in place: the old words pop out against the line itself. */
+.swapLine { position: relative; justify-self: stretch; }
+.swapText { display: block; }
+
+.form { display: grid; gap: var(--space-4); }
+.wide { width: 100%; }
+.providerMark { flex: none; }
+.divider { display: flex; align-items: center; gap: var(--space-3); margin: var(--space-5) 0; color: var(--text-muted); font-size: var(--text-xs); line-height: 1; }
+.divider::before, .divider::after { flex: 1; height: 1px; background: var(--border); content: ""; }
+.providers { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-2); }
+.providers .providerButton { min-width: 0; padding-inline: var(--space-2); }
+
+/* The address the password belongs to. Pressing it steps back to edit. */
+.chip { display: inline-flex; max-width: 100%; min-height: var(--control-height-sm); align-items: center; gap: var(--space-2); border: 1px solid var(--border); border-radius: var(--radius-pill); padding: 3px var(--space-3) 3px 3px; background: var(--surface); color: var(--foreground); font: inherit; font-size: var(--text-sm); line-height: var(--leading-body); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: background-color var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), transform var(--duration-spring) var(--ease-spring); }
+.chip > svg { flex: none; color: var(--text-muted); }
+.chipEmail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chip:active { background: var(--surface-muted); transform: scale(.97); transition-duration: var(--duration-fast), var(--duration-fast), 100ms; }
+
+/* No gap inside: a closing message row would otherwise leave a gap behind until it unmounts. */
+.fieldGroup { display: grid; min-width: 0; }
+.passwordField { position: relative; min-width: 0; }
+/* Sits in the label row. Padding widens the hit area while negative margin keeps it on the label's line. */
+.forgot { position: absolute; top: 0; right: 0; display: inline-flex; margin: -6px -4px 0 0; border: 0; border-radius: 8px; padding: 6px 4px; background: none; color: var(--text-secondary); font: inherit; font-size: var(--text-sm); line-height: var(--leading-body); cursor: pointer; -webkit-tap-highlight-color: transparent; transition: color var(--duration-fast) var(--ease-standard); }
+.forgot[aria-disabled="true"] { color: var(--text-secondary); cursor: default; }
+.forgotLabel { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.forgotLabel svg { flex: none; color: var(--success); }
+/* Row space is padding inside the clipped box, so the height opens from a true zero. */
+.row { overflow: hidden; }
+.error { margin: 0; padding-top: var(--space-2); color: var(--danger); font-size: var(--text-xs); line-height: var(--leading-body); }
+.notice { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--space-2); margin: 0; padding-top: var(--space-2); color: var(--text-secondary); font-size: var(--text-xs); line-height: var(--leading-body); overflow-wrap: anywhere; }
+.notice .textLink { position: relative; color: var(--foreground); font-weight: 500; }
+.notice .textLink[aria-disabled="true"] { color: var(--text-muted); font-weight: 400; cursor: default; }
+.resendLabel { display: inline-flex; align-items: baseline; gap: .3em; white-space: nowrap; }
+.time { display: inline-flex; font-variant-numeric: tabular-nums; }
+.timeColumn { position: relative; display: inline-flex; justify-content: center; }
+.timeColumn > span { display: inline-block; }
+.strong { color: var(--foreground); font-weight: 500; }
+
+/* On success the full width button draws in to a round check. */
+.submitRow { display: flex; justify-content: center; margin-top: var(--space-2); }
+.submitSlot { display: flex; min-width: 0; }
+.submitSlot .submit { width: 100%; transition: color var(--duration-fast) var(--ease-standard), background var(--duration-fast) var(--ease-standard), border-color var(--duration-fast) var(--ease-standard), opacity var(--duration-fast) var(--ease-standard), box-shadow var(--duration-fast) var(--ease-standard), border-radius var(--duration-considered) var(--ease-standard); }
+.submitSlot[data-success] .submit { border-radius: var(--radius-pill); padding-inline: 0; }
+
+.account { display: flex; min-width: 0; align-items: center; gap: var(--space-3); margin-bottom: var(--space-6); }
+.accountText { display: grid; min-width: 0; font-size: var(--text-sm); line-height: var(--leading-body); }
+.accountEmail { overflow: hidden; color: var(--text-secondary); text-overflow: ellipsis; white-space: nowrap; }
+.progress { height: 2px; overflow: hidden; border-radius: 1px; background: var(--border); }
+.progressFill { display: block; height: 100%; background: var(--accent); transform-origin: left center; }
+.doneActions { padding-top: var(--space-2); }
+
+.footer { position: relative; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2) var(--space-5); padding: 0 var(--space-5) var(--space-5); color: var(--text-muted); font-size: var(--text-xs); line-height: var(--leading-body); }
+.status { position: relative; display: block; min-width: 0; flex: 1 1 14rem; }
+.status > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.footerLinks { display: flex; gap: var(--space-4); }
+.srOnly { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.textLink { border: 0; padding: 0; background: none; color: inherit; font: inherit; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; cursor: pointer; transition: color var(--duration-fast) var(--ease-standard), text-decoration-color var(--duration-fast) var(--ease-standard); }
+
+/* The photo side: a full bleed, still image. It only appears once there is room for two columns. */
+.photoSide { position: relative; display: none; min-width: 0; overflow: hidden; border-left: 1px solid var(--border); background: var(--surface-muted); }
+.photo { object-fit: cover; object-position: 50% 58%; }
+:global(:root[data-theme="dark"]) .photo { filter: brightness(.86); }
+
+@media (hover: hover) and (pointer: fine) {
+  .textLink:hover:not([aria-disabled="true"]) { color: var(--foreground); text-decoration-color: currentColor; }
+  .forgot:hover:not([aria-disabled="true"]) { color: var(--foreground); }
+  .chip:hover { border-color: var(--border-strong); background: var(--surface-muted); }
+}
+
+@container login-split (min-width: 480px) {
+  .topBar { padding: var(--space-6) var(--space-8) 0; }
+  .footer { padding: 0 var(--space-8) var(--space-6); }
+}
+@container login-split (min-width: 760px) {
+  .layout { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .formSide, .root[data-full-screen] .formSide { min-height: 0; }
+  .photoSide { display: block; }
+}
+@container login-split (min-width: 1100px) {
+  .layout { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chip, .forgot, .textLink { transition: none; }
+  .chip:active { transform: none; }
+}
