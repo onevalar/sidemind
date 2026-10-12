@@ -261,7 +261,7 @@ async function relocate(ctx: ToolContext, moves: Map<string, string>, options: {
       destination.frames = [...(destination.frames ?? []), ...layout.frames.map(frame => ({ ...frame, space: moveFrames, members: frame.members.map(name => moves.get(name) ?? name) }))]
     } else if (frames.some((frame, index) => frame.members.join('\n') !== layout.frames[index]!.members.join('\n'))) patch(folder).frames = frames
   }
-  return { files, layouts: [...patches].map(([folder, patch]) => ({ folder, patch })), after: async ctx => { for (const [from, to] of moves) await ctx.store.renameVisit(from, to).catch(() => {}) } }
+  return { files, layouts: [...patches].map(([folder, patch]) => ({ folder, patch })) }
 }
 
 // ---------- planners (write tools) ----------
@@ -390,7 +390,6 @@ const PLANNERS: Record<string, (ctx: ToolContext, args: Args) => Promise<Plan>> 
     const plan = moves.size ? await relocate(ctx, moves, { keepPositions: true, frameMoves }) : { files: [], layouts: [] }
     return { ...plan, activity: `正在重命名文件夹「${folder}」`, result: { renamed: folder, to: destination, notes: moves.size },
       after: async ctx => {
-        await (plan as Plan).after?.(ctx)
         for (const item of subfolders.map(item => destination + item.slice(folder.length))) await ctx.store.ensureFolder(item)
         for (const item of [...subfolders].sort((a, b) => b.length - a.length)) await ctx.store.removeEmptyFolder(item).catch(() => false)
       } }

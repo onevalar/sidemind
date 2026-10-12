@@ -62,7 +62,7 @@ export const api = {
   setRemote: (url: string | null) => request<RepoStatus>('/api/repo/remote', { method: 'PUT', body: JSON.stringify({ url }) }),
   push: async (onEvent: (event: PushEvent) => void, signal: AbortSignal) => {
     const response = await fetch('/api/repo/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal })
-    await ndjson(response, onEvent, '推送连接中断。请刷新状态后重试。')
+    await ndjson(response, onEvent, '同步连接中断。请刷新状态后重试。')
   },
   openWorkspaceFolder: (folder: string) => request<{ ok: true }>('/api/workspace/open', { method: 'POST', body: JSON.stringify({ folder }) }),
   listNotes: () => request<NoteSummary[]>('/api/notes'),
@@ -71,7 +71,6 @@ export const api = {
   createNote: (name?: string, content?: string, folder = '') =>
     request<{ name: string }>('/api/notes', { method: 'POST', body: JSON.stringify({ name, content, folder }) }),
   loadNote: (name: string, signal?: AbortSignal) => request<NoteDTO>(`/api/notes/${enc(name)}`, { signal }),
-  recordOpen: (name: string) => request<{ ok: true }>(`/api/notes/${enc(name)}/open`, { method: 'POST', body: '{}' }),
   saveContent: (name: string, content: string, expectedContent: string) => request<NoteDTO>(`/api/notes/${enc(name)}/content`, { method: 'PUT', body: JSON.stringify({ content, expectedContent }) }),
   search: (query: string, signal?: AbortSignal) => request<(NoteSummary & { snippet: string })[]>(`/api/search?q=${enc(query)}`, { signal }),
   settings: () => request<AppSettings>('/api/settings'),

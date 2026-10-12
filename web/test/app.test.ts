@@ -151,34 +151,6 @@ describe('API', () => {
     expect(await fs.readFile(library, 'utf8')).toBe('{broken')
   })
 
-  it('records explicit visits independently of content changes and background reads', async () => {
-    const file = path.join(dir, 'Welcome.md')
-    const content = await fs.readFile(file, 'utf8')
-    const mtime = (await fs.stat(file)).mtimeMs
-    const list = async () => (await (await app.request('/api/notes', { headers: H })).json()) as { name: string; lastOpenedAt: number }[]
-    await app.request('/api/notes/Welcome.md', { headers: H })
-    expect((await list())[0]!.lastOpenedAt).toBe(0)
-    const visit = await app.request('/api/notes/Welcome.md/open', { method: 'POST', headers: J, body: '{}' })
-    expect(visit.status).toBe(200)
-    const first = (await list())[0]!.lastOpenedAt
-    expect(first).toBeGreaterThan(0)
-    await app.request('/api/notes/Welcome.md', { headers: H })
-    expect((await list())[0]!.lastOpenedAt).toBe(first)
-    expect(await fs.readFile(file, 'utf8')).toBe(content)
-    expect((await fs.stat(file)).mtimeMs).toBe(mtime)
-    const reopened = new NoteStore(dir)
-    expect((await reopened.list())[0]!.lastOpenedAt).toBe(first)
-    // Visits are local view state in the cache, never in the committed canvas files.
-    const recent = path.join(dir, '.canvasnote', 'cache', 'recent.json'), canvas = path.join(dir, '.canvasnote', 'canvas', '_canvas.json')
-    expect(JSON.parse(await fs.readFile(recent, 'utf8')).notes['Welcome.md']).toBe(first)
-    expect(await fs.readFile(canvas, 'utf8')).not.toContain('lastOpenedAt')
-    const beforeMissing = await fs.readFile(recent, 'utf8')
-    const missing = await app.request('/api/notes/Missing.md/open', { method: 'POST', headers: J, body: '{}' })
-    expect(missing.status).toBe(404)
-    expect(await fs.readFile(recent, 'utf8')).toBe(beforeMissing)
-    expect((await app.request('/api/notes/Welcome.md/open', { method: 'POST', headers: { ...H, 'content-type': 'text/plain' }, body: '{}' })).status).toBe(415)
-  })
-
   it('404s on a missing note and 400s on a bad name', async () => {
     expect((await app.request('/api/notes/nope.md', { headers: H })).status).toBe(404)
     for (const name of ['x.txt', '../outside.md', 'Work/../outside.md', '.private.md', '.canvasnote/private.md']) {

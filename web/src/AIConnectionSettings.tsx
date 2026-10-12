@@ -9,7 +9,7 @@ function sameAddress(first: string, second: string): boolean {
 
 const SLOTS: Record<ModelSlot, { title: string; description: string; model: string }> = {
   main: { title: '其他模型服务 · API 密钥', description: '也可连接自己的 OpenAI 兼容服务。启用 ChatGPT 时优先使用 ChatGPT，需在「ChatGPT」页中切换才会改用此连接。', model: '例如：gpt-4o-mini' },
-  summary: { title: '总结与校验模型', description: '推送时用它分析改动、更新记忆并撰写提交说明，也用于压缩长对话和批量分析。建议选择便宜的模型；未配置时使用主对话模型。', model: '例如：gpt-4o-mini' },
+  summary: { title: '总结与校验模型', description: '同步时用它分析改动、更新记忆并撰写提交说明，也用于压缩长对话和批量分析。建议选择便宜的模型；未配置时使用主对话模型。', model: '例如：gpt-4o-mini' },
   embedding: { title: 'Embedding 服务', description: '用于按语义查找和相关文章，填写 OpenAI 兼容的 /embeddings 服务。未配置时不影响其他功能；更换模型后向量会自动重建。', model: '例如：text-embedding-3-small' },
 }
 

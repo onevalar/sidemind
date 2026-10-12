@@ -103,26 +103,28 @@ describe('NoteStore', () => {
     expect((await restarted.search('externally replaced'))[0]).toMatchObject({ name: 'Work/Alpha.md', position: positions['Work/Alpha.md'] })
   })
 
-  it('does not write Markdown on reads, visits or article moves', async () => {
+  it('keeps Markdown and obsolete visit records untouched on reads and layout saves', async () => {
     const src = '# T\r\n\r\npara\r\n'
     const file = path.join(dir, 'c.md')
+    const recent = path.join(store.paths.cache, 'recent.json'), obsolete = '{broken old visit cache'
+    await fs.writeFile(recent, obsolete)
     await fs.writeFile(file, src, 'utf8')
     await fs.utimes(file, 1234567890, 1234567890)
     const mtime = (await fs.stat(file)).mtimeMs
     expect((await store.load('c.md')).content).toBe(src)
     await store.list()
-    await store.search('para')
-    await store.recordOpen('c.md')
+    expect((await store.search('para')).map(note => note.name)).toContain('c.md')
     await store.savePositions({ 'c.md': { x: -431, y: 89 } })
-    await new NoteStore(dir).list()
+    expect((await new NoteStore(dir).list()).find(note => note.name === 'c.md')?.position).toEqual({ x: -431, y: 89 })
     expect(await fs.readFile(file, 'utf8')).toBe(src)
     expect((await fs.stat(file)).mtimeMs).toBe(mtime)
+    expect(await fs.readFile(recent, 'utf8')).toBe(obsolete)
   })
 
   it.each([
     '{not json',
     JSON.stringify({ version: 1, notes: [] }),
-    JSON.stringify({ version: 1, notes: { 'Welcome.md': { position: { x: 'bad', y: 7 }, lastOpenedAt: 0 } } }),
+    JSON.stringify({ version: 1, notes: { 'Welcome.md': { position: { x: 'bad', y: 7 } } } }),
   ])('preserves malformed library data and keeps Markdown readable (%s)', async (corrupt) => {
     const original = await store.load('Welcome.md')
     const file = path.join(dir, '.canvasnote', 'canvas', '_canvas.json')
@@ -132,7 +134,6 @@ describe('NoteStore', () => {
     expect(await restarted.load(original.name)).toEqual(original)
     await expect(restarted.list()).rejects.toBeInstanceOf(ConflictError)
     await expect(restarted.savePositions({ [original.name]: { x: 619, y: -47 } })).rejects.toBeInstanceOf(ConflictError)
-    await expect(restarted.recordOpen(original.name)).rejects.toBeInstanceOf(ConflictError)
     expect(await fs.readFile(file, 'utf8')).toBe(corrupt)
     expect(await fs.readFile(path.join(dir, original.name), 'utf8')).toBe(original.content)
   })

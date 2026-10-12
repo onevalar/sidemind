@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { Viewport } from '@xyflow/react'
-import * as ContextMenu from '@radix-ui/react-context-menu'
 import type { NoteSummary } from '../shared/types'
 import { api, subscribeEvents } from './api'
 import { LibraryCanvas } from './LibraryCanvas'
@@ -9,7 +8,7 @@ import { AIConnectionSettings } from './AIConnectionSettings'
 import { ChatGPTSettings } from './ChatGPTSettings'
 import { QuickSearch } from './QuickSearch'
 import { captureContent } from './note-links'
-import { Button, Dialog, Icon, IconButton, Input, TextArea, Select, SegmentedControl } from './ui'
+import { Button, ContextMenu, Dialog, Icon, IconButton, Input, TextArea, Select, SegmentedControl } from './ui'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/arc/tabs/tabs'
 import { ResizablePanel, ResizablePanels } from './components/arc/resizable-panels/resizable-panels'
 import { AgentPanel } from './AgentPanel'
@@ -118,12 +117,8 @@ export function App() {
     if (!await beforeLeave.current()) return
     if (revision !== navigationVersion.current) return
     setSelected(name); setPreview(null); setSearchOpen(false)
-    if (name) {
-      setSpace(name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : '')
-      // The server broadcasts notes-changed after recording the visit; don't scan twice.
-      try { await api.recordOpen(name) }
-      catch (error) { setError('无法记录最近打开：' + (error as Error).message) }
-    } else if (folder !== undefined) setSpace(folder)
+    if (name) setSpace(name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : '')
+    else if (folder !== undefined) setSpace(folder)
   }, [NoteWorkspace])
   const openNote = useCallback((name: string) => { void navigate(name) }, [navigate])
   // The Agent points at notes: show their folder canvas and highlight them.
@@ -162,34 +157,29 @@ export function App() {
     finally { creating.current = false; setBusy(false) }
   }
   const visible = useMemo(() => notes.filter(note => note.space === space), [notes, space])
-  const recent = notes.filter(note => note.lastOpenedAt > 0).sort((a, b) => b.lastOpenedAt - a.lastOpenedAt)
   const aiModel = settings?.chatgpt.unavailable ? null : settings?.chatgpt.activeAccountId ? settings.chatgpt.configured ? 'ChatGPT · ' + settings.chatgpt.model : null : settings?.ai.configured ? settings.ai.model : null
   return <div className={'app' + (sidebarCollapsed ? ' sidebar-collapsed' : '')}>
     <aside className="sidebar" aria-label="笔记导航">
       <div className="brand"><span className="brand-mark"><Icon name="note" size={19}/></span><strong>Canvas Note</strong><Button variant="ghost" size="sm" isIconOnly aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} aria-expanded={!sidebarCollapsed} aria-controls="sidebar-navigation" onPress={() => setSidebarCollapsed(value => !value)}><Icon name="panel"/></Button></div>
-      <button type="button" aria-label="搜索笔记" className="search-trigger nav-item" onClick={() => setSearchOpen(true)}><Icon name="search" size={16}/><span>搜索文章</span></button>
-      <button type="button" aria-label="新建文章" className="nav-item" onClick={openCreate} disabled={busy}><Icon name="plus"/><span>新建文章</span></button>
+      <Button variant="ghost" size="sm" aria-label="搜索笔记" className="search-trigger nav-item" onPress={() => setSearchOpen(true)}><Icon name="search" size={16}/><span>搜索文章</span></Button>
+      <Button variant="ghost" size="sm" aria-label="新建文章" className="nav-item" onPress={openCreate} isDisabled={busy}><Icon name="plus"/><span>新建文章</span></Button>
       {sidebarCollapsed && <IconButton icon="grid" label="返回当前文件夹画布" onPress={() => void navigate(null)}/>}
       <div id="sidebar-navigation" className="sidebar-navigation" hidden={sidebarCollapsed}>
       <div className="section-header sidebar-section"><span className="section-label">文件夹画布</span><IconButton icon="plus" label="新建文件夹" onPress={() => { setFormError(''); setNewFolderOpen(true) }}/></div>
-      <nav className="spaces" aria-label="文件夹">{folders.map(folder => <ContextMenu.Root key={folder} modal={false}>
-        <ContextMenu.Trigger asChild><button type="button" aria-label={folderLabel(folder)} aria-current={space === folder && !selected ? 'page' : undefined} className={'nav-item ' + (space === folder && !selected ? 'is-active' : '')} onClick={() => void navigate(null, folder)}><Icon name="folder" size={16}/><span title={folderLabel(folder)}>{folderLabel(folder)}</span><span className="count">{notes.filter(note => note.space === folder).length}</span></button></ContextMenu.Trigger>
-        <ContextMenu.Portal><ContextMenu.Content className="canvas-context-menu" collisionPadding={8} aria-label="文件夹操作">
-          <ContextMenu.Label className="canvas-menu-label">{folderLabel(folder)}</ContextMenu.Label>
-          <ContextMenu.Item className="canvas-menu-item" disabled={openingFolder} title="在运行笔记服务的电脑上打开这个文件夹，不会切换当前画布" onSelect={() => void openFolder(folder)}><Icon name="folder" size={16}/>{openingFolder ? '正在打开…' : '在文件管理器中打开'}</ContextMenu.Item>
-        </ContextMenu.Content></ContextMenu.Portal>
-      </ContextMenu.Root>)}</nav>
-      <span className="section-label sidebar-section">最近打开</span>
-      <div className="recent-notes">{recent.slice(0, 8).map(note => <button type="button" aria-label={note.title} aria-current={selected === note.name ? 'page' : undefined} key={note.name} className={'nav-item ' + (selected === note.name ? 'is-active' : '')} onClick={() => openNote(note.name)}><Icon name="note" size={16}/><span title={note.title}>{note.title}</span></button>)}{!recent.length && <p className="recent-empty muted">打开过的文章会显示在这里。</p>}</div>
+      <nav className="spaces" aria-label="文件夹">{folders.map(folder => <ContextMenu key={folder} label="文件夹操作" heading={folderLabel(folder)} items={[
+        { id: 'open-folder', label: openingFolder ? '正在打开…' : '在文件管理器中打开', disabled: openingFolder, icon: <Icon name="folder" size={16}/>, onSelect: () => void openFolder(folder) },
+      ]}>
+        <Button variant="ghost" size="sm" aria-label={folderLabel(folder)} aria-current={space === folder && !selected ? 'page' : undefined} className={'nav-item ' + (space === folder && !selected ? 'is-active' : '')} onPress={() => void navigate(null, folder)}><Icon name="folder" size={16}/><span title={folderLabel(folder)}>{folderLabel(folder)}</span><span className="count">{notes.filter(note => note.space === folder).length}</span></Button>
+      </ContextMenu>)}</nav>
       </div>
-      <div className="sidebar-footer"><PushControl beforeLeave={beforeLeave} collapsed={sidebarCollapsed}/><button type="button" aria-label="设置与外观" className="nav-item" onClick={() => setSettingsOpen(true)}><Icon name="settings" size={18}/><span>设置与外观</span></button></div>
+      <div className="sidebar-footer"><PushControl beforeLeave={beforeLeave} collapsed={sidebarCollapsed}/><Button variant="ghost" size="sm" aria-label="设置" className="nav-item" onPress={() => setSettingsOpen(true)}><Icon name="settings" size={18}/><span>设置</span></Button></div>
     </aside>
     <main className="stage">
       {error && <div className="global-error" role="alert"><span>{error}</span><Button size="sm" variant="ghost" onPress={() => void refreshList()}>重试</Button><IconButton icon="close" label="关闭提示" onPress={() => setError('')}/></div>}
       <div className="agent-workspace"><ResizablePanels label="笔记与 AI 助手" onLayoutChange={sizes => { if (aiOpen && sizes[1]) localStorage.setItem('canvas.ai-width', String(sizes[1])) }}>
       <ResizablePanel id="article-pane" label="笔记与 AI 助手分栏宽度" defaultSize={100 - aiShare} minSize={360}>
       {selected && NoteWorkspace ? <NoteWorkspace key={selected} name={selected} theme={resolvedTheme} beforeLeave={beforeLeave} agentSelection={agentSelection} aiOpen={aiOpen} onToggleAI={() => setAiOpen(value => !value)} onOpenNote={openNote} onBack={() => void navigate(null)}/> : <>
-        <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span className="library-folder" title={folderLabel(space)}>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="ghost" onPress={() => setFolderMemoryOpen(true)}>文件夹记忆</Button><Button size="sm" variant="ghost" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" onPress={() => setAiOpen(value => !value)}><Icon name="spark" size={16}/>AI 助手</Button><Button size="sm" onPress={openCreate}><Icon name="plus" size={16}/>新建文章</Button></div></header>
+        <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span className="library-folder" title={folderLabel(space)}>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="ghost" onPress={() => setFolderMemoryOpen(true)}>文件夹记忆</Button><Button size="sm" variant="secondary" className="ai-toggle" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" title={aiOpen ? '关闭 AI 助手' : '打开 AI 助手'} onPress={() => setAiOpen(value => !value)}><Icon name="spark" size={16}/>AI 助手</Button><Button size="sm" onPress={openCreate}><Icon name="plus" size={16}/>新建文章</Button></div></header>
         {!loaded ? <div className="empty">{error ? '笔记尚未载入，请重试。' : '正在载入画布…'}</div> : <LibraryCanvas key={space} folder={space} notes={visible} theme={resolvedTheme} viewport={views.get(space) ?? { x: 0, y: 0, zoom: 1 }} onViewport={viewport => { views.set(space, viewport); localStorage.setItem('canvas.views', JSON.stringify([...views])) }} beforeLeave={beforeLeave} onOpen={openNote} onPreview={setPreview} onCreate={openCreate} focus={focus}/>}
       </>}
       </ResizablePanel>
@@ -207,7 +197,7 @@ export function App() {
       <Button type="button" size="sm" variant="ghost" isDisabled={busy} onPress={() => setReferenceOpen(true)}>引用已有文章</Button>{!!references.length && <div className="capture-references">{references.map(note => <span className="capture-reference" key={note.name}><span>{note.title}</span><IconButton icon="close" label={'移除引用：' + note.title} isDisabled={busy} onPress={() => setReferences(current => current.filter(item => item.name !== note.name))}/></span>)}</div>}{formError && <p id="new-note-error" role="alert" className="error-text">创建失败：{formError}<br/>输入已保留，可重试。</p>}
       </form>
     </Dialog>
-    <Dialog title="设置与外观" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
+    <Dialog title="设置" className="settings-dialog" open={settingsOpen} onClose={() => setSettingsOpen(false)}>
       <Tabs defaultValue="general" className="settings-tabs">
         <TabsList aria-label="设置分类"><TabsTrigger value="general">通用</TabsTrigger><TabsTrigger value="chatgpt">ChatGPT</TabsTrigger><TabsTrigger value="api">API 与模型</TabsTrigger></TabsList>
         <TabsContent value="general" forceMount>

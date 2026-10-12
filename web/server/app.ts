@@ -232,7 +232,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
       try { await pusher.push(emit, signal) }
       catch (error) {
         if (!(error instanceof GitError || error instanceof ConflictError || error instanceof AIRequestError || error instanceof ChatGPTError)) console.error(error)
-        await emit({ type: 'error', text: signal.aborted ? '推送已停止。已更新的记忆保留在工作区，下次推送时一起提交。' : error instanceof GitError || error instanceof ConflictError || error instanceof AIRequestError || error instanceof ChatGPTError ? error.message : '推送失败，请稍后重试。' })
+        await emit({ type: 'error', text: signal.aborted ? '同步已停止。已更新的记忆保留在工作区，下次同步时一起提交。' : error instanceof GitError || error instanceof ConflictError || error instanceof AIRequestError || error instanceof ChatGPTError ? error.message : '同步失败，请稍后重试。' })
       } finally { await emit({ type: 'done' }) }
     })
   })
@@ -257,12 +257,6 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
   })
 
   app.get('/api/notes/:name', async (c) => c.json(await store.load(c.req.param('name'))))
-
-  app.post('/api/notes/:name/open', async (c) => {
-    await store.recordOpen(c.req.param('name'))
-    bus.emit({ type: 'notes-changed' })
-    return c.json({ ok: true })
-  })
 
   app.put('/api/notes/:name/content', async (c) => {
     const body = await c.req.json().catch(() => null)

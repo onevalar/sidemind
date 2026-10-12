@@ -39,7 +39,8 @@ describe('data repository', () => {
     expect(await fs.readFile(path.join(root, 'cache', 'legacy-agent-changes', 'x.json'), 'utf8')).toBe('{}')
     const store = new NoteStore(paths)
     const notes = await store.list()
-    expect(notes.map(note => [note.name, note.position, note.lastOpenedAt])).toEqual([['A.md', { x: 11, y: 22 }, 5], ['Work/B.md', { x: -3, y: 4 }, 0]])
+    expect(notes.map(note => [note.name, note.position])).toEqual([['A.md', { x: 11, y: 22 }], ['Work/B.md', { x: -3, y: 4 }]])
+    await expect(fs.access(path.join(paths.cache, 'recent.json'))).rejects.toThrow()
     expect((await store.canvas('Work')).frames[0]!.members).toEqual(['Work/B.md'])
     // Reopening is a no-op; cache stays out of git.
     expect((await openDataRepo(root)).migrated).toBe(false)
@@ -203,6 +204,17 @@ describe('push pipeline', () => {
     // Another device edits a memory file and a note.
     const other = path.join(dir, 'other')
     execFileSync('git', ['clone', '-q', remote, other])
+    // A clean local workspace must still receive changes made only on another device.
+    const localA = (await store.load('Work/A.md')).content
+    expect(await (await app.request('/api/repo/status', { headers: H })).json()).toMatchObject({ changes: 0, ahead: 0 })
+    const remoteNote = '# From remote\n\n只有另一台设备写入的内容。\n'
+    await fs.writeFile(path.join(other, 'notes', 'Work', 'FromRemote.md'), remoteNote)
+    git(other, 'add', '-A'); git(other, 'commit', '-qm', 'remote-only note'); git(other, 'push', '-q')
+    const received = await push(app)
+    expect(received.report).toMatchObject({ committed: null, pushed: true })
+    expect((await store.load('Work/FromRemote.md')).content).toBe(remoteNote)
+    expect((await store.load('Work/A.md')).content).toBe(localA)
+    expect(git(root, 'rev-parse', 'HEAD')).toBe(git(other, 'rev-parse', 'HEAD'))
     await fs.appendFile(path.join(other, 'memory', 'Work', 'A.md'), '\n## 缺口\n- 另一台设备补充 〔用户〕\n')
     git(other, 'commit', '-qam', 'other device memory'); git(other, 'push', '-q')
     const a = (await store.load('Work/A.md')).content

@@ -12,6 +12,8 @@ export interface CommandItem { id: string; label: string; description?: string; 
 export interface CommandPaletteProps {
   items: CommandItem[]; placeholder?: string; onSelect?: (item: CommandItem) => void; onClose?: () => void; label?: string; autoFocus?: boolean;
   className?: string;
+  /** Application search scopes, kept inside the palette's single surface. */
+  toolbar?: ReactNode;
   /** Controlled query and server filtering preserve full-document search. */
   query?: string; onQueryChange?: (query: string) => void; filter?: boolean; loading?: boolean; emptyMessage?: string;
 }
@@ -22,7 +24,7 @@ const GLIDE_ROWS = 6;
 /** Rows fade out while the rest glide into their place; when the list snaps they leave at once so nothing overlaps the new rows. */
 const rowExit: Variants = { exit: (glide: boolean) => ({ opacity: 0, transition: glide ? leave : { duration: 0 } }) };
 
-export function CommandPalette({ items, className, placeholder = "搜索标题或正文…", onSelect, onClose, label = "搜索标题或正文", autoFocus = false, query: controlledQuery, onQueryChange, filter = true, loading = false, emptyMessage = "没有找到匹配的文章" }: CommandPaletteProps) {
+export function CommandPalette({ items, className, toolbar, placeholder = "搜索标题或正文…", onSelect, onClose, label = "搜索标题或正文", autoFocus = false, query: controlledQuery, onQueryChange, filter = true, loading = false, emptyMessage = "没有找到匹配的文章" }: CommandPaletteProps) {
   const inputId = useId();
   const [localQuery, setLocalQuery] = useState("");
   const query = controlledQuery ?? localQuery;
@@ -143,8 +145,9 @@ export function CommandPalette({ items, className, placeholder = "搜索标题�
       <AnimatePresence mode="popLayout" initial={false}>
         {query ? <motion.button key="clear" className={styles.clearButton} type="button" aria-label="清空搜索" onClick={() => { setQuery(""); setActiveIndex(null); inputRef.current?.focus(); }} initial={reduced ? false : { opacity: 0, scale: .6, filter: `blur(${motionTokens.blur.subtle}px)` }} animate={{ opacity: 1, scale: 1, filter: "blur(0px)" }} exit={reduced ? { opacity: 0, transition: { duration: 0 } } : { opacity: 0, scale: .6, filter: `blur(${motionTokens.blur.subtle}px)`, transition: leave }} transition={reduced ? { duration: 0 } : { default: motionTokens.spring.snappy, opacity: { duration: motionTokens.duration.instant } }}><X width={15} height={15} aria-hidden="true"/></motion.button> : null}
       </AnimatePresence>
-      {onClose ? <button className={styles.closeButton} type="button" aria-label="关闭搜索" onClick={onClose}>关闭</button> : null}
+      {onClose ? <button className={styles.closeButton} type="button" aria-label="关闭搜索" onClick={onClose}>Esc</button> : null}
     </div>
+    {toolbar && <div className={styles.toolbar}>{toolbar}</div>}
     <motion.div className={styles.resultsFrame} initial={false} animate={{ height: listHeight }} transition={reduced ? { duration: 0 } : motionTokens.spring.smooth}>
       <motion.div ref={listRef} layoutScroll id={`${inputId}-results`} className={styles.results} role="listbox" aria-label="搜索结果" aria-busy={loading}>
         <motion.span className={styles.highlight} style={{ y: highlightY, height: highlightHeight, opacity: highlightOpacity }} aria-hidden="true"/>

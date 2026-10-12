@@ -26,6 +26,8 @@ export interface DialogContentProps extends ComponentPropsWithoutRef<typeof Dial
   title: string;
   description?: string;
   children: ReactNode;
+  /** A composed block (e.g. CommandPalette) already owns the visible surface. */
+  bare?: boolean;
 }
 
 const fade: Transition = { duration: motionTokens.duration.instant };
@@ -39,7 +41,7 @@ function SwapText({ text }: { text: string }) {
   </AnimatePresence>;
 }
 
-export function DialogContent({ title, description, children, className, onPointerDownOutside, ...props }: DialogContentProps) {
+export function DialogContent({ title, description, children, className, bare = false, onPointerDownOutside, ...props }: DialogContentProps) {
   const open = useContext(OpenContext);
   const reduced = useReducedMotion();
   // When the open state last changed. Radix waits for the click before treating a press as outside, and a press on the trigger
@@ -50,9 +52,10 @@ export function DialogContent({ title, description, children, className, onPoint
     onPointerDownOutside?.(event);
     if (open !== null && (!change.current.open || event.detail.originalEvent.timeStamp < change.current.at)) event.preventDefault();
   };
-  const classes = [styles.content, className].filter(Boolean).join(" ");
+  const classes = [styles.content, bare && styles.bare, className].filter(Boolean).join(" ");
   const inner = <>
-    <div className={styles.header}><div><DialogPrimitive.Title className={styles.title}><SwapText text={title}/></DialogPrimitive.Title>{description ? <DialogPrimitive.Description className={styles.description}><SwapText text={description}/></DialogPrimitive.Description> : null}</div><DialogPrimitive.Close className={styles.close} aria-label="关闭对话框"><X size={16} strokeWidth={1.75} aria-hidden="true"/></DialogPrimitive.Close></div>
+    {bare ? <DialogPrimitive.Title className={styles.srOnly}>{title}</DialogPrimitive.Title>
+      : <div className={styles.header}><div><DialogPrimitive.Title className={styles.title}><SwapText text={title}/></DialogPrimitive.Title>{description ? <DialogPrimitive.Description className={styles.description}><SwapText text={description}/></DialogPrimitive.Description> : null}</div><DialogPrimitive.Close className={styles.close} aria-label="关闭对话框"><X size={16} strokeWidth={1.75} aria-hidden="true"/></DialogPrimitive.Close></div>}
     <div className={styles.body}>{children}</div>
   </>;
   // Under a bare Radix root the open state is unknown here, so CSS keyframes keyed off data-state animate the layers instead.

@@ -28,7 +28,7 @@ const WELCOME = `# 欢迎使用画布笔记
 笔记仍然是普通的 Markdown 文件，可以用其他编辑器打开。布局独立保存，不会写进正文。
 `
 
-type Library = { version: 1; notes: Record<string, { position: NotePosition; lastOpenedAt: number }>; frames?: CanvasFrame[] }
+type Library = { version: 1; notes: Record<string, { position: NotePosition }>; frames?: CanvasFrame[] }
 export type LayoutPatch = { positions: Record<string, NotePosition | null>; frames?: CanvasFrame[] }
 type CanvasFile = { version: 1; notes: Record<string, NotePosition>; frames: (Omit<CanvasFrame, 'space'>)[] }
 export const folderOf = (name: string) => name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : ''
@@ -169,12 +169,10 @@ export class NoteStore {
     }
   }
 
-  /** Canvas layout is split per folder (`canvas/<folder>/_canvas.json`, committed); visits live in the local cache. */
+  /** Canvas layout is split per folder (`canvas/<folder>/_canvas.json`, committed). */
   private async readLibrary(): Promise<Library> {
     const library: Library = { version: 1, notes: {}, frames: [] }
     try {
-      const recent = await this.readJSON<{ version: 1; notes: Record<string, number> }>(path.join(this.paths.cache, 'recent.json'))
-      const visits = recent?.version === 1 && recent.notes && typeof recent.notes === 'object' ? recent.notes : {}
       for (const file of await this.canvasFiles()) {
         const folder = path.relative(this.paths.canvas, path.dirname(file)).split(path.sep).join('/')
         const layout = await this.readJSON<CanvasFile>(file)
@@ -183,11 +181,10 @@ export class NoteStore {
         const prefix = folder ? folder + '/' : ''
         for (const [file, position] of Object.entries(layout.notes)) {
           if (!validPosition(position)) throw new Error()
-          library.notes[prefix + file] = { position: { x: position.x, y: position.y }, lastOpenedAt: 0 }
+          library.notes[prefix + file] = { position: { x: position.x, y: position.y } }
         }
         for (const frame of layout.frames ?? []) library.frames!.push({ ...frame, space: folder, members: (frame.members ?? []).map(name => prefix + name) })
       }
-      for (const [name, entry] of Object.entries(library.notes)) { const visit = visits[name]; if (Number.isFinite(visit)) entry.lastOpenedAt = visit! }
       this.validateFrames(library.frames!)
       return library
     } catch {
@@ -226,11 +223,9 @@ export class NoteStore {
     const folders = new Map<string, CanvasFile>()
     const folder = (name: string) => { if (!folders.has(name)) folders.set(name, { version: 1, notes: {}, frames: [] }); return folders.get(name)! }
     for (const file of await this.canvasFiles()) folder(path.relative(this.paths.canvas, path.dirname(file)).split(path.sep).join('/'))
-    const visits: Record<string, number> = {}
     for (const name of Object.keys(library.notes).sort((a, b) => a.localeCompare(b, 'zh'))) {
       const entry = library.notes[name]!
       folder(folderOf(name)).notes[name.slice(name.lastIndexOf('/') + 1)] = { x: entry.position.x, y: entry.position.y }
-      if (entry.lastOpenedAt > 0) visits[name] = entry.lastOpenedAt
     }
     for (const frame of library.frames ?? []) {
       const { space, ...rest } = frame
@@ -240,12 +235,10 @@ export class NoteStore {
       const file = path.join(this.paths.canvas, name, '_canvas.json'), next = JSON.stringify(layout, null, 2) + '\n'
       if (await fs.readFile(file, 'utf8').catch(() => null) !== next) await this.writeAtomic(file, next)
     }
-    const recent = path.join(this.paths.cache, 'recent.json'), next = JSON.stringify({ version: 1, notes: visits })
-    if (await fs.readFile(recent, 'utf8').catch(() => null) !== next) await this.writeAtomic(recent, next)
   }
 
   /** Place ONLY new files, below existing cards; content and sort order never change coordinates. */
-  private async placeNew(library: Library, names: string[]): Promise<boolean> {
+  private placeNew(library: Library, names: string[]): boolean {
     const folders = new Set(names.map(folderOf))
     let changed = false
     for (const folder of folders) {
@@ -253,13 +246,7 @@ export class NoteStore {
       const missing = names.filter(name => folderOf(name) === folder && !library.notes[name])
       const top = existing.length ? Math.max(...existing.map(name => library.notes[name]!.position.y)) + 224 : 48
       for (const [index, name] of missing.entries()) {
-        let lastOpenedAt = 0
-        // Preserve visits from the previous version; old paragraph layouts are left untouched on disk.
-        try {
-          const old = JSON.parse(await fs.readFile(path.join(this.paths.legacy, name + '.board.json'), 'utf8'))
-          if (Number.isFinite(old.lastOpenedAt) && old.lastOpenedAt > 0) lastOpenedAt = old.lastOpenedAt
-        } catch { /* no previous visit metadata */ }
-        library.notes[name] = { position: { x: 48 + index % 3 * 312, y: top + Math.floor(index / 3) * 224 }, lastOpenedAt }
+        library.notes[name] = { position: { x: 48 + index % 3 * 312, y: top + Math.floor(index / 3) * 224 } }
         changed = true
       }
     }
@@ -270,7 +257,7 @@ export class NoteStore {
     return this.withLock('library', async () => {
       const { names } = await this.scan()
       const library = await this.readLibrary()
-      if (await this.placeNew(library, names)) await this.writeLibrary(library)
+      if (this.placeNew(library, names)) await this.writeLibrary(library)
       return Promise.all(names.map(async name => {
         const file = await this.notePath(name), content = await fs.readFile(file, 'utf8')
         return {
@@ -312,22 +299,12 @@ export class NoteStore {
     })
   }
 
-  async recordOpen(name: string): Promise<void> {
-    await this.notePath(name)
-    await this.withLock('library', async () => {
-      const library = await this.readLibrary()
-      await this.placeNew(library, (await this.scan()).names)
-      library.notes[name]!.lastOpenedAt = Date.now()
-      await this.writeLibrary(library)
-    })
-  }
-
   async savePositions(positions: Record<string, NotePosition>): Promise<void> {
     if (!positions || typeof positions !== 'object' || Array.isArray(positions) || Object.keys(positions).length > 1000 || Object.values(positions).some(position => !validPosition(position))) throw new BadNameError('文章位置无效。')
     await this.withLock('library', async () => {
       for (const name of Object.keys(positions)) await this.notePath(name)
       const library = await this.readLibrary()
-      await this.placeNew(library, (await this.scan()).names)
+      this.placeNew(library, (await this.scan()).names)
       for (const [name, position] of Object.entries(positions)) library.notes[name]!.position = { x: position.x, y: position.y }
       await this.writeLibrary(library)
     })
@@ -360,7 +337,7 @@ export class NoteStore {
     await this.folderPath(folder)
     return this.withLock('library', async () => {
       const { names } = await this.scan(), library = await this.readLibrary()
-      if (await this.placeNew(library, names)) await this.writeLibrary(library)
+      if (this.placeNew(library, names)) await this.writeLibrary(library)
       return this.canvasLayout(library, folder, names)
     })
   }
@@ -377,7 +354,7 @@ export class NoteStore {
     }
     return this.withLock('library', async () => {
       const { names } = await this.scan(), library = await this.readLibrary()
-      await this.placeNew(library, names)
+      this.placeNew(library, names)
       const current = this.canvasLayout(library, folder, names)
       if (!isDeepStrictEqual(current.frames, expectedFrames)) throw new ConflictError('底板已在其他窗口修改。请先复制未保存的底板名称，再重新载入画布。')
       const available = new Set(names)
@@ -438,7 +415,7 @@ export class NoteStore {
       this.validate(name)
       if (position === null) { delete library.notes[name]; continue }
       if (!validPosition(position)) throw new BadNameError('文章位置无效。')
-      library.notes[name] = { position: { x: position.x, y: position.y }, lastOpenedAt: library.notes[name]?.lastOpenedAt ?? 0 }
+      library.notes[name] = { position: { x: position.x, y: position.y } }
     }
     if (next.frames) {
       if (next.frames.some(frame => frame.space !== folder)) throw new BadNameError('文档区必须属于当前文件夹。')
@@ -452,7 +429,7 @@ export class NoteStore {
     await this.folderPath(folder)
     return this.withLock('library', async () => {
       const { names } = await this.scan(), library = await this.readLibrary()
-      if (await this.placeNew(library, names)) await this.writeLibrary(library)
+      if (this.placeNew(library, names)) await this.writeLibrary(library)
       return this.canvasLayout(library, folder, names)
     })
   }
@@ -468,21 +445,10 @@ export class NoteStore {
       if (!old) return
       delete library.notes[from]
       const same = to !== null && folderOf(to) === folderOf(from)
-      if (same) library.notes[to] = { position: old.position, lastOpenedAt: Math.max(old.lastOpenedAt, library.notes[to]?.lastOpenedAt ?? 0) }
+      if (same) library.notes[to] = { position: old.position }
       library.frames = (library.frames ?? []).map(frame => frame.members.includes(from)
         ? { ...frame, members: same && !frame.members.includes(to!) ? frame.members.map(name => name === from ? to! : name) : frame.members.filter(name => name !== from) }
         : frame)
-      await this.writeLibrary(library)
-    })
-  }
-
-  /** Moves visit history with a renamed note; recent visits are local view state. */
-  async renameVisit(from: string, to: string): Promise<void> {
-    await this.withLock('library', async () => {
-      const library = await this.readLibrary()
-      const visit = library.notes[from]?.lastOpenedAt
-      if (!visit || !library.notes[to]) return
-      library.notes[to]!.lastOpenedAt = Math.max(library.notes[to]!.lastOpenedAt, visit)
       await this.writeLibrary(library)
     })
   }

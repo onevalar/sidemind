@@ -30,7 +30,7 @@ export function repoPaths(root: string): DataPaths {
 
 const exists = (file: string) => fs.access(file).then(() => true, () => false)
 
-type LegacyLibrary = { version: 1; notes?: Record<string, { position: { x: number; y: number }; lastOpenedAt?: number }>; frames?: { id: string; space: string; title: string; position: { x: number; y: number }; width: number; height: number; members: string[] }[] }
+type LegacyLibrary = { version: 1; notes?: Record<string, { position: { x: number; y: number } }>; frames?: { id: string; space: string; title: string; position: { x: number; y: number }; width: number; height: number; members: string[] }[] }
 
 /**
  * Opens (and if needed creates or migrates) the single Git repository holding all app data:
@@ -88,13 +88,11 @@ async function migrateMetadata(paths: DataPaths): Promise<void> {
   let library: LegacyLibrary | null = null
   try { library = JSON.parse(await fs.readFile(path.join(legacyMeta, 'library.json'), 'utf8')) } catch { /* nothing to convert */ }
   if (library?.version === 1) {
-    const recent: Record<string, number> = {}
     const folders = new Map<string, { notes: Record<string, { x: number; y: number }>; frames: unknown[] }>()
     const folderOf = (name: string) => name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : ''
     const folder = (name: string) => { if (!folders.has(name)) folders.set(name, { notes: {}, frames: [] }); return folders.get(name)! }
     for (const [name, entry] of Object.entries(library.notes ?? {})) {
       folder(folderOf(name)).notes[name.slice(name.lastIndexOf('/') + 1)] = entry.position
-      if (entry.lastOpenedAt) recent[name] = entry.lastOpenedAt
     }
     for (const frame of library.frames ?? []) {
       const { space, ...rest } = frame
@@ -105,7 +103,6 @@ async function migrateMetadata(paths: DataPaths): Promise<void> {
       await fs.mkdir(directory, { recursive: true })
       await fs.writeFile(path.join(directory, '_canvas.json'), JSON.stringify({ version: 1, ...layout }, null, 2) + '\n')
     }
-    await fs.writeFile(path.join(paths.cache, 'recent.json'), JSON.stringify({ version: 1, notes: recent }))
   }
   // Keep every old record; derived overviews are rebuilt from the notes.
   if (await exists(path.join(legacyMeta, 'agent-changes'))) await fs.rename(path.join(legacyMeta, 'agent-changes'), path.join(paths.cache, 'legacy-agent-changes'))

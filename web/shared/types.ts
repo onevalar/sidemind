@@ -30,8 +30,6 @@ export interface CanvasLayout {
 export interface NoteSummary {
   name: string
   mtime: number
-  /** Explicit user visits, independent of file modification time. */
-  lastOpenedAt: number
   title: string
   excerpt: string
   space: string

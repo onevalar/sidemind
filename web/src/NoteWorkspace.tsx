@@ -99,7 +99,7 @@ export function NoteWorkspace({ name, beforeLeave, agentSelection, aiOpen, onTog
         <SegmentedControl label="文章编辑方式" value={sourceMode ? 'source' : 'edit'} onValueChange={value => changeMode(value as typeof mode)} options={[{ value: 'edit', label: '写作' }, { value: 'source', label: '源码' }]}/>
         <Button ref={outlineToggle} variant="ghost" size="sm" aria-expanded={outlineOpen} aria-controls="editor-outline" onPress={() => setOutlineOpen(!outlineOpen)}>目录</Button>
         <Button variant="ghost" size="sm" onPress={() => setMemoryOpen(true)}>记忆</Button>
-        <Button size="sm" variant="ghost" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" onPress={() => { onToggleAI?.(); setOutlineOpen(false) }}><Icon name="spark"/>AI 助手</Button>
+        <Button size="sm" variant="secondary" className="ai-toggle" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" title={aiOpen ? '关闭 AI 助手' : '打开 AI 助手'} onPress={() => { onToggleAI?.(); setOutlineOpen(false) }}><Icon name="spark"/>AI 助手</Button>
       </div>
     </header>
     <div ref={workspace} className="workspace-body">

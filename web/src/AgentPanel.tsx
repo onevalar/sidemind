@@ -1,12 +1,12 @@
 import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import type { AgentScope, ChangeSetDetail, ChangeSetSummary, PlanStep, ProposalDetail, ProposalSummary } from '../shared/types'
 import { api, subscribeEvents } from './api'
-import { AiComposer, type AiComposerMessage } from './components/arc/blocks/ai-composer/ai-composer'
+import { AiChat, type AiChatMessage } from './components/arc/blocks/ai-chat/ai-chat'
 import { ModificationPreview } from './ModificationPreview'
-import { Button, Dialog, Icon, IconButton, Select } from './ui'
+import { Accordion, Button, Dialog, Icon, Select } from './ui'
 
 type Conversation = {
-  session?: string; messages: AiComposerMessage[]; input: string; error: string; streaming: string
+  session?: string; messages: AiChatMessage[]; input: string; error: string; streaming: string
   changes: ChangeSetSummary[]; proposals: ProposalSummary[]; plan: PlanStep[]; restored: boolean
 }
 const blank = (): Conversation => ({ messages: [], input: '', error: '', streaming: '', changes: [], proposals: [], plan: [], restored: false })
@@ -125,13 +125,13 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
   const settled = conversation.proposals.filter(proposal => proposal.status !== 'pending')
   const working = !!acting || busy
   return <aside className="ai-panel" aria-label="AI 助手">
-    <AiComposer title="AI 助手" subtitle={<Button className="ai-model" variant="ghost" size="sm" onPress={onConfigure}><Icon name="settings" size={13}/>{model || '连接模型'}</Button>}
-      headerActions={<div className="toolbar"><IconButton icon="plus" label="开始新对话" isDisabled={working} onPress={() => { conversations.current.set(key, { ...blank(), restored: true }); update() }}/><IconButton icon="close" label="关闭 AI 助手" onPress={onClose}/></div>}
-      context={<><Select label="对话范围" value={mode} disabled={working} onValueChange={value => setMode(value as typeof mode)} options={[{ value: 'context', label: name ? '当前文章' : '当前文件夹' }, ...(name ? [{ value: 'folder', label: '整个文件夹' }] : []), { value: 'chat', label: '纯聊天 · 不读取笔记' }]}/><p className="agent-context-target" title={scope.kind === 'note' ? scope.name : folderLabel}><Icon name={scope.kind === 'chat' ? 'spark' : scope.kind === 'note' ? 'note' : 'folder'} size={14}/><span>{scope.kind === 'chat' ? '不向模型提供笔记或文件工具' : (scope.kind === 'note' ? fileName(scope.name) : folderLabel) + ' · 可查阅整个笔记库'}</span></p></>}
+    <AiChat title="AI 助手" model={model} onConfigure={onConfigure} onClose={onClose} locked={working}
+      onNew={() => { conversations.current.set(key, { ...blank(), restored: true }); update() }}
+      context={<div className="agent-composer-context" title={scope.kind === 'chat' ? '不读取或修改笔记' : `以${scope.kind === 'note' ? '文章：' + scope.name : '文件夹：' + folderLabel}为上下文，可查阅整个笔记库`}><Select label="对话范围" value={mode} disabled={working} onValueChange={value => setMode(value as typeof mode)} options={[{ value: 'context', label: name ? '文章 · ' + fileName(name) : '文件夹 · ' + folderLabel }, ...(name ? [{ value: 'folder', label: '文件夹 · ' + folderLabel }] : []), { value: 'chat', label: '纯聊天 · 不读取笔记' }]}/></div>}
       messages={conversation.messages} streaming={conversation.streaming} value={conversation.input} onValueChange={value => { conversation.input = value; update() }} busy={busy} activity={activity} disabled={!model || !!acting}
       onSend={() => void ask()} onStop={() => request.current?.abort()} onOpenNote={onOpenNote}
-      emptyTitle={scope.kind === 'chat' ? '想聊些什么？' : '你的笔记，也能一起思考'} emptyText={scope.kind === 'chat' ? '聊日常、聊想法，不读取或修改笔记。' : '讨论、整理、批量修改、重命名或整理画布，\n它会记住这些笔记以后怎么用。'}
-      suggestions={scope.kind === 'chat' ? [{ label: '聊一聊', prompt: '你好，我们随便聊聊吧。' }] : scope.kind === 'note' ? [{ label: '讨论文章', prompt: '读一下这篇文章，和我讨论其中值得进一步思考的问题。' }, { label: '我改了什么', prompt: '自上次推送以来，这篇文章改了哪些地方？改动对结论有什么影响？' }, { label: '修正错别字', prompt: '直接修正这篇文章中的错别字，保留其他内容和格式，并告诉我改了哪里。' }] : [{ label: '了解这些笔记', prompt: '看看这个文件夹的文章和记忆，介绍主要主题和它们之间的联系。' }, { label: '整理画布', prompt: '读一下这个文件夹的文章，按主题把画布整理成几个文档区。' }, { label: '寻找关联', prompt: '找出这个文件夹里适合放在一起讨论的文章，读相关内容后解释它们的联系。' }]}>
+      emptyTitle={scope.kind === 'chat' ? '开始聊天' : scope.kind === 'note' ? '处理当前文章' : '整理文件夹笔记'} emptyText={scope.kind === 'chat' ? '直接输入问题，不读取或修改笔记。' : scope.kind === 'note' ? '可以讨论内容、检查改动或修正错别字。' : '可以概括笔记、查找关联或整理画布。'}
+      suggestions={scope.kind === 'chat' ? [{ label: '打个招呼', prompt: '你好，我们随便聊聊吧。' }] : scope.kind === 'note' ? [{ label: '讨论内容', prompt: '读一下这篇文章，和我讨论其中值得进一步思考的问题。' }, { label: '查看改动', prompt: '自上次同步以来，这篇文章改了哪些地方？改动对结论有什么影响？' }, { label: '修正错别字', prompt: '直接修正这篇文章中的错别字，保留其他内容和格式，并告诉我改了哪里。' }] : [{ label: '概括笔记', prompt: '看看这个文件夹的文章和记忆，介绍主要主题和它们之间的联系。' }, { label: '整理画布', prompt: '读一下这个文件夹的文章，按主题把画布整理成几个文档区。' }, { label: '查找关联', prompt: '找出这个文件夹里适合放在一起讨论的文章，读相关内容后解释它们的联系。' }]}>
       {!!conversation.plan.length && <ol className="agent-plan" aria-label="任务计划">{conversation.plan.map((step, index) => <li key={index} data-status={step.status}><Icon name={step.status === 'done' ? 'check' : step.status === 'active' ? 'arrow' : 'clock'} size={13}/><span>{step.text}</span></li>)}</ol>}
       {conversation.error && <p className="ai-error" role="alert">{conversation.error}</p>}
       {!!pending.length && <section className="agent-proposals" aria-label="待确认的提案">
@@ -141,7 +141,7 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
           <div className="agent-change-actions"><Button variant="ghost" size="sm" isDisabled={working} onPress={() => void viewProposal(proposal)}>查看</Button><Button variant="ghost" size="sm" isDisabled={working} onPress={() => void reject(proposal)}>忽略</Button><Button size="sm" isDisabled={working} onPress={() => void accept(proposal)}>{acting === proposal.id ? '执行中…' : '执行'}</Button></div>
         </div>)}
       </section>}
-      {!!(conversation.changes.length || settled.length) && <details className="agent-changes" open><summary>修改记录 · {conversation.changes.length}</summary>
+      {!!(conversation.changes.length || settled.length) && <div className="agent-changes"><Accordion items={[{ title: `修改记录 · ${conversation.changes.length}`, content: <>
         {[...conversation.changes].reverse().map(change => <div className="agent-change" key={change.id}>
           <div className="agent-change-file"><span>{change.undone ? '已撤销' : change.origin === 'proposal' ? '已执行提案' : '已修改'} · {describe(change)}</span>
             {change.files.slice(0, 6).map(file => <Button key={file.name} variant="ghost" size="sm" isDisabled={file.kind === 'delete' || change.undone && file.kind === 'create'} onPress={() => onOpenNote(file.name)} title={file.name}>{kindLabel[file.kind]} · {fileName(file.name)}</Button>)}
@@ -149,8 +149,8 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
           <div className="agent-change-actions"><Button variant="ghost" size="sm" isDisabled={working} onPress={() => void viewChange(change)}>查看</Button><Button variant="ghost" size="sm" isDisabled={working || change.undone || !change.undoable} title={!change.undone && !change.undoable ? '之后又有修改，撤销会覆盖新内容' : undefined} onPress={() => void undo(change)}>{acting === change.id ? '撤销中…' : change.undone ? '已撤销' : change.undoable ? '整组撤销' : '无法撤销'}</Button></div>
         </div>)}
         {settled.map(proposal => <p className="muted agent-settled" key={proposal.id}>提案「{proposal.reason}」{proposal.status === 'applied' ? '已执行' : proposal.status === 'rejected' ? '已忽略' : '已过期：内容已变化'}</p>)}
-      </details>}
-    </AiComposer>
+      </> }]}/></div>}
+    </AiChat>
     <Dialog title={viewing?.title ?? ''} open={!!viewing} onClose={() => setViewing(null)}>
       {viewing && <><p className="muted">{viewing.subtitle}</p>{viewing.diffs.map(diff => <section key={diff.name} className="agent-diff"><h4>{diff.name} · {diff.before === null ? '新建' : diff.after === null ? '删除' : '修改'}</h4><ModificationPreview original={diff.before ?? ''} replacement={diff.after ?? ''}/></section>)}</>}
     </Dialog>

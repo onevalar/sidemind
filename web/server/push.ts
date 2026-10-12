@@ -65,8 +65,8 @@ export class PushService {
 
   async push(emit: (event: PushEvent) => Promise<void>, signal: AbortSignal): Promise<PushReport> {
     const { git, store } = this.deps
-    if (!git) throw new GitError('未找到 git 或数据目录不是 Git 仓库，无法推送。')
-    if (this.pushing) throw new ConflictError('正在推送，请稍候。')
+    if (!git) throw new GitError('未找到 git 或数据目录不是 Git 仓库，无法同步。')
+    if (this.pushing) throw new ConflictError('正在同步，请稍候。')
     this.pushing = true
     this.deps.bus.emit({ type: 'repo-changed' })
     try {
@@ -107,14 +107,11 @@ export class PushService {
         await git.run([...await git.identityArgs(), 'commit', '-q', '-F', '-'], { input: report.message })
         report.committed = (await git.head())!.slice(0, 7)
       }
-      const ahead = await git.ahead()
       if (await git.remoteUrl()) {
-        if (report.committed || ahead === null || ahead > 0) {
-          await emit({ type: 'step', text: '正在推送到远端' })
-          const result = await this.sync()
-          report.pushed = result.pushed
-          if (result.error) report.pushError = result.error
-        } else report.pushed = true
+        await emit({ type: 'step', text: '正在拉取远端更新并同步本机提交' })
+        const result = await this.sync()
+        report.pushed = result.pushed
+        if (result.error) report.pushError = result.error
       } else report.pushError = '尚未设置远端仓库，已只在本机提交。可在设置中填写远端地址。'
       await emit({ type: 'report', report })
       return report
@@ -170,7 +167,7 @@ export class PushService {
       if (fallback) await emit({ type: 'warning', text: `未配置总结与校验模型，使用主对话模型（${label}）。` })
       return call
     } catch {
-      await emit({ type: 'warning', text: '没有可用的模型：记忆暂不更新，已标记待补，下次推送时补上。' })
+      await emit({ type: 'warning', text: '没有可用的模型：记忆暂不更新，已标记待补，下次同步时补上。' })
       return null
     }
   }
@@ -209,7 +206,7 @@ export class PushService {
         }
         conversation.distilled = conversation.transcript.length
         await conversations.save(conversation)
-      } catch (error) { if (signal.aborted) throw error; await emit({ type: 'warning', text: '一段对话的结论提炼失败，下次推送时重试。' }) }
+      } catch (error) { if (signal.aborted) throw error; await emit({ type: 'warning', text: '一段对话的结论提炼失败，下次同步时重试。' }) }
     }
   }
 
@@ -322,7 +319,7 @@ export class PushService {
         doc.meta = { folder: folder || '/', updated: today() }
         await this.deps.files.write(file, renderMemory(doc))
         updated.push(folder)
-      } catch (error) { if (signal.aborted) throw error; await emit({ type: 'warning', text: `文件夹「${folder || '根文件夹'}」的记忆更新失败，下次推送时重试。` }) }
+      } catch (error) { if (signal.aborted) throw error; await emit({ type: 'warning', text: `文件夹「${folder || '根文件夹'}」的记忆更新失败，下次同步时重试。` }) }
     }
     return updated
   }
@@ -337,7 +334,7 @@ export class PushService {
       for (const [title, body] of Object.entries(reply.sections ?? {})) if (LIBRARY_SECTIONS.includes(title) && typeof body === 'string') setSection(doc, title, body, LIBRARY_SECTIONS)
       doc.meta = { scope: 'library', updated: today() }
       await this.deps.files.write('_library.md', renderMemory(doc))
-    } catch (error) { if (signal.aborted) throw error; await emit({ type: 'warning', text: '全库记忆更新失败，下次推送时重试。' }) }
+    } catch (error) { if (signal.aborted) throw error; await emit({ type: 'warning', text: '全库记忆更新失败，下次同步时重试。' }) }
   }
 
   /** Layout changes are described locally, without a model (D11). */

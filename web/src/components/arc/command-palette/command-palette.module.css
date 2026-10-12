@@ -20,6 +20,7 @@
 }
 
 .searchRow:focus-within { background: var(--surface-muted); }
+.toolbar { padding: 12px 14px; border-bottom: 1px solid var(--border-subtle); }
 .searchIcon, .itemIcon { display: grid; flex: none; place-items: center; color: var(--text-muted); }
 .searchIcon { width: 22px; height: 22px; }
 .searchRow input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--foreground); font: inherit; font-size: var(--text-sm); }

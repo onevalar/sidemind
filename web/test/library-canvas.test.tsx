@@ -48,12 +48,29 @@ afterEach(async () => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); aw
 
 it('groups only Shift-right-click selections, then auto-fits an entering card without moving other documents', async () => {
   const notes = (await store.list()).filter(note => note.space === 'Work')
-  const props = { notes, folder: 'Work', theme: 'light' as const, viewport: { x: 0, y: 0, zoom: 1 }, onViewport: () => {}, onOpen: () => {}, onPreview: () => {}, onCreate: () => {}, beforeLeave: { current: async () => true } }
+  const opened: string[] = [], previewed: string[] = []
+  const props = { notes, folder: 'Work', theme: 'light' as const, viewport: { x: 0, y: 0, zoom: 1 }, onViewport: () => {}, onOpen: (name: string) => opened.push(name), onPreview: (name: string) => previewed.push(name), onCreate: () => {}, beforeLeave: { current: async () => true } }
   const canvas = render(<LibraryCanvas {...props}/>)
   await waitFor(() => expect(screen.getByRole('button', { name: 'A' })).toBeTruthy())
   // Wait for the initial layout to be read before using the menu.
   await waitFor(() => expect(screen.getByTestId('canvas').getAttribute('aria-busy')).toBe('false'))
-  fireEvent.contextMenu(screen.getByRole('button', { name: 'A' }), { clientX: 100, clientY: 100 })
+  const first = screen.getByRole('button', { name: 'A' })
+  fireEvent.click(first)
+  expect(first.getAttribute('aria-pressed')).toBe('true')
+  expect(screen.queryByRole('menu')).toBe(null)
+  fireEvent.doubleClick(first)
+  expect(opened).toEqual(['Work/A.md'])
+  fireEvent.keyDown(first, { key: 'F10', shiftKey: true })
+  const previewAction = await screen.findByRole('menuitem', { name: '预览文章' })
+  fireEvent.keyDown(previewAction, { key: 'ArrowDown' })
+  expect(document.activeElement).toBe(screen.getByRole('menuitem', { name: '打开并编辑' }))
+  // Menu navigation must not move the underlying article.
+  expect((await store.canvas('Work')).positions['Work/A.md']).toEqual({ x: 91, y: 173 })
+  fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
+  expect(document.activeElement).toBe(first)
+  fireEvent.keyDown(first, { key: ' ' })
+  expect(previewed).toEqual(['Work/A.md'])
+  fireEvent.contextMenu(first, { clientX: 100, clientY: 100 })
   await screen.findByRole('menuitem', { name: '创建文档区' })
   fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' })
   fireEvent.contextMenu(screen.getByRole('button', { name: 'B' }), { shiftKey: true, clientX: 400, clientY: 100 })
