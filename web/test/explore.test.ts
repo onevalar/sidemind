@@ -11,7 +11,7 @@ import { ChangeEngine } from '../server/changes'
 import { MemoryFiles } from '../server/memory-files'
 import { captureAnswer } from '../server/explore'
 import { richEditingIssue } from '../src/outline'
-import type { CaptureDTO, ChangeSetSummary, DiscussionDTO, DraftDTO, SourceRefDTO } from '../shared/types'
+import type { RunDTO, CaptureDTO, ChangeSetSummary, DiscussionDTO, DraftDTO, SourceRefDTO } from '../shared/types'
 
 let dir: string, store: NoteStore, app: ReturnType<typeof createApp>, requests: { messages: { role: string; content: string }[] }[], replies: string[]
 const J = { host: 'localhost:3001', 'content-type': 'application/json' }
@@ -42,8 +42,16 @@ async function ask(quote: string, question: string, extra: { discussionId?: stri
   const source = await call<SourceRefDTO>('POST', '/api/sources', { note: 'Materials.md', quote }, 201)
   const draft = await call<DraftDTO>('POST', '/api/drafts', { ...extra, origin: extra.discussionId ? undefined : { kind: 'note', noteId: source.noteId, sourceId: source.id }, items: [{ id: 'q1', question, sourceIds: [source.id] }] }, 201)
   const sent = await call<{ discussion: DiscussionDTO; turns: { id: string }[] }>('POST', `/api/drafts/${draft.id}/send`, { items: [{ id: 'q1', question }] }, 201)
-  const answer = await call<{ id: string; text: string }>('POST', `/api/discussions/${sent.discussion.id}/turns/${sent.turns[0]!.id}/answer`, {}, 201)
+  const answer = await generate(sent.discussion.id, sent.turns[0]!.id)
   return { source, discussionId: sent.discussion.id, turnId: sent.turns[0]!.id, answer }
+}
+
+/** Starts a run and waits for the saved answer version. */
+async function generate(discussionId: string, turnId: string, requestKey: string = crypto.randomUUID()): Promise<{ id: string; text: string }> {
+  let run = await call<RunDTO>('POST', `/api/discussions/${discussionId}/turns/${turnId}/runs`, { requestKey }, 202)
+  for (let attempt = 0; attempt < 200 && ['queued', 'running'].includes(run.status); attempt++) { await new Promise(resolve => setTimeout(resolve, 10)); run = await call<RunDTO>('GET', `/api/runs/${run.id}`) }
+  expect(run.status, run.error).toBe('completed')
+  return { id: run.answerId!, text: run.text }
 }
 
 describe('select → ask → answer → write back → trace', () => {
@@ -162,7 +170,7 @@ describe('branches and retries', () => {
 
     const saved = await call<{ capture: CaptureDTO }>('POST', '/api/captures', { requestKey: 's', discussionId: a.discussionId, turnId: a.turnId, answerId: a.answer.id, target: { kind: 'append', note: 'Materials.md' } }, 201)
     replies.push('重试后的新回答。')
-    const retry = await call<{ id: string; text: string }>('POST', `/api/discussions/${a.discussionId}/turns/${a.turnId}/answer`, { runId: 'retry-1' }, 201)
+    const retry = await generate(a.discussionId, a.turnId)
     expect(retry.id).not.toBe(a.answer.id)
     expect((await call<DiscussionDTO>('GET', `/api/discussions/${a.discussionId}`)).turns.find(turn => turn.id === a.turnId)!.answers).toHaveLength(2)
     expect((await call<CaptureDTO>('GET', `/api/captures/${saved.capture.id}`)).answers[0]!.text).toBe(a.answer.text)
@@ -174,7 +182,7 @@ describe('branches and retries', () => {
     const research = new ResearchStore(store)
     const draft = await research.createDraft({ items: [{ id: 'q1', question: '没有模型？' }] })
     const { discussion, turns } = await research.sendDraft(draft.id, [{ id: 'q1', question: '没有模型？' }])
-    const response = await bare.request(`/api/discussions/${discussion.id}/turns/${turns[0]!.id}/answer`, { method: 'POST', headers: J, body: '{}' })
+    const response = await bare.request(`/api/discussions/${discussion.id}/turns/${turns[0]!.id}/runs`, { method: 'POST', headers: J, body: JSON.stringify({ requestKey: 'x' }) })
     expect(response.status).toBe(502)
     expect((await response.json()).error).toContain('尚未连接模型')
     expect((await research.getDiscussion(discussion.id)).turns[0]!.answers).toEqual([])

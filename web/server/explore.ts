@@ -1,9 +1,7 @@
-import { randomUUID } from 'node:crypto'
-import type { AnswerVersionDTO, CaptureDTO, ChangeSetSummary, DiscussionDTO, SourceRefDTO, TurnDTO } from '../shared/types'
+import type { CaptureDTO, ChangeSetSummary, DiscussionDTO, SourceRefDTO, TurnDTO } from '../shared/types'
 import type { AIMessage } from './ai'
 import { summarize, type ChangeEngine } from './changes'
 import { MissingRecordError, type ResearchStore } from './discussions'
-import type { ModelCall } from './models'
 import { extent } from './layout'
 import { BadNameError, NotFoundError, contentVersion, type NoteStore } from './store'
 
@@ -39,18 +37,6 @@ export async function buildMessages(research: ResearchStore, discussion: Discuss
     if (item.id !== turn.id && answer) messages.push({ role: 'assistant', content: answer.text })
   }
   return messages
-}
-
-/** Generates a new answer version. Retrying adds a version; earlier ones stay available to captures. */
-export async function answerTurn(research: ResearchStore, discussionId: string, turnId: string, call: ModelCall, signal: AbortSignal, runId: string = randomUUID()): Promise<AnswerVersionDTO> {
-  const discussion = await research.getDiscussion(discussionId)
-  const turn = discussion.turns.find(item => item.id === turnId)
-  if (!turn) throw new MissingRecordError('找不到这个问题节点。')
-  const existing = turn.answers.find(answer => answer.runId === runId)
-  if (existing) return existing
-  const reply = await call(await buildMessages(research, discussion, turn), [], signal)
-  if (!reply.text.trim()) throw new BadNameError('模型没有返回内容，请重试。')
-  return research.addAnswer(discussionId, turnId, { text: reply.text.trim(), runId })
 }
 
 export type CaptureTarget = { kind: 'append'; note: string } | { kind: 'new'; folder?: string; title?: string }

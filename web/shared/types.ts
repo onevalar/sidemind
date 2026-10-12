@@ -221,3 +221,22 @@ export interface CaptureDTO {
   changeSetId?: string
   createdAt: number
 }
+
+export type RunStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+/** One generation of an answer. It lives on the server, not in the page that asked for it. */
+export interface RunDTO {
+  id: string
+  discussionId: string
+  turnId: string
+  requestKey: string
+  status: RunStatus
+  /** Answer text so far; kept after a failure, stop or restart. */
+  text: string
+  /** Increases with every delta, so a client can tell what it has already shown. */
+  seq: number
+  error?: string
+  answerId?: string
+  createdAt: number
+  updatedAt: number
+}
+export type RunEvent = { seq: number; type: 'delta'; text: string } | { seq: number; type: 'status'; run: RunDTO }

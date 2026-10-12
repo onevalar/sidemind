@@ -1,4 +1,4 @@
-import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent, SourceRefDTO, ResolvedSourceDTO, DiscussionDTO, DraftDTO, TurnDTO, AnswerVersionDTO, CaptureDTO } from '../shared/types'
+import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent, SourceRefDTO, ResolvedSourceDTO, DiscussionDTO, DraftDTO, TurnDTO, CaptureDTO, RunDTO, RunEvent } from '../shared/types'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -39,7 +39,7 @@ async function ndjson<T extends { type: string }>(response: Response, onEvent: (
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
 }
 
-export type NoteResearch = { noteId: string; discussions: DiscussionDTO[]; drafts: DraftDTO[]; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO> }
+export type NoteResearch = { noteId: string; discussions: DiscussionDTO[]; drafts: DraftDTO[]; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO>; runs: RunDTO[] }
 export type CaptureTarget = { kind: 'append'; note: string } | { kind: 'new'; folder: string }
 
 export type ModelSlot = 'main' | 'summary' | 'embedding'
@@ -53,7 +53,8 @@ export const api = {
   createDraft: (input: { discussionId?: string; parentIds?: string[]; origin?: DiscussionDTO['origin']; items: { id: string; question: string; sourceIds: string[] }[] }) => request<DraftDTO>('/api/drafts', { method: 'POST', body: JSON.stringify(input) }),
   updateDraft: (id: string, revision: number, items: { id: string; question: string; sourceIds: string[] }[]) => request<DraftDTO>(`/api/drafts/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ revision, items }) }),
   sendDraft: (id: string, items: { id: string; question: string }[]) => request<{ discussion: DiscussionDTO; turns: TurnDTO[]; draft: DraftDTO }>(`/api/drafts/${enc(id)}/send`, { method: 'POST', body: JSON.stringify({ items }) }),
-  answerTurn: (discussionId: string, turnId: string, runId?: string, signal?: AbortSignal) => request<AnswerVersionDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/answer`, { method: 'POST', body: JSON.stringify({ runId }), signal }),
+  startRun: (discussionId: string, turnId: string, requestKey: string) => request<RunDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/runs`, { method: 'POST', body: JSON.stringify({ requestKey }) }),
+  stopRun: (id: string) => request<RunDTO>(`/api/runs/${enc(id)}/stop`, { method: 'POST', body: '{}' }),
   capture: (input: { requestKey: string; discussionId: string; turnId: string; answerId: string; target: CaptureTarget }) => request<{ capture: CaptureDTO; change: ChangeSetSummary }>('/api/captures', { method: 'POST', body: JSON.stringify(input) }),
   agent: async (input: { session?: string; scope: AgentScope; message: string; selection?: string }, onEvent: (event: AgentEvent) => void, signal: AbortSignal) => {
     const response = await fetch('/api/ai/agent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal })
@@ -132,4 +133,31 @@ export function subscribeEvents(onEvent: (e: ServerEvent) => void): () => void {
       if (!listeners.size) { events?.close(); events = null }
     })
   }
+}
+
+/**
+ * Follows one answer run. Every connection starts with a full snapshot, so a reconnect replaces what is shown
+ * instead of appending to it; deltas at or below the snapshot's sequence number are ignored.
+ */
+export function subscribeRun(id: string, onRun: (run: RunDTO) => void, onLost: () => void): () => void {
+  let run: RunDTO | null = null
+  const source = new EventSource(`/api/runs/${enc(id)}/events`)
+  const final = (value: RunDTO) => !['queued', 'running'].includes(value.status)
+  source.addEventListener('snapshot', message => { run = JSON.parse((message as MessageEvent).data) as RunDTO; onRun(run); if (final(run)) source.close() })
+  source.addEventListener('delta', message => {
+    const event = JSON.parse((message as MessageEvent).data) as Extract<RunEvent, { type: 'delta' }>
+    if (!run || event.seq <= run.seq) return
+    run = { ...run, text: run.text + event.text, seq: event.seq }
+    onRun(run)
+  })
+  source.addEventListener('status', message => {
+    const event = JSON.parse((message as MessageEvent).data) as Extract<RunEvent, { type: 'status' }>
+    if (run && event.seq <= run.seq) return
+    run = event.run
+    onRun(run)
+    if (final(run)) source.close()
+  })
+  // The browser reconnects by itself; only report when it gave up.
+  source.onerror = () => { if (source.readyState === EventSource.CLOSED && !(run && final(run))) onLost() }
+  return () => source.close()
 }

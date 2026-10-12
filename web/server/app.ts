@@ -11,7 +11,7 @@ import { AISettings, AISettingsError, MODEL_SLOTS, type AIConnectionInput, type 
 import { FolderOpenError, openWorkspaceFolder } from './workspace-folder'
 import { ChatGPTConnection, ChatGPTError } from './chatgpt'
 import { NoteAgent } from './agent'
-import type { AgentEvent, AgentScope, ChangeSetDetail, PushEvent } from '../shared/types'
+import type { AgentEvent, AgentScope, ChangeSetDetail, PushEvent, RunEvent } from '../shared/types'
 import { NoteIndex } from './note-index'
 import { MemoryFiles } from './memory-files'
 import { ChangeEngine, summarize } from './changes'
@@ -24,7 +24,8 @@ import { PushService } from './push'
 import { memoryFile, type MemoryTarget } from './memory'
 import { StorageError } from './persistence'
 import { MissingRecordError, ResearchStore } from './discussions'
-import { answerTurn, captureAnswer } from './explore'
+import { captureAnswer } from './explore'
+import { RunService } from './runs'
 
 const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/
 
@@ -42,6 +43,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
   const proposals = new ProposalStore(store.paths.local, changes)
   const conversations = new ConversationStore(path.join(store.paths.local, 'conversations'), store.writer)
   const research = new ResearchStore(store)
+  const runs = new RunService(store, research, { track: task => track(task), shutdown: opts.shutdown })
   const track = async <T>(task: Promise<T>): Promise<T> => {
     opts.tasks?.add(task)
     try { return await task } finally { opts.tasks?.delete(task) }
@@ -71,7 +73,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
       }
     }
     if (opts.shutdown?.aborted) return c.json({ error: '服务正在停止，请稍后重试。' }, 503)
-    await track((async () => { await changes.recover(); await next() })())
+    await track((async () => { await changes.recover(); await runs.recover(); await next() })())
   })
 
   app.onError((err, c) => {
@@ -120,7 +122,11 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
   }
   app.post('/api/sources', async (c) => { const body = await object(c); return c.json(await research.createSource({ note: body.note, quote: body.quote, start: body.start }), 201) })
   app.get('/api/sources/:id', async (c) => c.json(await research.resolveSource(c.req.param('id'))))
-  app.get('/api/research/note', async (c) => c.json(await research.forNote(c.req.query('name') ?? '')))
+  app.get('/api/research/note', async (c) => {
+    const view = await research.forNote(c.req.query('name') ?? '')
+    const turns = new Set(view.discussions.flatMap(discussion => discussion.turns.map(turn => turn.id)))
+    return c.json({ ...view, runs: await runs.unfinished(turns) })
+  })
   app.get('/api/discussions', async (c) => c.json(await research.listDiscussions(c.req.query('archived') === undefined ? {} : { archived: c.req.query('archived') === 'true' })))
   app.post('/api/discussions', async (c) => { const body = await object(c); return c.json(await research.createDiscussion({ title: body.title, origin: body.origin }), 201) })
   app.get('/api/discussions/:id', async (c) => c.json(await research.getDiscussion(c.req.param('id'))))
@@ -140,19 +146,37 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     return c.json({ ok: true })
   })
   app.post('/api/drafts/:id/send', async (c) => c.json(await research.sendDraft(c.req.param('id'), (await object(c)).items), 201))
-  app.post('/api/discussions/:id/turns/:turn/answer', async (c) => {
-    const body = await c.req.json().catch(() => null)
-    if (body?.runId !== undefined && (typeof body.runId !== 'string' || !body.runId || body.runId.length > 200)) throw new BadNameError('运行编号无效。')
+  app.post('/api/discussions/:id/turns/:turn/runs', async (c) => {
+    const body = await object(c)
     let model: Awaited<ReturnType<Models['mainModel']>>['call']
     try { model = (await models.mainModel()).call }
     catch (error) { return c.json({ error: error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError ? error.message : '无法读取模型连接。' }, 502) }
-    const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(300000), ...(opts.shutdown ? [opts.shutdown] : [])])
-    try { return c.json(await track(answerTurn(research, c.req.param('id'), c.req.param('turn'), model, signal, body?.runId)), 201) }
-    catch (error) {
-      if (error instanceof AIRequestError || error instanceof ChatGPTError || error instanceof AISettingsError) return c.json({ error: error.message }, 502)
-      if (signal.aborted) return c.json({ error: '已停止或超时，未保存回答。' }, 504)
-      throw error
-    }
+    return c.json(await runs.start({ discussionId: c.req.param('id'), turnId: c.req.param('turn'), requestKey: body.requestKey }, model), 202)
+  })
+  app.get('/api/runs/:id', async (c) => c.json(await runs.get(c.req.param('id'))))
+  app.post('/api/runs/:id/stop', async (c) => c.json(await runs.stop(c.req.param('id'))))
+  app.get('/api/runs/:id/events', async (c) => {
+    // Validate and read before opening the stream so a bad id is a normal 4xx response.
+    await runs.get(c.req.param('id'))
+    return streamSSE(c, async (stream) => {
+      let closed = false
+      const queue: RunEvent[] = []
+      let wake: (() => void) | null = null
+      const { run, unsubscribe } = await runs.subscribe(c.req.param('id'), event => { queue.push(event); wake?.() })
+      stream.onAbort(() => { closed = true; unsubscribe(); wake?.() })
+      await stream.writeSSE({ event: 'snapshot', id: String(run.seq), data: JSON.stringify(run) })
+      let ended = ['completed', 'failed', 'cancelled', 'interrupted'].includes(run.status)
+      while (!closed && !ended) {
+        if (!queue.length) await Promise.race([new Promise<void>(resolve => { wake = resolve }), stream.sleep(15000)])
+        wake = null
+        for (const event of queue.splice(0)) {
+          await stream.writeSSE({ event: event.type, id: String(event.seq), data: JSON.stringify(event) })
+          if (event.type === 'status' && event.run.status !== 'running' && event.run.status !== 'queued') ended = true
+        }
+        if (!closed && !ended && !queue.length) await stream.writeSSE({ event: 'ping', data: '' })
+      }
+      unsubscribe()
+    })
   })
   app.post('/api/captures', async (c) => {
     const body = await object(c)

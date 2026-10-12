@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import type { AnswerVersionDTO, CaptureDTO, ChangeSetDetail, DiscussionDTO, DraftDTO, ResolvedSourceDTO, SourceRefDTO, TurnDTO } from '../shared/types'
-import { api, subscribeEvents, type CaptureTarget, type NoteResearch } from './api'
+import type { AnswerVersionDTO, CaptureDTO, ChangeSetDetail, DiscussionDTO, DraftDTO, ResolvedSourceDTO, RunDTO, SourceRefDTO, TurnDTO } from '../shared/types'
+import { api, subscribeEvents, subscribeRun, type CaptureTarget, type NoteResearch } from './api'
 import { NoteMarkdown } from './NoteMarkdown'
 import { Button, Dialog, TextArea } from './ui'
 
@@ -24,28 +24,33 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, onCon
   const [quote, setQuote] = useState('')
   const [question, setQuestion] = useState('')
   const [texts, setTexts] = useState<Record<string, string>>({})
-  const [running, setRunning] = useState<Record<string, boolean>>({})
-  const [failed, setFailed] = useState<Record<string, string>>({})
+  const [runs, setRuns] = useState<Record<string, RunDTO>>({})
+  const followed = useRef(new Map<string, () => void>())
   const [busy, setBusy] = useState<string | null>(null)
-  const [follow, setFollow] = useState<{ turn: string; text: string } | null>(null)
+  const [followUp, setFollowUp] = useState<{ turn: string; text: string } | null>(null)
   const [version, setVersion] = useState<Record<string, number>>({})
   const [basis, setBasis] = useState<ResolvedSourceDTO | null>(null)
   const keys = useRef(new Map<string, string>())
   const current = useRef(name)
   current.current = name
 
+  /** Show a run's progress. It keeps going on the server whether or not this panel is open. */
+  const followRun = useRef<(run: RunDTO) => void>(() => {})
+  const follow = (run: RunDTO) => followRun.current(run)
   const load = useCallback(async () => {
     if (!name) { setView(null); return }
     try {
       const next = await api.researchNote(name)
       if (current.current !== name) return
       setView(next)
+      for (const run of next.runs) { setRuns(value => (value[run.turnId]?.seq ?? -1) >= run.seq ? value : { ...value, [run.turnId]: run }); if (run.status === 'queued' || run.status === 'running') follow(run) }
       setTexts(previous => { const merged = { ...previous }; for (const draft of next.drafts) for (const item of draft.items) merged[item.id] ??= item.question; return merged })
       const details = await Promise.all(next.captures.filter(capture => capture.changeSetId).map(capture => api.changeSet(capture.changeSetId!).catch(() => null)))
       if (current.current === name) setChanges(Object.fromEntries(details.filter((detail): detail is ChangeSetDetail => !!detail).map(detail => [detail.id, detail])))
     } catch (failure) { if (current.current === name) setError('无法读取探索记录：' + message(failure)) }
   }, [name])
-  useEffect(() => { setView(null); setError(''); setQuote(''); setFollow(null); void load() }, [load])
+  useEffect(() => { setView(null); setError(''); setQuote(''); setFollowUp(null); void load() }, [load])
+  useEffect(() => () => { for (const stop of followed.current.values()) stop(); followed.current.clear() }, [name])
   useEffect(() => subscribeEvents(event => { if (event.type === 'notes-changed' || event.type === 'note-changed') void load() }), [load])
 
   // The editor keeps its selection while focus moves here; read it while this tab is showing.
@@ -64,11 +69,18 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, onCon
   }
   const flush = async () => { if (!await beforeSend.current()) throw new Error('请先处理未保存的修改，再继续。') }
 
+  followRun.current = (run: RunDTO) => {
+    if (followed.current.has(run.id)) return
+    const close = subscribeRun(run.id, latest => {
+      setRuns(value => ({ ...value, [latest.turnId]: latest }))
+      if (!['queued', 'running'].includes(latest.status)) { followed.current.get(latest.id)?.(); followed.current.delete(latest.id); void load() }
+    }, () => { followed.current.delete(run.id); setError('与回答的连接中断，正在重新读取。') ; void load() })
+    followed.current.set(run.id, close)
+  }
   const answer = async (discussionId: string, turn: TurnDTO) => {
-    setRunning(value => ({ ...value, [turn.id]: true })); setFailed(value => { const { [turn.id]: _, ...rest } = value; return rest })
-    try { await api.answerTurn(discussionId, turn.id, crypto.randomUUID()) }
-    catch (failure) { setFailed(value => ({ ...value, [turn.id]: message(failure) })) }
-    finally { setRunning(value => ({ ...value, [turn.id]: false })); await load() }
+    const run = await api.startRun(discussionId, turn.id, crypto.randomUUID())
+    setRuns(value => ({ ...value, [turn.id]: run }))
+    follow(run)
   }
   const sendDraft = async (draft: DraftDTO, ids: string[]) => {
     const items = ids.map(id => ({ id, question: (texts[id] ?? draft.items.find(item => item.id === id)!.question).trim() }))
@@ -76,8 +88,8 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, onCon
     const sent = await api.sendDraft(draft.id, items)
     setTexts(value => { const rest = { ...value }; for (const item of sent.draft.items) rest[item.id] ??= item.question; for (const id of ids) if (!sent.draft.items.some(item => item.id === id)) delete rest[id]; return rest })
     await load()
-    // Answers run on their own so the next question can be written while these are generated.
-    void Promise.all(sent.turns.map(turn => answer(sent.discussion.id, turn)))
+    // Runs live on the server: start them all and keep writing while they stream in.
+    await Promise.all(sent.turns.map(turn => answer(sent.discussion.id, turn).catch(failure => setError(message(failure)))))
   }
 
   /** Freeze the selection as a source and keep the question in a durable draft, without sending. */
@@ -96,11 +108,11 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, onCon
   const dropItem = (draft: DraftDTO, id: string) => guard('drop' + id, async () => { await api.updateDraft(draft.id, draft.revision, draft.items.filter(item => item.id !== id)); await load() })
 
   const askFollowUp = (discussion: DiscussionDTO, turn: TurnDTO) => guard('follow' + turn.id, async () => {
-    const text = follow?.text.trim()
+    const text = followUp?.text.trim()
     if (!text) throw new Error('请先写下追问。')
     const id = crypto.randomUUID()
     const draft = await api.createDraft({ discussionId: discussion.id, parentIds: [turn.id], items: [{ id, question: text, sourceIds: [] }] })
-    setTexts(value => ({ ...value, [id]: text })); setFollow(null)
+    setTexts(value => ({ ...value, [id]: text })); setFollowUp(null)
     await sendDraft(draft, [id])
   })
 
@@ -151,13 +163,17 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, onCon
     {view?.discussions.map(discussion => <section className="explore-discussion" key={discussion.id} aria-label={'讨论：' + discussion.title}>
       {discussion.turns.map(turn => {
         const answers = turn.answers, index = Math.min(version[turn.id] ?? answers.length - 1, answers.length - 1), shown = answers[index]
+        const live = runs[turn.id], active = !!live && (live.status === 'queued' || live.status === 'running')
+        const finishedBad = !!live && ['failed', 'cancelled', 'interrupted'].includes(live.status)
         const saved = shown ? view.captures.filter(capture => capture.answers.some(entry => entry.answerId === shown.id)) : []
         return <article className="explore-turn" key={turn.id} data-follow-up={turn.parents.length ? 'true' : undefined}>
           {turn.sourceIds.map(id => sources[id] && <blockquote className="explore-quote" key={id}>{clip(sources[id]!.quote, 160)}<Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void showBasis(id)}>查看依据</Button></blockquote>)}
           <p className="explore-question">{turn.question}</p>
-          {running[turn.id] && <p className="muted" role="status">正在回答…</p>}
-          {failed[turn.id] && <p className="ai-error" role="alert">{failed[turn.id]}</p>}
-          {shown && <div className="explore-answer"><NoteMarkdown name={name} onOpenNote={onOpenNote}>{shown.text}</NoteMarkdown></div>}
+          {(active || finishedBad) && live && <div className="explore-run" aria-live="polite">
+            {(live.status === 'queued' || live.status === 'running') && <div className="explore-run-head"><span className="muted" role="status">{live.text ? '正在回答…' : '正在准备回答…'}</span><Button variant="ghost" size="sm" onPress={() => void api.stopRun(live.id).catch(failure => setError(message(failure)))}>停止</Button></div>}
+            {live.text && <div className="explore-answer" data-partial={finishedBad ? 'true' : undefined}><NoteMarkdown name={name} onOpenNote={onOpenNote}>{live.text}</NoteMarkdown></div>}
+            {finishedBad && (live.status === 'cancelled' ? <p className="muted" role="status">{live.error}</p> : <p className="ai-error" role="alert">{live.error}</p>)}</div>}
+          {shown && !active && <div className="explore-answer"><NoteMarkdown name={name} onOpenNote={onOpenNote}>{shown.text}</NoteMarkdown></div>}
           {answers.length > 1 && <div className="explore-versions" aria-label="回答版本">
             <Button variant="ghost" size="sm" isDisabled={index === 0} onPress={() => setVersion(value => ({ ...value, [turn.id]: index - 1 }))}>上一版</Button>
             <span className="muted">第 {index + 1} / {answers.length} 版</span>
@@ -175,12 +191,12 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, onCon
             {shown && <>
               <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void save(discussion, turn, shown, { kind: 'append', note: name })}>追加到本文</Button>
               <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void save(discussion, turn, shown, { kind: 'new', folder: folderOf(name) })}>存为新笔记</Button></>}
-            <Button variant="ghost" size="sm" isDisabled={!!busy || noModel || running[turn.id]} onPress={() => void guard('retry' + turn.id, () => answer(discussion.id, turn))}>{shown ? '重新回答' : '生成回答'}</Button>
-            <Button variant="ghost" size="sm" isDisabled={!!busy || noModel || !shown} onPress={() => setFollow(follow?.turn === turn.id ? null : { turn: turn.id, text: '' })}>追问</Button>
+            {!active && <Button variant="ghost" size="sm" isDisabled={!!busy || noModel} onPress={() => void guard('retry' + turn.id, () => answer(discussion.id, turn))}>{shown ? '重新回答' : finishedBad ? '重试' : '生成回答'}</Button>}
+            <Button variant="ghost" size="sm" isDisabled={!!busy || noModel || !shown} onPress={() => setFollowUp(followUp?.turn === turn.id ? null : { turn: turn.id, text: '' })}>追问</Button>
           </div>
-          {follow?.turn === turn.id && <div className="explore-follow">
-            <TextArea aria-label="追问" rows={2} autoFocus value={follow.text} placeholder="基于这条回答继续问" onChange={event => setFollow({ turn: turn.id, text: event.target.value })}/>
-            <div className="explore-actions"><Button variant="ghost" size="sm" onPress={() => setFollow(null)}>取消</Button><Button size="sm" isDisabled={!!busy || !follow.text.trim()} onPress={() => void askFollowUp(discussion, turn)}>发送追问</Button></div></div>}
+          {followUp?.turn === turn.id && <div className="explore-follow">
+            <TextArea aria-label="追问" rows={2} autoFocus value={followUp.text} placeholder="基于这条回答继续问" onChange={event => setFollowUp({ turn: turn.id, text: event.target.value })}/>
+            <div className="explore-actions"><Button variant="ghost" size="sm" onPress={() => setFollowUp(null)}>取消</Button><Button size="sm" isDisabled={!!busy || !followUp.text.trim()} onPress={() => void askFollowUp(discussion, turn)}>发送追问</Button></div></div>}
         </article>
       })}
     </section>)}

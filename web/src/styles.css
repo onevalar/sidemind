@@ -433,3 +433,6 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .explore-item, .explore-follow { display: flex; flex-direction: column; gap: 6px; }
 .app-dialog .explore-quote { margin: 14px 0; padding-block: 6px; font-size: 13px; }
 .app-dialog .explore-quote + p, .app-dialog .explore-quote ~ button { margin-top: 0; }
+.explore-run { display: flex; flex-direction: column; gap: 6px; }
+.explore-run-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
+.explore-answer[data-partial] { color: var(--text-secondary); }
