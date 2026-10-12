@@ -16,13 +16,14 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
 }) {
   const [list, setList] = useState<DiscussionSummaryDTO[]>([])
   const [archived, setArchived] = useState(false)
-  const [selected, setSelected] = useState<string | null>(null)
+  const [selected, setSelected] = useState<string | null>(() => localStorage.getItem('canvas.chat-selected'))
   const [view, setView] = useState<DiscussionView | null>(null)
   const [changes, setChanges] = useState<Record<string, ChangeSetDetail>>({})
   const [loadError, setLoadError] = useState('')
   const [question, setQuestion] = useState('')
   const [target, setTarget] = useState<string>(NONE)
-  const [detailOpen, setDetailOpen] = useState(false)
+  const [detailOpen, setDetailOpen] = useState(() => !!localStorage.getItem('canvas.chat-selected'))
+  useEffect(() => { if (selected) localStorage.setItem('canvas.chat-selected', selected); else localStorage.removeItem('canvas.chat-selected') }, [selected])
   const current = useRef(selected)
   current.current = selected
   const listed = useRef(archived)
@@ -34,7 +35,8 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
       setList(rows)
       const id = current.current
       if (!id) { setView(null); return }
-      const next = await api.discussionView(id)
+      const next = await api.discussionView(id).catch(failure => { if (/找不到/.test(message(failure))) return null; throw failure })
+      if (!next) { if (current.current === id) { setSelected(null); setDetailOpen(false) } return }
       if (current.current !== id) return
       setView(next); setLoadError('')
       kit.current.adopt(next.runs)
@@ -53,33 +55,34 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
   const origin = list.find(item => item.id === selected)?.notePath ?? null
   useEffect(() => { setTarget(origin ?? NONE) }, [selected, origin])
 
-  const open = (id: string | null) => { setSelected(id); setView(null); setChanges({}); setDetailOpen(true); setQuestion('') }
+  const open = (id: string | null) => { retry.current = null; setSelected(id); setView(null); setChanges({}); setDetailOpen(true); setQuestion('') }
   const noModel = !model
 
-  const start = () => guard('start', async () => {
+  // A send that failed after its draft was saved retries with the same draft, so it can never create a second question.
+  const retry = useRef<{ draft: string; item: string; text: string; discussion: string | null; parent: string | null } | null>(null)
+  const leaf = view ? [...view.discussion.turns].reverse().find(turn => turn.answers.length) : undefined
+  const send = () => guard('send', async () => {
     const text = question.trim()
     if (!text) throw new Error('请先写下问题。')
-    const id = crypto.randomUUID()
-    const draft = await api.createDraft({ items: [{ id, question: text, sourceIds: [] }] })
-    kitValue.setTexts(value => ({ ...value, [id]: text })); setQuestion('')
-    const sent = await kitValue.sendDraft(draft, [id])
-    setSelected(sent.discussion.id)
-  })
-  const leaf = view ? [...view.discussion.turns].reverse().find(turn => turn.answers.length) : undefined
-  const proceed = () => guard('continue', async () => {
-    const text = question.trim()
-    if (!view || !leaf || !text) throw new Error('请先写下问题。')
-    const id = crypto.randomUUID()
-    const draft = await api.createDraft({ discussionId: view.discussion.id, parentIds: [leaf.id], items: [{ id, question: text, sourceIds: [] }] })
-    kitValue.setTexts(value => ({ ...value, [id]: text })); setQuestion('')
-    await kitValue.sendDraft(draft, [id])
+    const parent = selected ? leaf?.id ?? null : null
+    if (selected && !parent) throw new Error('请等上一条回答完成后再继续提问。')
+    let pending = retry.current
+    if (!pending || pending.text !== text || pending.discussion !== selected || pending.parent !== parent) {
+      const item = crypto.randomUUID()
+      const draft = await api.createDraft({ ...(selected ? { discussionId: selected, parentIds: [parent!] } : {}), items: [{ id: item, question: text, sourceIds: [] }] })
+      pending = retry.current = { draft: draft.id, item, text, discussion: selected, parent }
+    }
+    kitValue.setTexts(value => ({ ...value, [pending!.item]: text }))
+    const sent = await kitValue.sendDraft({ id: pending.draft, items: [{ id: pending.item, question: text, sourceIds: [] }] }, [pending.item])
+    retry.current = null
+    setQuestion(''); setSelected(sent.discussion.id)
   })
   const archive = (id: string, value: boolean) => guard('archive' + id, async () => { await api.archiveDiscussion(id, value); if (selected === id) open(null); await load() })
   const error = kitValue.error || loadError
   const summary = list.find(item => item.id === selected)
   const heading = summary?.title ?? view?.discussion.title ?? '新对话'
-  const submit = () => { if (noModel) return; void (selected ? proceed() : start()) }
-  const hint = !selected ? '想问什么？回答会保存在对话里，之后可以选择写入笔记。' : leaf ? '继续提问' : '等待上一条回答完成后继续提问'
+  const submit = () => { if (!noModel) void send() }
+  const hint = !selected ? '想问什么？回答会保存在对话里，之后可以选择写入笔记。Enter 发送，Shift+Enter 换行。' : leaf ? '继续提问（Enter 发送；想从别处分支，用每条回答下的“追问”）' : '等待上一条回答完成后继续提问'
 
   return <div className="chat-workspace" data-detail={detailOpen ? 'true' : undefined} hidden={!active}>
     <nav className="chat-list" aria-label="对话列表">
@@ -120,10 +123,10 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
       <div className="chat-composer">
         <TextArea aria-label={selected ? '继续提问' : '你的问题'} value={question} rows={3} placeholder={hint} disabled={!!busy || (!!selected && (!view || !leaf))}
           onChange={event => setQuestion(event.target.value)}
-          onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); submit() } }}/>
+          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit() } }}/>
         <div className="explore-actions">
           {noModel && <span className="muted explore-hint">尚未连接模型。<Button variant="ghost" size="sm" onPress={onConfigure}>去设置</Button></span>}
-          <Button size="sm" isDisabled={!!busy || noModel || !question.trim() || (!!selected && !leaf)} onPress={submit}>{busy === 'start' || busy === 'continue' ? '发送中…' : selected ? '继续提问' : '开始对话'}</Button></div>
+          <Button size="sm" isDisabled={!!busy || noModel || !question.trim() || (!!selected && !leaf)} onPress={submit}>{busy === 'send' ? '发送中…' : selected ? '继续提问' : '开始对话'}</Button></div>
       </div>
     </section>
     <DiscussionDialogs kit={kitValue}/>

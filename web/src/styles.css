@@ -273,6 +273,8 @@ button.icon-button { width: var(--control-height-sm); min-width: var(--control-h
 .article-preview strong { font-weight: 600; }
 .preview-readonly { margin-right: auto; font-size: 11px; }
 @media (max-width: 680px) {
+ .mode-switch { display: none; }
+ .mode-compact { display: contents; }
  .app-dialog.note-preview-dialog { width: calc(100vw - 24px); max-height: calc(100dvh - 32px); }
  .note-preview-dialog > :first-child { padding: 12px 20px; }
  .article-preview { padding: 24px 20px 32px; }
@@ -437,6 +439,8 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .explore-run { display: flex; flex-direction: column; gap: 6px; }
 .explore-run-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
 .explore-answer[data-partial] { color: var(--text-secondary); }
+.mode-compact { display: none; }
+.mode-compact[data-always] { display: contents; }
 .agent-workspace[hidden], .chat-workspace[hidden] { display: none; }
 .chat-workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); }
 .chat-list { min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--workspace-divider); }

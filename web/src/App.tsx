@@ -129,6 +129,12 @@ export function App() {
   const openNote = useCallback((name: string) => { void navigate(name) }, [navigate])
   // The Agent points at notes: show their folder canvas and highlight them.
   const focusNotes = useCallback((folder: string, names: string[]) => { void navigate(null, folder).then(() => setFocus(current => ({ names, key: (current?.key ?? 0) + 1 }))) }, [navigate])
+  /** Notes and chat keep their own state; leaving the editor first saves what is being typed. */
+  const switchMode = async (next: typeof mode) => {
+    if (next === mode) return
+    if (next === 'chat' && !await beforeLeave.current()) return
+    setMode(next)
+  }
   const openCreate = () => { setDestination(space); setFormError(''); setCreateOpen(true); setSearchOpen(false) }
   newAction.current = openCreate
   const create = async () => {
@@ -169,8 +175,9 @@ export function App() {
       <div className="brand"><span className="brand-mark"><Icon name="note" size={19}/></span><strong>Canvas Note</strong><Button variant="ghost" size="sm" isIconOnly aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} aria-expanded={!sidebarCollapsed} aria-controls="sidebar-navigation" onPress={() => setSidebarCollapsed(value => !value)}><Icon name="panel"/></Button></div>
       <Button variant="ghost" size="sm" aria-label="搜索笔记" className="search-trigger nav-item" onPress={() => setSearchOpen(true)}><Icon name="search" size={16}/><span>搜索文章</span></Button>
       <Button variant="ghost" size="sm" aria-label="新建文章" className="nav-item" onPress={openCreate} isDisabled={busy}><Icon name="plus"/><span>新建文章</span></Button>
+      {!sidebarCollapsed && <SegmentedControl className="mode-switch" label="工作模式" value={mode} onValueChange={value => void switchMode(value as typeof mode)} options={[{ value: 'note', label: '笔记' }, { value: 'chat', label: '对话' }]}/>}
+      <span className="mode-compact" data-always={sidebarCollapsed ? 'true' : undefined}><IconButton icon="chat" label={mode === 'note' ? '切换到对话' : '切换到笔记'} onPress={() => void switchMode(mode === 'note' ? 'chat' : 'note')}/></span>
       {sidebarCollapsed && <IconButton icon="grid" label="返回当前文件夹画布" onPress={() => void navigate(null)}/>}
-      <Button variant="ghost" size="sm" aria-label="对话" aria-current={mode === 'chat' ? 'page' : undefined} className={'nav-item ' + (mode === 'chat' ? 'is-active' : '')} onPress={() => { if (mode !== 'chat') void beforeLeave.current().then(ok => { if (ok) setMode('chat') }) }}><Icon name="chat" size={16}/><span>对话</span></Button>
       <div id="sidebar-navigation" className="sidebar-navigation" hidden={sidebarCollapsed}>
       <div className="section-header sidebar-section"><span className="section-label">文件夹画布</span><IconButton icon="plus" label="新建文件夹" onPress={() => { setFormError(''); setNewFolderOpen(true) }}/></div>
       <nav className="spaces" aria-label="文件夹">{folders.map(folder => <ContextMenu key={folder} label="文件夹操作" heading={folderLabel(folder)} items={[

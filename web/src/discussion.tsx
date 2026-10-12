@@ -74,7 +74,7 @@ export function useDiscussionKit(options: DiscussionKitOptions) {
     setRuns(value => ({ ...value, [turn.id]: run }))
     follow(run)
   }
-  const sendDraft = async (draft: DraftDTO, ids: string[]) => {
+  const sendDraft = async (draft: Pick<DraftDTO, 'id' | 'items'>, ids: string[]) => {
     const items = ids.map(id => ({ id, question: (texts[id] ?? draft.items.find(item => item.id === id)!.question).trim() }))
     if (items.some(item => !item.question)) throw new Error('请先写下问题。')
     const sent = await api.sendDraft(draft.id, items)

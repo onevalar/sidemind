@@ -21,6 +21,7 @@ const idle = { current: async () => true } as unknown as React.MutableRefObject<
 const mount = (props: Partial<Parameters<typeof ChatWorkspace>[0]> = {}) => render(<ChatWorkspace notes={[{ name: 'Materials.md', title: 'Materials' }]} model="test-model" active beforeSend={idle} onConfigure={() => {}} onOpenNote={() => {}} {...props}/>)
 
 beforeEach(() => {
+  localStorage.clear()
   HTMLElement.prototype.scrollIntoView = vi.fn()
   vi.stubGlobal('matchMedia', () => ({ matches: false, addEventListener() {}, removeEventListener() {} }))
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
@@ -69,4 +70,35 @@ it('does not read anything while hidden, and offers no send without a model', as
   await waitFor(() => expect(api.discussions).toHaveBeenCalled())
   fireEvent.change(screen.getByRole('textbox', { name: '你的问题' }), { target: { value: '你好' } })
   expect((screen.getByRole('button', { name: '开始对话' }) as HTMLButtonElement).disabled).toBe(true)
+})
+
+it('keeps the question when sending fails and retries with the same draft instead of creating a second question', async () => {
+  vi.mocked(api.discussions).mockResolvedValue([])
+  const started = discussion(hex(1), '铝为什么轻？')
+  vi.mocked(api.createDraft).mockImplementation(async input => ({ id: hex(4), title: '', discussionId: null, parentIds: [], origin: { kind: 'chat' }, items: input.items, revision: 1, createdAt: 1, updatedAt: 1 }))
+  vi.mocked(api.sendDraft).mockRejectedValueOnce(new Error('网络中断')).mockResolvedValue({ discussion: started, turns: started.turns, draft: { id: hex(4), title: '', discussionId: started.id, parentIds: [], origin: { kind: 'chat' }, items: [], revision: 2, createdAt: 1, updatedAt: 2 } })
+  vi.mocked(api.discussionView).mockResolvedValue({ discussion: started, captures: [], sources: {}, runs: [] })
+  vi.mocked(api.startRun).mockResolvedValue({ id: hex(5), discussionId: started.id, turnId: hex(9), requestKey: 'k', status: 'running', text: '', seq: 0, createdAt: 1, updatedAt: 1 })
+  mount()
+  const box = await screen.findByRole('textbox', { name: '你的问题' }) as HTMLTextAreaElement
+  fireEvent.change(box, { target: { value: '铝为什么轻？' } })
+  fireEvent.keyDown(box, { key: 'Enter' })
+  expect((await screen.findByRole('alert')).textContent).toContain('网络中断')
+  expect(box.value).toBe('铝为什么轻？')
+  fireEvent.keyDown(box, { key: 'Enter' })
+  await waitFor(() => expect(api.startRun).toHaveBeenCalledTimes(1))
+  expect(api.createDraft).toHaveBeenCalledTimes(1)
+  expect(vi.mocked(api.sendDraft).mock.calls.map(call => call[0])).toEqual([hex(4), hex(4)])
+})
+
+it('does not send on Enter while an input method is composing, and falls back when the remembered conversation is gone', async () => {
+  localStorage.setItem('canvas.chat-selected', hex(3))
+  vi.mocked(api.discussions).mockResolvedValue([])
+  vi.mocked(api.discussionView).mockRejectedValue(new Error('找不到讨论。'))
+  mount()
+  const box = await screen.findByRole('textbox', { name: '你的问题' })
+  expect(localStorage.getItem('canvas.chat-selected')).toBe(null)
+  fireEvent.change(box, { target: { value: '你好' } })
+  fireEvent.keyDown(box, { key: 'Enter', isComposing: true })
+  expect(api.createDraft).not.toHaveBeenCalled()
 })
