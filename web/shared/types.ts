@@ -206,7 +206,7 @@ export interface DiscussionDTO {
   archived: boolean
   turns: TurnDTO[]
   /** Set on a discussion that was imported from another app; names where it came from and which import batch wrote it. */
-  imported?: { source: 'chatgit'; canvasId: string; batch: string }
+  imported?: { source: 'chatgit' | 'canvas-conversation'; /** The source canvas or conversation id. */ canvasId: string; batch: string; /** Old Agent history: kept for reading and writing into notes, but cannot be continued as a question-and-answer discussion. */ readOnly?: boolean }
   createdAt: number
   updatedAt: number
 }

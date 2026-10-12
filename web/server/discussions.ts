@@ -214,6 +214,7 @@ export class ResearchStore {
     const requestKey = text(input.requestKey, '请求键', 200)
     return this.exclusive(async () => {
       const discussion = await this.getDiscussion(discussionId)
+      if (discussion.imported?.readOnly) throw new BadNameError('这是旧助手对话的只读历史，不能在这里继续提问；请回到笔记页的助手面板继续原来的对话。')
       const existing = discussion.turns.find(turn => turn.requestKey === requestKey)
       if (existing) {
         if (existing.question !== question) throw new ConflictError('同一请求键不能用于不同问题。')
@@ -357,6 +358,7 @@ export class ResearchStore {
       const existing = await readRecord<DraftDTO>(this.draftFile(id))
       if (existing) return this.getDraft(id)
       const discussion = input.discussionId ? await this.getDiscussion(input.discussionId) : null
+      if (discussion?.imported?.readOnly) throw new BadNameError('这是旧助手对话的只读历史，不能在这里继续提问。')
       const parentIds = ids(input.parentIds ?? [], '父节点')
       if (!discussion && parentIds.length) throw new BadNameError('新讨论的草稿不能指定父节点。')
       for (const parent of parentIds) if (!discussion!.turns.some(turn => turn.id === parent)) throw new BadNameError('父节点不在这段讨论中。')

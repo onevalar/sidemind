@@ -123,10 +123,11 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
             <Select id="chat-target-note" label="写入笔记" value={target} onValueChange={setTarget} options={[{ value: NONE, label: '不追加（只能存为新笔记）' }, ...notes.map(note => ({ value: note.name, label: note.title }))]}/>
           </div>}
           <DiscussionThread kit={kitValue} discussion={view.discussion} sources={view.sources} captures={view.captures} changes={changes} model={model}
-            noteName={null} appendTo={target === NONE ? null : target} appendLabel={notes.find(note => note.name === target)?.title} newFolder="" notes={notes}/></>}
+            readOnly={!!view.discussion.imported?.readOnly} noteName={null} appendTo={target === NONE ? null : target} appendLabel={notes.find(note => note.name === target)?.title} newFolder="" notes={notes}/></>}
         {!selected && <p className="muted chat-empty">这是一段没有读取任何笔记的独立对话。想基于笔记内容提问，请在笔记里选中文字后使用「探索」。</p>}
         {selected && !view && !error && <p className="muted chat-empty">正在读取对话…</p>}
       </div>
+      {view?.discussion.imported?.readOnly ? <div className="chat-composer"><p className="muted" role="note">这是从旧助手对话导入的只读历史：可以阅读，也可以把其中的回答写入笔记，但不能在这里继续提问。要继续原来的对话，请回到笔记页的助手面板。</p></div> :
       <div className="chat-composer">
         {/* readOnly, not disabled: a disabled field drops keyboard focus, and the next question would need a click first. */}
         <TextArea aria-label={selected ? '继续提问' : '你的问题'} value={question} rows={3} placeholder={hint} aria-busy={!!busy} readOnly={!!busy || (!!selected && (!view || !leaf))}
@@ -136,6 +137,7 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
           {noModel && <span className="muted explore-hint">尚未连接模型。<Button variant="ghost" size="sm" onPress={onConfigure}>去设置</Button></span>}
           <Button size="sm" isDisabled={!!busy || noModel || !question.trim() || (!!selected && !leaf)} onPress={submit}>{busy === 'send' ? '发送中…' : selected ? '继续提问' : '开始对话'}</Button></div>
       </div>
+      }
     </section>
     <DiscussionDialogs kit={kitValue}/>
   </div>

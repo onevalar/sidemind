@@ -141,7 +141,7 @@ export function useDiscussionKit(options: DiscussionKitOptions) {
 export type DiscussionKit = ReturnType<typeof useDiscussionKit>
 
 /** The questions and answers of one discussion, indented by branch depth, with every per-answer action. */
-export function DiscussionThread({ kit, discussion, sources, captures, changes, model, noteName, appendTo, appendLabel, newFolder, notes }: {
+export function DiscussionThread({ kit, discussion, sources, captures, changes, model, noteName, appendTo, appendLabel, newFolder, notes, readOnly }: {
   kit: DiscussionKit; discussion: DiscussionDTO; sources: Record<string, SourceRefDTO>; captures: CaptureDTO[]; changes: Record<string, ChangeSetDetail>
   model: string | null
   /** The note open in the editor, if any: relative links in answers resolve against it and quotes from it can be located there. */
@@ -154,6 +154,8 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
   newFolder: string
   /** Notes the write dialog may append to. Defaults to just `appendTo`. */
   notes?: { name: string; title: string }[]
+  /** History that cannot be continued here (old Agent conversations): no new questions, retries or comparisons. */
+  readOnly?: boolean
 }) {
   const { busy, runs, followUp, setFollowUp, version, setVersion, picked, compareText, setCompareText } = kit
   const [graph, setGraph] = useState(false)
@@ -209,10 +211,10 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
             {appendTo && <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.save(discussion, turn, shown, { kind: 'append', note: appendTo })}>{noteName !== null && appendTo === noteName ? '追加到本文' : `追加到《${appendLabel ?? title(appendTo)}》`}</Button>}
             <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.save(discussion, turn, shown, { kind: 'new', folder: newFolder })}>存为新笔记</Button>
             <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => kit.setWriting({ discussion, turn, answer: shown, sources, notes: notes ?? (appendTo ? [{ name: appendTo, title: appendLabel ?? title(appendTo) }] : []), defaultNote: appendTo, newFolder })}>写入…</Button></>}
-          {!active && <Button variant="ghost" size="sm" isDisabled={!!busy || noModel} onPress={() => void kit.guard('retry' + turn.id, () => kit.answer(discussion.id, turn))}>{shown ? '重新回答' : finishedBad ? '重试' : '生成回答'}</Button>}
-          {shown && <Button variant="ghost" size="sm" aria-pressed={choosing.includes(turn.id)} isDisabled={!!busy} onPress={() => kit.toggle(discussion, turn)}>{choosing.includes(turn.id) ? '已选 · 取消' : '选择比较'}</Button>}
+          {!active && !readOnly && <Button variant="ghost" size="sm" isDisabled={!!busy || noModel} onPress={() => void kit.guard('retry' + turn.id, () => kit.answer(discussion.id, turn))}>{shown ? '重新回答' : finishedBad ? '重试' : '生成回答'}</Button>}
+          {shown && !readOnly && <Button variant="ghost" size="sm" aria-pressed={choosing.includes(turn.id)} isDisabled={!!busy} onPress={() => kit.toggle(discussion, turn)}>{choosing.includes(turn.id) ? '已选 · 取消' : '选择比较'}</Button>}
           <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.showContext(discussion, turn)}>查看上下文</Button>
-          <Button variant="ghost" size="sm" isDisabled={!!busy || noModel || !shown} onPress={() => setFollowUp(followUp?.turn === turn.id ? null : { turn: turn.id, text: '' })}>追问</Button>
+          {!readOnly && <Button variant="ghost" size="sm" isDisabled={!!busy || noModel || !shown} onPress={() => setFollowUp(followUp?.turn === turn.id ? null : { turn: turn.id, text: '' })}>追问</Button>}
         </div>
         {followUp?.turn === turn.id && <div className="explore-follow">
           <TextArea aria-label="追问" rows={2} autoFocus value={followUp.text} placeholder="基于这条回答继续问"

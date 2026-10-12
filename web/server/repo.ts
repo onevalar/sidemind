@@ -33,6 +33,8 @@ export function repoPaths(root: string): DataPaths {
   return { root: resolved, notes: path.join(resolved, 'notes'), memory: path.join(resolved, 'memory'), canvas: path.join(resolved, 'canvas'), cache: path.join(resolved, 'cache'), local: path.join(resolved, 'local'), research: path.join(resolved, 'research'), legacy: path.join(resolved, 'cache', 'legacy-canvasnote') }
 }
 
+/** Directories only the repository layout creates; a legacy notes folder has Markdown in its root instead. */
+const REPO_DIRECTORIES = ['notes', 'memory', 'canvas', 'cache', 'local', 'research']
 const exists = (file: string) => fs.access(file).then(() => true, () => false)
 
 type LegacyLibrary = { version: 1; notes?: Record<string, { position: { x: number; y: number } }>; frames?: { id: string; space: string; title: string; position: { x: number; y: number }; width: number; height: number; members: string[] }[] }
@@ -50,7 +52,17 @@ export async function openDataRepo(root: string, options: { git?: boolean } = {}
   if (!await exists(path.join(paths.root, REPO_MARKER))) {
     const entries = (await fs.readdir(paths.root)).filter(name => name !== '.git')
     const pending = entries.includes(MIGRATION)
-    if (entries.length && (pending || entries.some(name => !name.startsWith('.')) || entries.includes('.canvasnote'))) {
+    // A directory that already has the repository's own layout but lost its version marker (an interrupted first start,
+    // an incomplete restore, a manual clean-up) is not an old notes folder. Treating it as one would move its data
+    // directories inside notes/, so refuse and change nothing.
+    const layout = REPO_DIRECTORIES.filter(name => entries.includes(name))
+    const hasData = async (name: string) => (await fs.readdir(path.join(paths.root, name))).length > 0
+    // Only empty directories: a first start that stopped before writing the marker. Nothing to protect, finish it below.
+    const interruptedInit = layout.length > 0 && entries.every(name => layout.includes(name) || name.startsWith('.')) && !(await Promise.all(layout.map(hasData))).some(Boolean)
+    if (!interruptedInit && !pending && !entries.includes('.canvasnote') && ((entries.includes('notes') && layout.length >= 3) || entries.includes('local') || entries.includes('research'))) {
+      throw new StorageError(`这个目录已经是新版数据仓库的结构（${layout.join('、')}），但缺少版本标记 ${REPO_MARKER}。为避免把它当作旧版笔记文件夹再次搬动，没有修改任何内容。请从备份恢复该文件，或确认目录无误后手动创建内容为 {"format":"canvas-note-repo","version":2} 的 ${REPO_MARKER}。`)
+    }
+    if (!interruptedInit && entries.length && (pending || entries.some(name => !name.startsWith('.')) || entries.includes('.canvasnote'))) {
       await migrateLegacy(paths)
       migrated = true
     }

@@ -236,14 +236,14 @@ function build(item: Planned, batch: string): Built {
 
 // ---- the import itself ----
 
-export interface Batch { version: 1; id: string; source: 'chatgit'; digest: string; state: 'importing' | 'completed' | 'rolled-back'; startedAt: number; completedAt?: number; files: Preflight['files']; discussions: string[]; drafts: string[]; runs: string[]; answers: string[]; skipped: { canvasId: string; reason: string }[]; attachments: { node: string; names: string[] }[] }
+export interface Batch { version: 1; id: string; source: 'chatgit' | 'canvas-conversation'; digest: string; state: 'importing' | 'completed' | 'rolled-back'; startedAt: number; completedAt?: number; files: Preflight['files']; discussions: string[]; drafts: string[]; runs: string[]; answers: string[]; skipped: { canvasId: string; reason: string }[]; attachments: { node: string; names: string[] }[] }
 export interface ImportItem { canvasId: string; discussionId: string; name: string; result: 'created' | 'identical' | 'conflict' | 'skipped'; turns: number; answers: number; unfinished: number; drafts: number; summaries: number; reason?: string }
 export interface ImportResult { batch: string; resumed: boolean; items: ImportItem[]; issues: Issue[]; totals: { created: number; identical: number; conflict: number; skipped: number } }
 
 const batchId = (digest: string) => 'chatgit-' + digest.slice(0, 16)
-const batchFile = (store: NoteStore, id: string) => path.join(store.paths.local, 'imports', id + '.json')
+export const batchFile = (store: NoteStore, id: string) => path.join(store.paths.local, 'imports', id + '.json')
 export async function readBatch(store: NoteStore, id: string): Promise<Batch | null> {
-  if (!/^chatgit-[a-f0-9]{16}$/.test(id)) throw new BadNameError('导入批次编号无效。')
+  if (!/^(chatgit|legacy)-[a-f0-9]{16}$/.test(id)) throw new BadNameError('导入批次编号无效。')
   return readRecord<Batch>(batchFile(store, id))
 }
 
@@ -369,7 +369,7 @@ export async function rollbackImport(store: NoteStore, research: ResearchStore, 
   for (const discussionId of batch.discussions) {
     const discussion = await research.getDiscussion(discussionId).catch(() => null)
     if (!discussion) continue
-    const added = discussion.turns.filter(turn => !turn.requestKey.startsWith('chatgit:')).length
+    const added = discussion.turns.filter(turn => !/^(chatgit|legacy):/.test(turn.requestKey)).length
     if (added) additions.push({ discussion: discussionId, turns: added })
   }
   await research.archiveRecords(archive, { discussions: batch.discussions, drafts: batch.drafts, answers: batch.answers })

@@ -340,3 +340,19 @@ describe('branch graph', () => {
     expect(within(graph).getByRole('button', { name: '问题：问题3（未成功）' })).toBeTruthy()
   })
 })
+
+describe('read-only history from the old Agent', () => {
+  it('can be read and written into a note, but offers no way to continue it', async () => {
+    const old: DiscussionDTO = { ...discussion(hex(61), '整理一下笔记', '已经整理好了。'), imported: { source: 'canvas-conversation', canvasId: 'c1', batch: 'legacy-0123456789abcdef', readOnly: true } }
+    vi.mocked(api.discussions).mockResolvedValue([summary(old)])
+    vi.mocked(api.discussionView).mockResolvedValue({ discussion: old, captures: [], sources: {}, runs: [] })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: /整理一下笔记/ }))
+    expect(await screen.findByText('已经整理好了。')).toBeTruthy()
+    expect(screen.getByRole('note').textContent).toContain('只读历史')
+    expect(screen.queryByRole('textbox')).toBe(null)
+    for (const name of ['追问', '重新回答', '选择比较']) expect(screen.queryByRole('button', { name }), name).toBe(null)
+    expect(screen.getByRole('button', { name: '写入…' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: '存为新笔记' })).toBeTruthy()
+  })
+})
