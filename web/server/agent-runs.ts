@@ -10,9 +10,8 @@ import { readRecord, StorageError, writeRecord } from './persistence'
 import { BadNameError, ConflictError, contentVersion, type NoteStore } from './store'
 
 const finished = (status: AgentRunDTO['status']) => !['queued', 'running'].includes(status)
-const NEVER_ATTACHED_MS = 15000
 type Listener = (entry: { seq: number; event: AgentEvent }) => void
-type Active = { controller: AbortController; run: AgentRunDTO; events: { seq: number; event: AgentEvent }[]; listeners: Set<Listener>; attached: boolean; stopped: 'user' | 'disconnect' | null; writing: Promise<unknown>; timer?: ReturnType<typeof setTimeout> }
+type Active = { controller: AbortController; run: AgentRunDTO; events: { seq: number; event: AgentEvent }[]; listeners: Set<Listener>; stopped: boolean; writing: Promise<unknown> }
 
 /**
  * Runs the Note Agent on the server. The model/tool loop, tools, prompts and write rules are the unchanged
@@ -30,6 +29,12 @@ export class AgentRunService {
   }
 
   private file = (id: string) => path.join(this.directory, id + '.json')
+
+  /** The unfinished run writing to a conversation, so a page that opens mid-run can follow it. */
+  runForSession(session: string): AgentRunDTO | null {
+    for (const state of this.active.values()) if (state.run.session === session && !finished(state.run.status)) return { ...state.run }
+    return null
+  }
 
   /** True while any run is executing; used to hold back a sync. */
   get busy() { return [...this.active.values()].some(item => !finished(item.run.status)) }
@@ -64,7 +69,7 @@ export class AgentRunService {
   }
 
   /** Idempotent per request key. The record is on disk before this returns. */
-  async start(input: { requestKey: string; scope: AgentScope; session?: string; message: string; selection?: string }, model: AgentModel, options: { cancelOnDisconnect: boolean }): Promise<AgentRunDTO> {
+  async start(input: { requestKey: string; scope: AgentScope; session?: string; message: string; selection?: string }, model: AgentModel): Promise<AgentRunDTO> {
     if (typeof input.requestKey !== 'string' || !input.requestKey || input.requestKey.length > 200) throw new BadNameError('请求键无效。')
     await this.recover()
     const id = contentVersion('agent-run\0' + input.requestKey).slice(0, 32)
@@ -73,14 +78,12 @@ export class AgentRunService {
       if (existing) return existing
       this.options.guard?.()
       const now = Date.now()
-      const run: AgentRunDTO = { id, scope: input.scope, ...(input.session ? { session: input.session } : {}), requestKey: input.requestKey, status: 'queued', seq: 0, cancelOnDisconnect: options.cancelOnDisconnect, createdAt: now, updatedAt: now }
-      const state: Active = { controller: new AbortController(), run, events: [], listeners: new Set(), attached: false, stopped: null, writing: Promise.resolve() }
+      const run: AgentRunDTO = { id, scope: input.scope, ...(input.session ? { session: input.session } : {}), requestKey: input.requestKey, status: 'queued', seq: 0, createdAt: now, updatedAt: now }
+      const state: Active = { controller: new AbortController(), run, events: [], listeners: new Set(), stopped: false, writing: Promise.resolve() }
       await this.save(state)
       this.active.set(id, state)
-      // A legacy run whose caller never connects must not run unattended.
-      if (run.cancelOnDisconnect) state.timer = setTimeout(() => { if (!state.attached) this.stopState(state, 'disconnect') }, NEVER_ATTACHED_MS)
       // A finished run stays attachable for a minute so a client that connects late still receives every event.
-      const task = this.execute(state, input, model).finally(() => { clearTimeout(state.timer); setTimeout(() => this.active.delete(id), 60000).unref() })
+      const task = this.execute(state, input, model).finally(() => { setTimeout(() => this.active.delete(id), 60000).unref() })
       void (this.options.track ? this.options.track(task) : task).catch(() => undefined)
       return { ...run }
     })
@@ -121,15 +124,9 @@ export class AgentRunService {
     }
   }
 
-  private stopState(state: Active, reason: 'user' | 'disconnect') {
-    if (finished(state.run.status)) return
-    state.stopped ??= reason
-    state.controller.abort()
-  }
-
   async stop(id: string): Promise<AgentRunDTO> {
     const live = this.active.get(id)
-    if (live) this.stopState(live, 'user')
+    if (live && !finished(live.run.status)) { live.stopped = true; live.controller.abort() }
     return this.get(id)
   }
 
@@ -140,14 +137,10 @@ export class AgentRunService {
   attach(id: string, after: number, onEvent: Listener): { run: AgentRunDTO; replay: { seq: number; event: AgentEvent }[]; detach: () => void } | null {
     const state = this.active.get(id)
     if (!state) return null
-    state.attached = true
     state.listeners.add(onEvent)
     return {
       run: { ...state.run }, replay: state.events.filter(entry => entry.seq > after),
-      detach: () => {
-        state.listeners.delete(onEvent)
-        if (!state.listeners.size && state.run.cancelOnDisconnect && !finished(state.run.status)) this.stopState(state, 'disconnect')
-      },
+      detach: () => { state.listeners.delete(onEvent) },
     }
   }
 }

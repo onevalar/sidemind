@@ -3,9 +3,10 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { App } from '../src/App'
 import { api } from '../src/api'
+import type { AgentRunDTO } from '../shared/types'
 
 vi.mock('../src/api', () => ({
-  api: { listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), search: vi.fn(), openWorkspaceFolder: vi.fn(), conversation: vi.fn(), changeSets: vi.fn(), agent: vi.fn(), undoChangeSet: vi.fn(), repoStatus: vi.fn(), push: vi.fn() },
+  api: { listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), search: vi.fn(), openWorkspaceFolder: vi.fn(), conversation: vi.fn(), changeSets: vi.fn(), agent: vi.fn(), stopAgentRun: vi.fn(), followAgent: vi.fn(), agentRun: vi.fn(), undoChangeSet: vi.fn(), repoStatus: vi.fn(), push: vi.fn() },
   subscribeEvents: () => () => {},
 }))
 vi.mock('../src/LibraryCanvas', () => ({ LibraryCanvas: () => <div>文章画布</div> }))
@@ -179,6 +180,7 @@ it('offers an Agent on the canvas, preserves its conversation when hidden and su
     emit({ type: 'session', id: 'conversation-1' })
     emit({ type: 'message', text: input.scope.kind === 'chat' ? '你好，今天想聊什么？' : '这些笔记主要讨论反射。\n\n[光的反射](Work/%E5%85%89%E7%9A%84%E5%8F%8D%E5%B0%84.md)' })
     emit({ type: 'done' })
+    return null
   })
   render(<App/>)
   await screen.findByText('文章画布')
@@ -210,20 +212,80 @@ it('offers an Agent on the canvas, preserves its conversation when hidden and su
   fireEvent.click(screen.getByRole('combobox', { name: '对话范围' }))
   fireEvent.click(await screen.findByRole('option', { name: '文件夹 · Work' }))
   expect(screen.getByText('这些笔记主要讨论反射。')).toBeTruthy()
-  vi.mocked(api.agent).mockImplementationOnce(async (_, emit, signal) => {
+  // Stopping is a request to the server; the page keeps listening until the run reports it has ended.
+  const stopped = { id: 'run-2', scope: { kind: 'folder' as const, folder: 'Work' }, requestKey: 'k', status: 'cancelled' as const, seq: 3, error: '已停止。已完成的修改保留在修改记录中，可以撤销。', createdAt: 1, updatedAt: 2 }
+  let endRun: (run: typeof stopped) => void = () => {}
+  vi.mocked(api.stopAgentRun).mockImplementation(async () => { endRun(stopped); return stopped })
+  vi.mocked(api.agent).mockImplementationOnce(async (_, emit, __, hooks) => {
+    hooks?.onRun?.({ ...stopped, status: 'running', error: undefined })
     emit({ type: 'delta', text: '继续分析这些笔记的关联…' })
-    await new Promise((_, reject) => signal!.addEventListener('abort', () => reject(new DOMException('Stopped', 'AbortError')), { once: true }))
+    return new Promise(resolve => { endRun = resolve })
   })
   await act(async () => { fireEvent.change(input, { target: { value: '继续分析' } }); fireEvent.click(screen.getByRole('button', { name: '发送消息' })) })
   expect(await screen.findByText('继续分析这些笔记的关联…')).toBeTruthy()
+  expect(screen.getByText(/任务在后台运行/)).toBeTruthy()
   expect(screen.getByRole('button', { name: '开始新对话' }).hasAttribute('disabled')).toBe(true)
   expect(screen.getByRole('combobox', { name: '对话范围' }).hasAttribute('disabled')).toBe(true)
   fireEvent.change(input, { target: { value: '下一条消息草稿' } })
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: '停止生成' })) })
-  expect((await screen.findByRole('alert')).textContent).toContain('已停止')
+  expect(api.stopAgentRun).toHaveBeenCalledWith('run-2')
+  expect((await screen.findByText(/已停止/)).getAttribute('role')).toBe('status')
+  expect(screen.queryByRole('alert')).toBe(null)
   expect(screen.queryByText('继续分析这些笔记的关联…')).toBe(null)
   expect(screen.getByRole('button', { name: '发送消息' }).hasAttribute('disabled')).toBe(false)
   expect(input.value).toBe('下一条消息草稿')
   fireEvent.click(screen.getByRole('link', { name: '光的反射' }))
   expect((await screen.findByRole('region', { name: '文章编辑' })).textContent).toBe('Work/光的反射.md')
+})
+
+const running = { id: 'run-9', scope: { kind: 'folder' as const, folder: '' }, requestKey: 'k', status: 'running' as const, seq: 4, createdAt: 1, updatedAt: 2 }
+const configured = () => {
+  const none = { configured: false, keySaved: false, model: '', baseUrl: '', source: 'none' as const }
+  vi.mocked(api.settings).mockResolvedValue({ notesDirectory: '/test/notes', dataDirectory: '/test', summary: none, embedding: none, ai: { configured: true, keySaved: true, model: 'test-model', baseUrl: 'https://example.test/v1', source: 'saved' }, chatgpt: { configured: false, accounts: [], activeAccountId: null, model: '', loginStatus: 'idle' } })
+}
+
+it('follows a request that was still running when the page opened, without repeating the messages it already wrote', async () => {
+  configured()
+  vi.mocked(api.conversation).mockResolvedValue({ id: 'c1', scope: running.scope, updatedAt: 1, messages: [{ role: 'user' as const, text: '整理一下' }, { role: 'assistant' as const, text: '已读取两篇。' }], changes: [], proposals: [], plan: [], activeRun: running })
+  let end: (run: AgentRunDTO) => void = () => {}
+  vi.mocked(api.followAgent).mockImplementation(async (_, emit) => {
+    emit({ type: 'message', text: '已读取两篇。' })
+    emit({ type: 'message', text: '正在整理…' })
+    return new Promise(resolve => { end = resolve })
+  })
+  render(<App/>)
+  expect(await screen.findByText('正在整理…')).toBeTruthy()
+  expect(api.followAgent).toHaveBeenCalledWith('run-9', expect.any(Function), expect.any(AbortSignal))
+  expect(screen.getAllByText('已读取两篇。')).toHaveLength(1)
+  expect(screen.getByText('整理一下')).toBeTruthy()
+  expect(screen.getByText(/任务在后台运行/)).toBeTruthy()
+  expect(screen.getByRole('combobox', { name: '对话范围' }).hasAttribute('disabled')).toBe(true)
+  await act(async () => { end({ ...running, status: 'completed' }) })
+  await waitFor(() => expect(screen.queryByText(/任务在后台运行/)).toBe(null))
+  expect(screen.getByRole('combobox', { name: '对话范围' }).hasAttribute('disabled')).toBe(false)
+  expect(api.stopAgentRun).not.toHaveBeenCalled()
+})
+
+it('does not stop a running request when the panel is closed or the page goes away', async () => {
+  configured()
+  let signal: AbortSignal | undefined
+  vi.mocked(api.agent).mockImplementation(async (_, emit, abort, hooks) => {
+    signal = abort
+    hooks?.onRun?.(running)
+    emit({ type: 'delta', text: '分析进行中…' })
+    return new Promise(() => {})
+  })
+  const view = render(<App/>)
+  await screen.findByText('文章画布')
+  const input = screen.getByRole('textbox', { name: 'AI 消息' })
+  await act(async () => { fireEvent.change(input, { target: { value: '开始' } }); fireEvent.keyDown(input, { key: 'Enter' }) })
+  expect(await screen.findByText('分析进行中…')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '关闭 AI 助手' }))
+  fireEvent.click(screen.getByRole('button', { name: 'AI 助手' }))
+  expect(screen.getByText('分析进行中…')).toBeTruthy()
+  expect(screen.getByText(/任务在后台运行/)).toBeTruthy()
+  view.unmount()
+  // Leaving only detaches this page from the run; nothing asks the server to stop it.
+  expect(signal!.aborted).toBe(true)
+  expect(api.stopAgentRun).not.toHaveBeenCalled()
 })

@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { runAgent } from './agent-run-helper'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AISettings } from '../server/ai-settings'
 import { createApp } from '../server/app'
@@ -27,11 +28,7 @@ function scripted(steps: Step[]): typeof fetch {
     return step(last.role === 'tool' ? JSON.parse(last.content) : null, body)
   }
 }
-async function send(app: ReturnType<typeof createApp>, scope: AgentScope, message: string, session?: string): Promise<AgentEvent[]> {
-  const response = await app.request('/api/ai/agent', { method: 'POST', headers: J, body: JSON.stringify({ scope, message, session }) })
-  expect(response.status).toBe(200)
-  return (await response.text()).trim().split('\n').map(line => JSON.parse(line) as AgentEvent)
-}
+const send = runAgent
 const lastSet = (events: AgentEvent[]) => events.flatMap(event => event.type === 'changeset' ? [event.change] : []).at(-1)!
 const errors = (events: AgentEvent[]) => events.filter(event => event.type === 'error')
 

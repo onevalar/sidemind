@@ -114,6 +114,8 @@ export interface ConversationState {
   changes: ChangeSetSummary[]
   proposals: ProposalSummary[]
   plan: PlanStep[]
+  /** Set when the conversation has a request still running on the server. */
+  activeRun?: AgentRunDTO
 }
 export type MemoryTargetKind = 'note' | 'folder' | 'library'
 export interface MemoryFileDTO { target: MemoryTargetKind; name: string; file: string; content: string; exists: boolean }
@@ -264,8 +266,6 @@ export interface AgentRunDTO {
   /** Sequence number of the latest event; events are numbered from 1. */
   seq: number
   error?: string
-  /** Legacy behaviour: the run is cancelled when its last listener disconnects. */
-  cancelOnDisconnect: boolean
   createdAt: number
   updatedAt: number
 }

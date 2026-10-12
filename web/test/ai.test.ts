@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { runAgent } from './agent-run-helper'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AISettings, normalizeAIUrl } from '../server/ai-settings'
 import { createApp } from '../server/app'
@@ -129,11 +130,7 @@ describe('local AI connections', () => {
 describe('note Agent through the real HTTP and file interfaces', () => {
   const reply = (content: string | null, tool_calls?: unknown[]) => new Response(JSON.stringify({ choices: [{ message: { content, ...(tool_calls ? { tool_calls } : {}) }, finish_reason: tool_calls ? 'tool_calls' : 'stop' }] }))
   const call = (name: string, args: object, id = name) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } })
-  const send = async (app: ReturnType<typeof createApp>, scope: AgentScope, message: string, session?: string) => {
-    const response = await app.request('/api/ai/agent', { method: 'POST', headers: J, body: JSON.stringify({ scope, message, session }) })
-    expect(response.status).toBe(200)
-    return (await response.text()).trim().split('\n').map(line => JSON.parse(line) as AgentEvent)
-  }
+  const send = runAgent
   const workspace = async () => {
     const store = new NoteStore(path.join(dir, 'notes'))
     await store.init(); await store.createFolder('Physics'); await store.createFolder('Private'); await ai.save(input)

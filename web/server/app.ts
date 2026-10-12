@@ -245,45 +245,13 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     catch (error) { return { error: c.json({ error: error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError ? error.message : '无法读取模型连接。' }, 502) } }
     return { body, scope, model }
   }
-  // Compatibility adapter over the run layer: same NDJSON stream and same "closing the stream cancels" behaviour as before.
-  app.post('/api/ai/agent', async (c) => {
-    const parsed = await agentRequest(c)
-    if (parsed.error) return parsed.error
-    const { body, scope, model } = parsed
-    c.header('Content-Type', 'application/x-ndjson')
-    c.header('Cache-Control', 'no-store')
-    return stream(c, async output => {
-      const emit = async (event: AgentEvent) => { if (!output.aborted) await output.write(JSON.stringify(event) + '\n') }
-      let detach = () => {}
-      try {
-        const run = await agentRuns.start({ requestKey: crypto.randomUUID(), scope, session: body.session, message: body.message.trim(), selection: body.selection }, model, { cancelOnDisconnect: true })
-        const queue: AgentEvent[] = []
-        let wake: (() => void) | null = null, ended = false
-        const attached = agentRuns.attach(run.id, 0, entry => { queue.push(entry.event); if (entry.event.type === 'done') ended = true; wake?.() })
-        if (!attached) return
-        detach = attached.detach
-        for (const entry of attached.replay) { queue.push(entry.event); if (entry.event.type === 'done') ended = true }
-        output.onAbort(() => { detach(); detach = () => {}; ended = true; wake?.() })
-        while (!ended || queue.length) {
-          if (!queue.length) { await new Promise<void>(resolve => { wake = resolve }); wake = null; continue }
-          await emit(queue.shift()!)
-        }
-      } catch (error) {
-        // Refused before the run existed (for example a sync in progress).
-        const known = error instanceof BadNameError || error instanceof ConflictError || error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError
-        await emit({ type: 'error', text: known ? (error as Error).message : '模型连接中断。已经完成的修改保留在记录中，请检查后再继续。' })
-        if (!known) console.error(error)
-        await emit({ type: 'done' })
-      } finally { detach() }
-    })
-  })
-  // Run API: the request is accepted once recorded, events can be reattached, and nothing is cancelled by disconnecting.
+  // Agent runs: accepted once recorded, events can be reattached, and nothing is cancelled by disconnecting. Only Stop stops one.
   app.post('/api/agent-runs', async (c) => {
     const parsed = await agentRequest(c)
     if (parsed.error) return parsed.error
     const { body, scope, model } = parsed
     if (typeof body.requestKey !== 'string') return c.json({ error: '请提供请求键。' }, 400)
-    return c.json(await agentRuns.start({ requestKey: body.requestKey, scope, session: body.session, message: body.message.trim(), selection: body.selection }, model, { cancelOnDisconnect: body.cancelOnDisconnect === true }), 202)
+    return c.json(await agentRuns.start({ requestKey: body.requestKey, scope, session: body.session, message: body.message.trim(), selection: body.selection }, model), 202)
   })
   app.get('/api/agent-runs/:id', async (c) => c.json(await agentRuns.get(c.req.param('id'))))
   app.post('/api/agent-runs/:id/stop', async (c) => c.json(await agentRuns.stop(c.req.param('id'))))
@@ -295,7 +263,8 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
       const queue: { seq: number; event: AgentEvent }[] = []
       const attached = agentRuns.attach(run.id, after, entry => { queue.push(entry); wake?.() })
       sse.onAbort(() => { closed = true; attached?.detach(); wake?.() })
-      await sse.writeSSE({ event: 'snapshot', id: String(attached?.run.seq ?? run.seq), data: JSON.stringify(attached?.run ?? run) })
+      // No id on the snapshot: a reconnect must resume from the last real event, not from the snapshot's position.
+      await sse.writeSSE({ event: 'snapshot', data: JSON.stringify(attached?.run ?? run) })
       if (!attached) return
       queue.push(...attached.replay)
       let ended = queue.some(entry => entry.event.type === 'done')
@@ -314,7 +283,11 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     if (!scope || !['chat', 'note', 'folder'].includes(scope.kind) || typeof scope.folder !== 'string' || (scope.kind === 'note' && typeof scope.name !== 'string')) throw new BadNameError('对话范围无效。')
     return scope.kind === 'note' ? { kind: 'note', folder: scope.folder, name: scope.name } : { kind: scope.kind, folder: scope.kind === 'chat' ? '' : scope.folder }
   }
-  app.get('/api/ai/conversation', async c => c.json(await agent.state(parseScope(c.req.query('scope')))))
+  app.get('/api/ai/conversation', async c => {
+    const state = await agent.state(parseScope(c.req.query('scope')))
+    const activeRun = state ? agentRuns.runForSession(state.id) : null
+    return c.json(state && activeRun ? { ...state, activeRun } : state)
+  })
   app.get('/api/ai/changes', async c => c.json(await changes.list({ folder: c.req.query('folder') || undefined, name: c.req.query('name') || undefined, conversation: c.req.query('conversation') || undefined })))
   app.get('/api/ai/changes/:id', async c => {
     const set = await changes.get(c.req.param('id'))

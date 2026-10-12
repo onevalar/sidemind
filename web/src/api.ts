@@ -1,4 +1,4 @@
-import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent, SourceRefDTO, ResolvedSourceDTO, DiscussionDTO, DraftDTO, TurnDTO, CaptureDTO, RunDTO, RunEvent, ContextPreviewDTO } from '../shared/types'
+import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent, SourceRefDTO, ResolvedSourceDTO, DiscussionDTO, DraftDTO, TurnDTO, CaptureDTO, RunDTO, RunEvent, ContextPreviewDTO, AgentRunDTO } from '../shared/types'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -42,6 +42,35 @@ async function ndjson<T extends { type: string }>(response: Response, onEvent: (
 export type NoteResearch = { noteId: string; discussions: DiscussionDTO[]; drafts: DraftDTO[]; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO>; runs: RunDTO[] }
 export type CaptureTarget = { kind: 'append'; note: string } | { kind: 'new'; folder: string }
 
+/**
+ * Reads a run's events until `done`. Every event has a sequence number, so a reconnect (the browser resends the last id)
+ * never shows an event twice. Resolves with the final run state; rejects only if the connection cannot be kept.
+ */
+function followAgentRun(id: string, onEvent: (event: AgentEvent) => void, signal: AbortSignal): Promise<AgentRunDTO | null> {
+  return new Promise((resolve, reject) => {
+    const source = new EventSource(`/api/agent-runs/${enc(id)}/events`)
+    let last = 0, settled = false, quiet: ReturnType<typeof setTimeout> | undefined
+    const end = (action: () => void) => { if (settled) return; settled = true; clearTimeout(quiet); source.close(); signal.removeEventListener('abort', detach); action() }
+    const detach = () => end(() => reject(new DOMException('Detached', 'AbortError')))
+    const finish = () => end(() => { request<AgentRunDTO>(`/api/agent-runs/${enc(id)}`).then(resolve, () => resolve(null)) })
+    if (signal.aborted) { detach(); return }
+    signal.addEventListener('abort', detach, { once: true })
+    source.addEventListener('snapshot', message => {
+      const run = JSON.parse((message as MessageEvent).data) as AgentRunDTO
+      // A finished run is replayed straight away if it is still buffered; otherwise there is nothing more to wait for.
+      if (!['queued', 'running'].includes(run.status)) quiet = setTimeout(finish, 1500)
+    })
+    source.addEventListener('agent', message => {
+      const entry = JSON.parse((message as MessageEvent).data) as { seq: number; event: AgentEvent }
+      if (entry.seq <= last) return
+      last = entry.seq
+      onEvent(entry.event)
+      if (entry.event.type === 'done') finish()
+    })
+    source.onerror = () => { if (source.readyState === EventSource.CLOSED) end(() => reject(new Error('与任务的连接中断。任务可能仍在运行，刷新页面可以重新接上。'))) }
+  })
+}
+
 export type ModelSlot = 'main' | 'summary' | 'embedding'
 export type AppSettings = { notesDirectory: string; dataDirectory: string; ai: PublicAIConfig; summary: PublicAIConfig; embedding: PublicAIConfig; chatgpt: PublicChatGPTConfig }
 const slot = (value: ModelSlot) => value === 'main' ? '' : '?slot=' + value
@@ -57,11 +86,19 @@ export const api = {
   startRun: (discussionId: string, turnId: string, requestKey: string) => request<RunDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/runs`, { method: 'POST', body: JSON.stringify({ requestKey }) }),
   stopRun: (id: string) => request<RunDTO>(`/api/runs/${enc(id)}/stop`, { method: 'POST', body: '{}' }),
   capture: (input: { requestKey: string; discussionId: string; turnId: string; answerId: string; target: CaptureTarget }) => request<{ capture: CaptureDTO; change: ChangeSetSummary }>('/api/captures', { method: 'POST', body: JSON.stringify(input) }),
-  agent: async (input: { session?: string; scope: AgentScope; message: string; selection?: string }, onEvent: (event: AgentEvent) => void, signal: AbortSignal) => {
-    const response = await fetch('/api/ai/agent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal })
-    if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || '无法连接 AI 助手。')
-    await ndjson(response, onEvent, '对话连接中断。已完成的修改仍保留，请检查修改记录。')
+  /**
+   * Runs one Agent request on the server and streams its events. The run belongs to the server: aborting `signal`
+   * only stops listening. Use `stopAgentRun` to stop the work itself.
+   */
+  agent: async (input: { session?: string; scope: AgentScope; message: string; selection?: string }, onEvent: (event: AgentEvent) => void, signal: AbortSignal, hooks: { onRun?: (run: AgentRunDTO) => void } = {}): Promise<AgentRunDTO | null> => {
+    const run = await request<AgentRunDTO>('/api/agent-runs', { method: 'POST', body: JSON.stringify({ ...input, requestKey: crypto.randomUUID() }), signal })
+    hooks.onRun?.(run)
+    return followAgentRun(run.id, onEvent, signal)
   },
+  /** Attach to a run that is already going, for example after the page was reloaded. */
+  followAgent: (runId: string, onEvent: (event: AgentEvent) => void, signal: AbortSignal) => followAgentRun(runId, onEvent, signal),
+  stopAgentRun: (id: string) => request<AgentRunDTO>(`/api/agent-runs/${enc(id)}/stop`, { method: 'POST', body: '{}' }),
+  agentRun: (id: string) => request<AgentRunDTO>(`/api/agent-runs/${enc(id)}`),
   conversation: (scope: AgentScope) => request<ConversationState | null>(`/api/ai/conversation?scope=${enc(JSON.stringify(scope))}`),
   changeSets: (filter: { folder?: string; name?: string } = {}) => request<ChangeSetSummary[]>(`/api/ai/changes?folder=${enc(filter.folder ?? '')}${filter.name ? '&name=' + enc(filter.name) : ''}`),
   changeSet: (id: string) => request<ChangeSetDetail>(`/api/ai/changes/${enc(id)}`),

@@ -87,7 +87,7 @@ describe('Note Agent on the run layer', () => {
     const app = build()
     const body = { requestKey: 'k1', scope, message: '创建一篇新笔记' }
     const run = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', body, 202)
-    expect(JSON.parse(await fs.readFile(path.join(store.paths.local, 'agent-runs', run.id + '.json'), 'utf8'))).toMatchObject({ id: run.id, cancelOnDisconnect: false })
+    expect(JSON.parse(await fs.readFile(path.join(store.paths.local, 'agent-runs', run.id + '.json'), 'utf8'))).toMatchObject({ id: run.id, status: expect.any(String) })
     expect((await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', body, 202)).id).toBe(run.id)
     await until(async () => (await status(app, run.id)) === 'completed')
     expect(transports).toBe(2)
@@ -137,22 +137,6 @@ describe('Note Agent on the run layer', () => {
     expect(state!.changes).toHaveLength(1)
   })
 
-  it('legacy stream still cancels when its listener disconnects, while the run API does not', async () => {
-    const release = gate()
-    script = [{ text: '正在回答', hold: release.hold }]
-    const app = build()
-    const controller = new AbortController()
-    const response = await app.request('/api/ai/agent', { method: 'POST', headers: J, body: JSON.stringify({ scope, message: '旧接口' }), signal: controller.signal })
-    const reader = response.body!.getReader()
-    await reader.read()
-    await until(() => transports === 1)
-    await reader.cancel()
-    release.open()
-    await until(async () => { const names = await fs.readdir(path.join(store.paths.local, 'agent-runs')); const run = JSON.parse(await fs.readFile(path.join(store.paths.local, 'agent-runs', names[0]!), 'utf8')) as AgentRunDTO; return run.status === 'cancelled' })
-    const record = JSON.parse(await fs.readFile(path.join(store.paths.local, 'agent-runs', (await fs.readdir(path.join(store.paths.local, 'agent-runs')))[0]!), 'utf8')) as AgentRunDTO
-    expect(record).toMatchObject({ status: 'cancelled', cancelOnDisconnect: true })
-  })
-
   it('after a restart an unfinished run is interrupted, nothing is replayed, and the conversation is intact', async () => {
     const release = gate()
     script = [{ calls: [{ name: 'create_note', args: { title: '重启前', content: '# 重启前\n' } }] }, { text: '还在写', hold: release.hold }]
@@ -185,6 +169,31 @@ describe('Note Agent on the run layer', () => {
     expect(await push.text()).toContain('助手任务或同步仍在进行')
     release.open()
     await until(async () => (await status(app, run.id)) === 'completed')
+  })
+
+  it('tells a page that opens mid-run which run to follow, and stops saying so once it ends', async () => {
+    const release = gate()
+    script = [{ text: '进行中', hold: release.hold }]
+    const app = build()
+    const run = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'k7', scope, message: '后台任务' }, 202)
+    await until(async () => !!(await call<AgentRunDTO>(app, 'GET', `/api/agent-runs/${run.id}`)).session)
+    const url = `/api/ai/conversation?scope=${encodeURIComponent(JSON.stringify(scope))}`
+    const during = await call<{ id: string; activeRun?: AgentRunDTO } | null>(app, 'GET', url)
+    expect(during!.activeRun).toMatchObject({ id: run.id, status: 'running', session: during!.id })
+    release.open()
+    await until(async () => (await status(app, run.id)) === 'completed')
+    expect((await call<{ activeRun?: AgentRunDTO }>(app, 'GET', url)).activeRun).toBeUndefined()
+  })
+
+  it('does not give the snapshot an event id, so a reconnect resumes from the last real event', async () => {
+    const app = build()
+    script = [{ text: '好' }]
+    const run = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'k8', scope, message: '快速' }, 202)
+    await until(async () => (await status(app, run.id)) === 'completed')
+    const raw = await (await app.request(`/api/agent-runs/${run.id}/events`, { headers: { host: 'localhost:3001' } })).text()
+    const snapshot = raw.split('\n\n').find(block => block.includes('event: snapshot'))!
+    expect(snapshot).not.toMatch(/^id:/m)
+    expect(raw).toMatch(/^id: 1$/m)
   })
 
   it('rejects bad input, a missing run, and a conversation that is already busy', async () => {

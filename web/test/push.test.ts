@@ -2,6 +2,7 @@ import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
 import { execFileSync } from 'node:child_process'
+import { runAgent } from './agent-run-helper'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AISettings } from '../server/ai-settings'
 import { createApp } from '../server/app'
@@ -167,8 +168,7 @@ describe('push pipeline', () => {
     const calls: Calls = []
     const { root, app, ai } = await setup(calls)
     await ai.save({ model: 'main', baseUrl: 'https://main.example/v1', key: 'm' })
-    const response = await app.request('/api/ai/agent', { method: 'POST', headers: J, body: JSON.stringify({ scope: { kind: 'note', folder: 'Work', name: 'Work/A.md' }, message: '这篇以后只写给研究者看' }) })
-    expect(await response.text()).toContain('好的。')
+    expect(JSON.stringify(await runAgent(app, { kind: 'note', folder: 'Work', name: 'Work/A.md' }, '这篇以后只写给研究者看'))).toContain('好的。')
     await push(app)
     const distill = calls.filter(item => item.kind === 'distill')
     expect(distill).toHaveLength(1)

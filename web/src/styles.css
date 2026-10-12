@@ -444,3 +444,4 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .explore-context { display: flex; flex-direction: column; gap: 12px; max-height: 55vh; overflow-y: auto; }
 .explore-context h4 { margin: 0 0 4px; font-size: 12px; font-weight: 550; color: var(--text-secondary); }
 .explore-context pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.7; }
+.agent-background-note { margin: 16px 0 0; font-size: 12px; line-height: 1.7; }
