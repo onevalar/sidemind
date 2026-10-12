@@ -3,7 +3,7 @@ import { Button as ArcButton, type ButtonProps } from './components/arc/button/b
 import { Input as ArcInput } from './components/arc/input/input'
 import { Tooltip } from './components/arc/tooltip/tooltip'
 import { Dialog as ArcDialog, DialogContent } from './components/arc/dialog/dialog'
-import { FileText, Search, Plus, Minus, Maximize, LayoutGrid, Folder, Sparkles, PanelLeft, Settings, X, ArrowUp, ChevronRight, Check, Undo2, Clock, Ellipsis, Frame, Sun, RefreshCw } from 'lucide-react'
+import { FileText, Search, Plus, Minus, Maximize, LayoutGrid, Folder, Sparkles, PanelLeft, Settings, X, ArrowUp, ChevronRight, Check, Undo2, Clock, Ellipsis, Frame, Sun, RefreshCw, MessageSquare } from 'lucide-react'
 
 export { Textarea as TextArea } from './components/arc/textarea/textarea'
 export { Select } from './components/arc/select/select'
@@ -25,7 +25,7 @@ export function Input({ fullWidth: _fullWidth, ...props }: ComponentProps<typeof
   return <ArcInput {...props}/>
 }
 
-const icons = { note: FileText, search: Search, plus: Plus, minus: Minus, fit: Maximize, grid: LayoutGrid, folder: Folder, spark: Sparkles, panel: PanelLeft, settings: Settings, close: X, send: ArrowUp, arrow: ChevronRight, check: Check, undo: Undo2, clock: Clock, more: Ellipsis, group: Frame, sun: Sun, sync: RefreshCw }
+const icons = { note: FileText, search: Search, plus: Plus, minus: Minus, fit: Maximize, grid: LayoutGrid, folder: Folder, spark: Sparkles, panel: PanelLeft, settings: Settings, close: X, send: ArrowUp, arrow: ChevronRight, check: Check, undo: Undo2, clock: Clock, more: Ellipsis, group: Frame, sun: Sun, sync: RefreshCw, chat: MessageSquare }
 export type IconName = keyof typeof icons
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
   const Glyph = icons[name]

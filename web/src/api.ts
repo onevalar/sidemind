@@ -1,4 +1,4 @@
-import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent, SourceRefDTO, ResolvedSourceDTO, DiscussionDTO, DraftDTO, TurnDTO, CaptureDTO, RunDTO, RunEvent, ContextPreviewDTO, AgentRunDTO } from '../shared/types'
+import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent, SourceRefDTO, ResolvedSourceDTO, DiscussionDTO, DiscussionSummaryDTO, DraftDTO, TurnDTO, CaptureDTO, RunDTO, RunEvent, ContextPreviewDTO, AgentRunDTO } from '../shared/types'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -40,6 +40,7 @@ async function ndjson<T extends { type: string }>(response: Response, onEvent: (
 }
 
 export type NoteResearch = { noteId: string; discussions: DiscussionDTO[]; drafts: DraftDTO[]; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO>; runs: RunDTO[] }
+export type DiscussionView = { discussion: DiscussionDTO; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO>; runs: RunDTO[] }
 export type CaptureTarget = { kind: 'append'; note: string } | { kind: 'new'; folder: string }
 
 /**
@@ -77,6 +78,9 @@ const slot = (value: ModelSlot) => value === 'main' ? '' : '?slot=' + value
 
 export const api = {
   researchNote: (name: string) => request<NoteResearch>(`/api/research/note?name=${enc(name)}`),
+  discussions: (archived?: boolean) => request<DiscussionSummaryDTO[]>('/api/discussions' + (archived === undefined ? '' : `?archived=${archived}`)),
+  discussionView: (id: string) => request<DiscussionView>(`/api/discussions/${enc(id)}/view`),
+  archiveDiscussion: (id: string, archived: boolean) => request<DiscussionDTO>(`/api/discussions/${enc(id)}/archived`, { method: 'PUT', body: JSON.stringify({ archived }) }),
   createSource: (note: string, quote: string) => request<SourceRefDTO>('/api/sources', { method: 'POST', body: JSON.stringify({ note, quote }) }),
   source: (id: string) => request<ResolvedSourceDTO>(`/api/sources/${enc(id)}`),
   createDraft: (input: { discussionId?: string; parentIds?: string[]; origin?: DiscussionDTO['origin']; items: { id: string; question: string; sourceIds: string[] }[] }) => request<DraftDTO>('/api/drafts', { method: 'POST', body: JSON.stringify(input) }),

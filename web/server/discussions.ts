@@ -2,7 +2,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
-import type { AnswerVersionDTO, CaptureDTO, DiscussionDTO, DraftDTO, DraftItemDTO, ResolvedSourceDTO, SourceRefDTO, TurnDTO } from '../shared/types'
+import type { AnswerVersionDTO, CaptureDTO, DiscussionDTO, DiscussionSummaryDTO, DraftDTO, DraftItemDTO, ResolvedSourceDTO, SourceRefDTO, TurnDTO } from '../shared/types'
 import { project } from '../shared/projection'
 import { BadNameError, ConflictError, NotFoundError, contentVersion, type NoteStore } from './store'
 import { readRecord, StorageError, writeRecord } from './persistence'
@@ -361,6 +361,29 @@ export class ResearchStore {
       const remaining = draft.items.filter(item => sentText.get(item.id) !== item.question)
       if (remaining.length !== draft.items.length) draft = await this.saveDraft({ ...draft, items: remaining }, draft.revision)
       return { discussion, turns, draft }
+    })
+  }
+
+  /** One discussion with the captures that cite it and the sources its questions rest on. */
+  async viewDiscussion(id: string): Promise<{ discussion: DiscussionDTO; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO> }> {
+    return this.exclusive(async () => {
+      const discussion = await this.getDiscussion(id)
+      const captures = (await this.listCaptures()).filter(capture => capture.answers.some(answer => answer.discussionId === id))
+      const sources: Record<string, SourceRefDTO> = {}
+      for (const sourceId of new Set(discussion.turns.flatMap(turn => turn.sourceIds))) sources[sourceId] = await this.getSource(sourceId)
+      return { discussion, captures, sources }
+    })
+  }
+
+  /** The conversation list: one row per discussion, with where it started and what was last asked. */
+  async summaries(options: { archived?: boolean } = {}): Promise<DiscussionSummaryDTO[]> {
+    return this.exclusive(async () => {
+      const paths = (await this.store.identities()).paths
+      const all = await this.list<DiscussionDTO & { version: 1 }>(this.discussions, '讨论')
+      return all.filter(item => options.archived === undefined || item.archived === options.archived).sort((a, b) => b.updatedAt - a.updatedAt).map(({ turns, version, ...rest }) => ({
+        ...rest, turnCount: turns.length, lastQuestion: turns.reduce((latest, turn) => !latest || turn.createdAt >= latest.createdAt ? turn : latest, undefined as TurnDTO | undefined)?.question ?? '',
+        notePath: rest.origin.kind === 'note' ? paths[rest.origin.noteId] ?? null : null,
+      }))
     })
   }
 

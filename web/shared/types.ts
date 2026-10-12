@@ -202,6 +202,12 @@ export interface DiscussionDTO {
   createdAt: number
   updatedAt: number
 }
+export interface DiscussionSummaryDTO extends Omit<DiscussionDTO, 'turns'> {
+  turnCount: number
+  lastQuestion: string
+  /** Current path of the note the discussion started from; null for a plain chat or a deleted note. */
+  notePath: string | null
+}
 export interface DraftItemDTO { id: string; question: string; sourceIds: string[] }
 export interface DraftDTO {
   id: string

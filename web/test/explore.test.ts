@@ -189,3 +189,58 @@ describe('branches and retries', () => {
     expect((await research.getDiscussion(discussion.id)).turns[0]!.question).toBe('没有模型？')
   })
 })
+
+describe('standalone conversations', () => {
+  /** A conversation that never touched a note. */
+  async function chat(question: string) {
+    const draft = await call<DraftDTO>('POST', '/api/drafts', { items: [{ id: 'q1', question, sourceIds: [] }] }, 201)
+    const sent = await call<{ discussion: DiscussionDTO; turns: { id: string }[] }>('POST', `/api/drafts/${draft.id}/send`, { items: [{ id: 'q1', question }] }, 201)
+    const answer = await generate(sent.discussion.id, sent.turns[0]!.id)
+    return { discussionId: sent.discussion.id, turnId: sent.turns[0]!.id, answer }
+  }
+
+  it('lists conversations with where they started, and shows one with its captures and sources', async () => {
+    const plain = await chat('什么是弹性模量？')
+    const { discussionId: fromNote, source } = await ask('铝很轻，密度约 2.7。', '为什么铝轻？')
+    const rows = await call<{ id: string; title: string; turnCount: number; lastQuestion: string; notePath: string | null }[]>('GET', '/api/discussions')
+    expect(rows.map(row => row.id).sort()).toEqual([plain.discussionId, fromNote].sort())
+    expect(rows.find(row => row.id === plain.discussionId)).toMatchObject({ turnCount: 1, lastQuestion: '什么是弹性模量？', notePath: null })
+    expect(rows.find(row => row.id === fromNote)).toMatchObject({ notePath: 'Materials.md' })
+    expect(rows.every(row => !('turns' in row))).toBe(true)
+
+    const view = await call<{ discussion: DiscussionDTO; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO>; runs: RunDTO[] }>('GET', `/api/discussions/${fromNote}/view`)
+    expect(view.discussion.id).toBe(fromNote)
+    expect(Object.keys(view.sources)).toEqual([source.id])
+    expect(view.captures).toEqual([]); expect(view.runs).toEqual([])
+    await call('GET', '/api/discussions/00000000000000000000000000000000/view', undefined, 404)
+  })
+
+  it('tells the model it has read no note, and keeps that after a follow-up', async () => {
+    const first = await chat('什么是弹性模量？')
+    const system = (requests[0]!.messages[0]!.content)
+    expect(system).toContain('没有读取任何笔记'); expect(system).not.toContain('原文片段')
+    const draft = await call<DraftDTO>('POST', '/api/drafts', { discussionId: first.discussionId, parentIds: [first.turnId], items: [{ id: 'q2', question: '单位是什么？', sourceIds: [] }] }, 201)
+    const sent = await call<{ turns: { id: string }[] }>('POST', `/api/drafts/${draft.id}/send`, { items: [{ id: 'q2', question: '单位是什么？' }] }, 201)
+    await generate(first.discussionId, sent.turns[0]!.id)
+    expect(requests[1]!.messages.map(message => message.role)).toEqual(['system', 'user', 'assistant', 'user'])
+    expect(requests[1]!.messages[0]!.content).toContain('没有读取任何笔记')
+  })
+
+  it('writes a plain conversation\'s answer into a chosen note and shows the capture in its view', async () => {
+    const first = await chat('什么是弹性模量？')
+    const result = await call<{ capture: CaptureDTO; change: ChangeSetSummary }>('POST', '/api/captures', { requestKey: crypto.randomUUID(), discussionId: first.discussionId, turnId: first.turnId, answerId: first.answer.id, target: { kind: 'append', note: 'Materials.md' } }, 201)
+    expect(result.capture.sourceIds).toEqual([])
+    expect((await store.load('Materials.md')).content).toContain(first.answer.text)
+    const view = await call<{ captures: CaptureDTO[] }>('GET', `/api/discussions/${first.discussionId}/view`)
+    expect(view.captures.map(capture => capture.id)).toEqual([result.capture.id])
+  })
+
+  it('archives a conversation out of the default list and restores it', async () => {
+    const first = await chat('什么是弹性模量？')
+    await call('PUT', `/api/discussions/${first.discussionId}/archived`, { archived: true })
+    expect(await call<unknown[]>('GET', '/api/discussions?archived=false')).toHaveLength(0)
+    expect(await call<unknown[]>('GET', '/api/discussions?archived=true')).toHaveLength(1)
+    await call('PUT', `/api/discussions/${first.discussionId}/archived`, { archived: false })
+    expect(await call<unknown[]>('GET', '/api/discussions?archived=false')).toHaveLength(1)
+  })
+})
