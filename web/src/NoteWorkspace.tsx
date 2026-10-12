@@ -5,6 +5,7 @@ import { outlineHeadings, richEditingIssue } from './outline'
 import { RichEditor, type RichEditorHandle, type RichSelection } from './RichEditor'
 import { Button, Icon, IconButton, SegmentedControl } from './ui'
 import { MemoryDialog } from './MemoryDialog'
+import { findTextRange } from './reveal'
 
 // Measure wrapped source text, both for directory jumps and changing column widths.
 function editorOffsetTop(editor: HTMLTextAreaElement, offset: number) {
@@ -20,9 +21,9 @@ function editorOffsetTop(editor: HTMLTextAreaElement, offset: number) {
   return top
 }
 
-export function NoteWorkspace({ name, beforeLeave, agentSelection, aiOpen, onToggleAI, theme, onOpenNote, onBack }: {
+export function NoteWorkspace({ name, beforeLeave, agentSelection, reveal, aiOpen, onToggleAI, theme, onOpenNote, onBack }: {
   name: string; onOpenNote: (name: string) => void; onBack: () => void; beforeLeave: MutableRefObject<() => Promise<boolean>>
-  agentSelection?: MutableRefObject<() => string | undefined>; aiOpen?: boolean; onToggleAI?: () => void; theme: 'light' | 'dark'
+  agentSelection?: MutableRefObject<() => string | undefined>; reveal?: MutableRefObject<(quote: string, start: number | null) => boolean>; aiOpen?: boolean; onToggleAI?: () => void; theme: 'light' | 'dark'
 }) {
   const { note, draft, setDraft, status, error, save: saveDraft, undo, undoCount, reload } = useNote(name)
   const [mode, setMode] = useState<'edit' | 'source'>('edit')
@@ -72,6 +73,30 @@ export function NoteWorkspace({ name, beforeLeave, agentSelection, aiOpen, onTog
       editor.scrollLeft = saved.left
     }
   }, [sourceMode])
+  // Scroll to and highlight a saved passage, in whichever editor is showing. False means it could not be found.
+  useEffect(() => {
+    if (!reveal) return
+    reveal.current = (quote, start) => {
+      if (sourceMode) {
+        const editor = workspace.current?.querySelector<HTMLTextAreaElement>('textarea[aria-label="Markdown 正文"]')
+        const at = start !== null && draft.startsWith(quote, start) ? start : draft.indexOf(quote)
+        if (!editor || at < 0) return false
+        const flat = (offset: number) => draft.slice(0, offset).replace(/\r\n/g, '\n').length
+        editor.focus({ preventScroll: true }); editor.setSelectionRange(flat(at), flat(at + quote.length))
+        editor.scrollTop = Math.max(0, editorOffsetTop(editor, flat(at)) - editor.clientHeight / 3)
+        return true
+      }
+      const root = workspace.current?.querySelector('.ProseMirror')
+      const range = root ? findTextRange(root, quote) : null
+      if (!range) return false
+      range.startContainer.parentElement?.scrollIntoView({ block: 'center', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' })
+      const marker = (globalThis as { CSS?: { highlights?: Map<string, unknown> } }).CSS?.highlights, Highlight = (globalThis as { Highlight?: new (range: Range) => unknown }).Highlight
+      if (marker && Highlight) { marker.set('explore-source', new Highlight(range)); setTimeout(() => marker.delete('explore-source'), 5000) }
+      else { const selected = getSelection(); selected?.removeAllRanges(); selected?.addRange(range) }
+      return true
+    }
+    return () => { reveal.current = () => false }
+  }, [reveal, sourceMode, draft])
   if (!note) return <div className="empty">{error ?? '正在打开文章…'}</div>
   const changeMode = (next: typeof mode) => {
     if (next === 'edit' && (issue || editorError)) return

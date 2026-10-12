@@ -3,6 +3,7 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 import type { AnswerVersionDTO, CaptureDTO, DiscussionDTO, DraftDTO, DraftItemDTO, ResolvedSourceDTO, SourceRefDTO, TurnDTO } from '../shared/types'
+import { project } from '../shared/projection'
 import { BadNameError, ConflictError, NotFoundError, contentVersion, type NoteStore } from './store'
 import { readRecord, StorageError, writeRecord } from './persistence'
 
@@ -99,16 +100,18 @@ export class ResearchStore {
     const quote = text(input?.quote, '引用文字', MAX_TEXT)
     return this.exclusive(async () => {
       const note = await this.store.load(input.note), identity = await this.store.identity(input.note)
-      const found = occurrences(note.content, quote)
-      let start: number
+      const found = locate(note.content, quote)
+      let range: { start: number; end: number }
       if (input.start !== undefined) {
-        if (!Number.isInteger(input.start) || !note.content.startsWith(quote, input.start)) throw new ConflictError('所选文字与笔记当前内容不一致，请重新选择。')
-        start = input.start
-      } else if (found.length === 1) start = found[0]!
+        const at = found.find(item => item.start === input.start) ?? (note.content.startsWith(quote, input.start) ? { start: input.start, end: input.start + quote.length } : undefined)
+        if (!at) throw new ConflictError('所选文字与笔记当前内容不一致，请重新选择。')
+        range = at
+      } else if (found.length === 1) range = found[0]!
       else throw new ConflictError(found.length ? '这段文字在笔记中出现多次，请选择更长的文字。' : '笔记中找不到所选文字，请重新选择。')
-      const end = start + quote.length
+      const { start, end } = range
+      const exact = note.content.slice(start, end)
       const source: SourceRefDTO = {
-        id: derive(identity.id, identity.version, start, quote), noteId: identity.id, notePath: identity.name, noteVersion: identity.version, quote,
+        id: derive(identity.id, identity.version, start, exact), noteId: identity.id, notePath: identity.name, noteVersion: identity.version, quote: exact,
         before: note.content.slice(Math.max(0, start - CONTEXT), start), after: note.content.slice(end, end + CONTEXT),
         section: sectionBefore(note.content, start), start, end, createdAt: Date.now(),
       }
@@ -415,6 +418,28 @@ const requestKeyOf = (draftId: string, itemId: string, question: string) => 'dra
 function stripVersion<T extends { version?: number }>(record: T): Omit<T, 'version'> {
   const { version, ...rest } = record
   return rest
+}
+
+/**
+ * Finds `quote` in the raw Markdown. Exact matches win; otherwise both sides are compared in their projected form
+ * (see shared/projection) and each match is mapped back to the raw range it covers.
+ */
+export function locate(content: string, quote: string): { start: number; end: number }[] {
+  const exact = occurrences(content, quote)
+  if (exact.length) return exact.map(start => ({ start, end: start + quote.length }))
+  const trimmed = quote.trim()
+  if (trimmed && trimmed !== quote) { const found = occurrences(content, trimmed); if (found.length) return found.map(start => ({ start, end: start + trimmed.length })) }
+  const wanted = project(quote).text
+  if (wanted.length < 2) return []
+  const note = project(content)
+  return occurrences(note.text, wanted).map(at => {
+    const last = note.origin[at + wanted.length - 1]!
+    let start = note.origin[at]!, end = last + String.fromCodePoint(content.codePointAt(last)!).length
+    // Keep the emphasis markers hugging the match so the saved quote does not start or end with half a pair.
+    while (start > 0 && /[*_`]/.test(content[start - 1]!)) start--
+    while (end < content.length && /[*_`]/.test(content[end]!)) end++
+    return { start, end }
+  })
 }
 
 function occurrences(content: string, quote: string): number[] {

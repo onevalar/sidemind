@@ -6,7 +6,7 @@ import { Button, Dialog, TextArea } from './ui'
 
 const folderOf = (name: string) => name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : ''
 const title = (path: string) => path.split('/').at(-1)!.replace(/\.md$/, '')
-const clip = (text: string, max: number) => { const flat = text.replace(/\s+/g, ' ').trim(); return flat.length > max ? flat.slice(0, max) + '…' : flat }
+const clip = (text: string, max: number) => { const flat = text.replace(/^\s*(?:[-*+]|\d+[.)])\s+/gm, '').replace(/\s+/g, ' ').trim(); return flat.length > max ? flat.slice(0, max) + '…' : flat }
 const statusText: Record<ResolvedSourceDTO['status'], string> = {
   current: '与笔记当前内容一致。', moved: '笔记已修改，这段文字仍能在原文中唯一找到。', ambiguous: '笔记已修改，这段文字现在出现多次，无法确定位置；以下是当时的依据。',
   missing: '笔记已修改，原文中找不到这段文字；以下是当时的依据。', 'note-deleted': '来源笔记已删除；以下是当时保存的依据。',
@@ -14,9 +14,9 @@ const statusText: Record<ResolvedSourceDTO['status'], string> = {
 const message = (error: unknown) => error instanceof Error ? error.message : String(error)
 
 /** Explore a note: ask about selected passages, compare answers, write one back, and trace it to its basis. */
-export function ExplorePanel({ name, model, active, beforeSend, selection, onConfigure, onOpenNote }: {
+export function ExplorePanel({ name, model, active, beforeSend, selection, reveal, onConfigure, onOpenNote }: {
   name: string | null; model: string | null; active: boolean; beforeSend: MutableRefObject<() => Promise<boolean>>
-  selection: MutableRefObject<() => string | undefined>; onConfigure: () => void; onOpenNote: (name: string) => void
+  selection: MutableRefObject<() => string | undefined>; reveal: MutableRefObject<(quote: string, start: number | null) => boolean>; onConfigure: () => void; onOpenNote: (name: string) => void
 }) {
   const [view, setView] = useState<NoteResearch | null>(null)
   const [changes, setChanges] = useState<Record<string, ChangeSetDetail>>({})
@@ -127,6 +127,13 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, onCon
   })
   const undo = (capture: CaptureDTO) => guard('undo' + capture.id, async () => { await flush(); await api.undoChangeSet(capture.changeSetId!); await load() })
   const showBasis = (id: string) => guard('basis' + id, async () => setBasis(await api.source(id)))
+  /** Jump to the passage in the open note; when it cannot be placed, show the saved evidence instead. */
+  const locate = (id: string) => guard('locate' + id, async () => {
+    const resolved = await api.source(id)
+    if (resolved.notePath && resolved.notePath !== name) { onOpenNote(resolved.notePath); return }
+    if ((resolved.status === 'current' || resolved.status === 'moved') && reveal.current(resolved.source.quote, resolved.start)) return
+    setBasis(resolved)
+  })
 
   if (!name) return <aside className="explore-panel"><p className="muted explore-empty">打开一篇笔记，选中一段文字，就可以围绕它提问。</p></aside>
   const sources = view?.sources ?? {}
@@ -167,7 +174,7 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, onCon
         const finishedBad = !!live && ['failed', 'cancelled', 'interrupted'].includes(live.status)
         const saved = shown ? view.captures.filter(capture => capture.answers.some(entry => entry.answerId === shown.id)) : []
         return <article className="explore-turn" key={turn.id} data-follow-up={turn.parents.length ? 'true' : undefined}>
-          {turn.sourceIds.map(id => sources[id] && <blockquote className="explore-quote" key={id}>{clip(sources[id]!.quote, 160)}<Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void showBasis(id)}>查看依据</Button></blockquote>)}
+          {turn.sourceIds.map(id => sources[id] && <blockquote className="explore-quote" key={id}>{clip(sources[id]!.quote, 160)}<span className="explore-quote-actions"><Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void locate(id)}>在原文中定位</Button><Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void showBasis(id)}>查看依据</Button></span></blockquote>)}
           <p className="explore-question">{turn.question}</p>
           {(active || finishedBad) && live && <div className="explore-run" aria-live="polite">
             {(live.status === 'queued' || live.status === 'running') && <div className="explore-run-head"><span className="muted" role="status">{live.text ? '正在回答…' : '正在准备回答…'}</span><Button variant="ghost" size="sm" onPress={() => void api.stopRun(live.id).catch(failure => setError(message(failure)))}>停止</Button></div>}

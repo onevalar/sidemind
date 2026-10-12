@@ -81,6 +81,24 @@ describe('sources', () => {
   })
 })
 
+describe('selection matching', () => {
+  const formatted = '# 标题\n\n- **铝**很轻，\n  密度约 *2.7*。\n- 木材更重。\n\n这是一句话。\n\n这是一句话。\n'
+  it('finds a selection copied from rendered text and records the exact source range it covers', async () => {
+    await store.create('Rich', formatted)
+    const source = await research.createSource({ note: 'Rich.md', quote: '铝很轻，密度约 2.7。' })
+    expect(source.quote).toBe('**铝**很轻，\n  密度约 *2.7*。')
+    expect(formatted.slice(source.start, source.end)).toBe(source.quote)
+    expect(await research.createSource({ note: 'Rich.md', quote: '铝很轻，密度约 2.7。' })).toEqual(source)
+  })
+  it('tolerates surrounding whitespace, still refuses ambiguity, and never matches on markers alone', async () => {
+    await store.create('Rich', formatted)
+    expect((await research.createSource({ note: 'Rich.md', quote: '  木材更重。\n' })).quote).toBe('木材更重。')
+    await expect(research.createSource({ note: 'Rich.md', quote: '这是**一句话**。' })).rejects.toThrow('出现多次')
+    await expect(research.createSource({ note: 'Rich.md', quote: '***' })).rejects.toThrow('找不到')
+    await expect(research.createSource({ note: 'Rich.md', quote: '完全不同的内容' })).rejects.toThrow('找不到')
+  })
+})
+
 describe('discussion graph', () => {
   it('adds idempotent turns, validates parents and keeps answers append-only', async () => {
     const discussion = await research.createDiscussion({ title: '材料比较' })

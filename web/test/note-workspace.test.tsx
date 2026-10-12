@@ -34,6 +34,31 @@ const open = async (source = true, selection = { current: () => undefined as str
   return screen.findByRole('textbox', { name: 'Markdown 正文' })
 }
 
+describe('revealing a saved passage', () => {
+  it('selects the passage in the source editor with CRLF offsets mapped, and reports a missing one', async () => {
+    const reveal = { current: (_quote: string, _start: number | null) => false }
+    render(<NoteWorkspace name="Note.md" beforeLeave={{ current: async () => true }} reveal={reveal} theme="light" onOpenNote={() => {}} onBack={() => {}}/>)
+    await screen.findByRole('textbox', { name: '文章正文' })
+    await waitFor(() => expect(screen.queryByText('正在准备编辑器…')).toBe(null))
+    fireEvent.click(screen.getByRole('button', { name: '源码' }))
+    const editor = await screen.findByRole('textbox', { name: 'Markdown 正文' }) as HTMLTextAreaElement
+    expect(reveal.current(selected, original.indexOf(selected))).toBe(true)
+    expect(editor.value.slice(editor.selectionStart, editor.selectionEnd)).toBe(nativeText(selected))
+    expect(reveal.current('不存在的文字', null)).toBe(false)
+  })
+
+  it('finds the passage in the rich editor and does not change the number of hooks between loading and loaded', async () => {
+    const reveal = { current: (_quote: string, _start: number | null) => false }
+    render(<NoteWorkspace name="Note.md" beforeLeave={{ current: async () => true }} reveal={reveal} theme="light" onOpenNote={() => {}} onBack={() => {}}/>)
+    await screen.findByRole('textbox', { name: '文章正文' })
+    await waitFor(() => expect(screen.queryByText('正在准备编辑器…')).toBe(null))
+    const scroll = vi.fn()
+    Element.prototype.scrollIntoView = scroll
+    expect(reveal.current('Before stays.', null)).toBe(true)
+    expect(scroll).toHaveBeenCalled()
+  })
+})
+
 describe('article editing with the shared Agent', () => {
   it('keeps empty paragraphs editable and saves the latest rich text before leaving', async () => {
     disk.content = '# Note\r\n\r\nBefore stays.\r\n\r\n<br />\r\n\r\nAfter stays.\r\n'

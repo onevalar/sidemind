@@ -54,6 +54,7 @@ export function App() {
   const resolvedTheme = theme === 'system' ? systemDark ? 'dark' : 'light' : theme
   const beforeLeave = useRef<() => Promise<boolean>>(async () => true)
   const agentSelection = useRef<() => string | undefined>(() => undefined)
+  const reveal = useRef<(quote: string, start: number | null) => boolean>(() => false)
   const [aiOpen, setAiOpen] = useState(() => localStorage.getItem('canvas.ai-open') !== 'false')
   const [aiTab, setAiTab] = useState<'agent' | 'explore'>('agent')
   const [focus, setFocus] = useState<{ names: string[]; key: number } | null>(null)
@@ -180,7 +181,7 @@ export function App() {
       {error && <div className="global-error" role="alert"><span>{error}</span><Button size="sm" variant="ghost" onPress={() => void refreshList()}>重试</Button><IconButton icon="close" label="关闭提示" onPress={() => setError('')}/></div>}
       <div className="agent-workspace"><ResizablePanels label="笔记与 AI 助手" onLayoutChange={sizes => { if (aiOpen && sizes[1]) localStorage.setItem('canvas.ai-width', String(sizes[1])) }}>
       <ResizablePanel id="article-pane" label="笔记与 AI 助手分栏宽度" defaultSize={100 - aiShare} minSize={360}>
-      {selected && NoteWorkspace ? <NoteWorkspace key={selected} name={selected} theme={resolvedTheme} beforeLeave={beforeLeave} agentSelection={agentSelection} aiOpen={aiOpen} onToggleAI={() => setAiOpen(value => !value)} onOpenNote={openNote} onBack={() => void navigate(null)}/> : <>
+      {selected && NoteWorkspace ? <NoteWorkspace key={selected} name={selected} theme={resolvedTheme} beforeLeave={beforeLeave} agentSelection={agentSelection} reveal={reveal} aiOpen={aiOpen} onToggleAI={() => setAiOpen(value => !value)} onOpenNote={openNote} onBack={() => void navigate(null)}/> : <>
         <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span className="library-folder" title={folderLabel(space)}>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="ghost" onPress={() => setFolderMemoryOpen(true)}>文件夹记忆</Button><Button size="sm" variant="secondary" className="ai-toggle" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" title={aiOpen ? '关闭 AI 助手' : '打开 AI 助手'} onPress={() => setAiOpen(value => !value)}><Icon name="spark" size={16}/>AI 助手</Button><Button size="sm" onPress={openCreate}><Icon name="plus" size={16}/>新建文章</Button></div></header>
         {!loaded ? <div className="empty">{error ? '笔记尚未载入，请重试。' : '正在载入画布…'}</div> : <LibraryCanvas key={space} folder={space} notes={visible} theme={resolvedTheme} viewport={views.get(space) ?? { x: 0, y: 0, zoom: 1 }} onViewport={viewport => { views.set(space, viewport); localStorage.setItem('canvas.views', JSON.stringify([...views])) }} beforeLeave={beforeLeave} onOpen={openNote} onPreview={setPreview} onCreate={openCreate} focus={focus}/>}
       </>}
@@ -192,7 +193,7 @@ export function App() {
         <AgentPanel folder={space} name={selected} model={aiModel} beforeSend={beforeLeave} selection={agentSelection} onConfigure={() => setSettingsOpen(true)} onClose={closeAI} onOpenNote={openNote} onFocus={focusNotes}/>
         </div>
         <div className="ai-pane-tab" hidden={aiTab !== 'explore'}>
-          <ExplorePanel name={selected} model={aiModel} active={aiOpen && aiTab === 'explore'} beforeSend={beforeLeave} selection={agentSelection} onConfigure={() => setSettingsOpen(true)} onOpenNote={openNote}/>
+          <ExplorePanel name={selected} model={aiModel} active={aiOpen && aiTab === 'explore'} beforeSend={beforeLeave} selection={agentSelection} reveal={reveal} onConfigure={() => setSettingsOpen(true)} onOpenNote={openNote}/>
         </div>
         </div>
       </ResizablePanel>

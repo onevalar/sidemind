@@ -420,7 +420,8 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .explore-panel { flex: 1; min-height: 0; overflow-y: auto; padding: 16px 16px 32px; display: flex; flex-direction: column; gap: 20px; font-size: 13px; line-height: 1.7; }
 .explore-composer, .explore-draft, .explore-discussion { display: flex; flex-direction: column; gap: 10px; }
 .explore-quote { margin: 0; padding: 2px 0 2px 12px; border-left: 2px solid var(--line); color: var(--text-secondary); font-size: 12px; overflow-wrap: anywhere; }
-.explore-quote > button { display: inline-flex; margin-left: 6px; height: auto; padding: 0 4px; }
+.explore-quote-actions { display: flex; gap: 2px; margin-top: 2px; }
+.explore-quote-actions > button { height: auto; padding: 0 4px; }
 .explore-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 2px; }
 .explore-hint, .explore-empty { margin: 0; font-size: 12px; }
 .explore-turn { display: flex; flex-direction: column; gap: 8px; padding: 14px 0; border-top: 1px solid var(--line); }
@@ -436,3 +437,4 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .explore-run { display: flex; flex-direction: column; gap: 6px; }
 .explore-run-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
 .explore-answer[data-partial] { color: var(--text-secondary); }
+::highlight(explore-source) { background: color-mix(in oklab, var(--text) 18%, transparent); }
