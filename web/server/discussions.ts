@@ -277,6 +277,53 @@ export class ResearchStore {
     })
   }
 
+  // ---- Import (whole records written in one step, ids and times preserved) ----
+
+  /**
+   * Writes an imported discussion exactly as given. Idempotent: if the same id already holds an identical discussion
+   * nothing changes; if it holds anything else it is left alone and reported, never overwritten.
+   */
+  async importDiscussion(discussion: DiscussionDTO): Promise<'created' | 'identical' | 'conflict'> {
+    if (!ID.test(discussion.id) || !validOrigin(discussion.origin)) throw new BadNameError('导入的讨论编号或入口无效。')
+    validateTurns(discussion.turns)
+    return this.exclusive(async () => {
+      const existing = await readRecord<DiscussionDTO & { version: 1 }>(this.discussionFile(discussion.id))
+      if (existing) {
+        // The same content is the same discussion whichever import batch brought it; only the batch label may differ.
+        const { version, ...rest } = existing
+        const bare = (value: DiscussionDTO): unknown => ({ ...value, imported: value.imported && { ...value.imported, batch: '' } })
+        return isDeepStrictEqual(bare(rest), bare(discussion)) ? 'identical' : 'conflict'
+      }
+      await writeRecord(this.discussionFile(discussion.id), { version: 1, ...discussion })
+      return 'created'
+    })
+  }
+
+  /** Same contract for a draft. */
+  async importDraft(draft: DraftDTO): Promise<'created' | 'identical' | 'conflict'> {
+    if (!ID.test(draft.id) || !validOrigin(draft.origin)) throw new BadNameError('导入的草稿编号或入口无效。')
+    return this.exclusive(async () => {
+      const existing = await readRecord<DraftDTO & { version: 1 }>(this.draftFile(draft.id))
+      if (existing) { const { version, ...rest } = existing; return isDeepStrictEqual(rest, draft) ? 'identical' : 'conflict' }
+      await this.items(draft.items)
+      await writeRecord(this.draftFile(draft.id), { version: 1, ...draft })
+      return 'created'
+    })
+  }
+
+  /** Moves the named discussions' files, their drafts and summaries aside (never deleted) so an import can be undone. */
+  async archiveRecords(into: string, input: { discussions: string[]; drafts: string[]; answers: string[] }): Promise<void> {
+    await this.exclusive(async () => {
+      const move = async (from: string, name: string, dir: string) => {
+        try { await fs.mkdir(path.join(into, dir), { recursive: true }); await fs.rename(path.join(from, name), path.join(into, dir, name)) }
+        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error }
+      }
+      for (const id of input.discussions) await move(this.discussions, id + '.json', 'discussions')
+      for (const id of input.drafts) await move(this.drafts, id + '.json', 'drafts')
+      for (const id of input.answers) await move(this.summaryDir, id + '.json', 'summaries')
+    })
+  }
+
   // ---- Drafts ----
 
   private draftFile = (id: string) => path.join(this.drafts, id + '.json')

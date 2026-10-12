@@ -186,3 +186,28 @@ AI 面板使用用户源码项目的 Arc Pro `ai-chat`，替换之前大幅改�
 后续桌面布局修正：122 项测试与类型检查/构建通过。2340×1254 下短文章的额外滚动高度从 3px 降为 0，滚动边缘移至工作区最右侧；1280×800 下无横向溢出。1440×960 下验证侧栏折叠及刷新恢复、目录关闭/焦点返回、与 AI 面板切换，以及 24 节临时长文的末尾定位、编辑落盘和源码滚动位置。浅色默认、折叠与目录、深色 AI 和源码均检查截图；原有 Welcome.md 内容校验值不变，临时文章已删除。
 
 官方登录依据：https://developers.openai.com/siwc/token-sharing-open-source/sign-in 。
+
+## 开发分支：导入 ChatGit 的画布
+
+只导入 ChatGit 当前的画布数据（`chatgit_canvases` / `chatgit_nodes`）。**不读取也不迁移 API Key、登录令牌、数据库凭据和源用户 ID；不会调用任何模型。**先在装有 ChatGit 数据的机器上用 MongoDB 自带工具导出这两个集合（得到 `chatgit_canvases.json` 与 `chatgit_nodes.json`），拷贝到一个目录：
+
+```sh
+mongoexport --db ChatGit --collection chatgit_canvases --jsonArray --out chatgit_canvases.json
+mongoexport --db ChatGit --collection chatgit_nodes    --jsonArray --out chatgit_nodes.json
+```
+
+之后在 `web/` 下按下面顺序做（**导入、核对、回退需要先停止笔记服务**）。建议先导入到一个**新的**目标目录试用，不要直接写进正在使用的数据目录：
+
+```sh
+node --import tsx server/import-cli.ts preflight <导出目录>                 # 只读预检，什么都不写
+node --import tsx server/import-cli.ts import    <导出目录> <数据目录>       # 目标不存在则新建；已有数据时必须加 --backup <新备份目录>
+node --import tsx server/import-cli.ts verify    <导出目录> <数据目录>       # 逐节点核对数量、边、文字校验值、草稿、未完成回答
+node --import tsx server/import-cli.ts rollback  <批次编号> <数据目录> --backup <新备份目录>
+```
+
+- 一个画布变成一个讨论，一个节点变成一个问题（完成的带一条回答，原摘要进入摘要库）；划词提问把原文引用写进问题文字；草稿按画布保留。时间保持源系统的时间。
+- 编号由源编号派生，所以**重复导入同一份导出不会产生第二份**，中断后重新运行会接着补缺失的部分；导入后被你改动过的讨论会报告为“冲突”，不会被覆盖。
+- 源系统里生成中、出错、被停止的节点导入为**未完成的回答**（保留已有文字，可点“重试”），不会自动调用模型。
+- 不能迁入的内容会逐项报告而不是悄悄丢掉：附件（只保留名称）、“可能的下一个问题”建议、端点/模型选择、界面状态。成环的画布、属于不存在画布的孤立节点会被跳过并说明原因；指向不存在父节点的边会被丢弃，节点作为起点导入。
+- 回退会先完整备份，再把这批导入的讨论、草稿、运行记录和摘要**移入 `local/imports/<批次>-archive/`（不删除）**；导入后新增的内容随归档保留。如果已有笔记引用了导入的回答，回退会被拒绝。回退后同一份导出不能再导入。
+- 导入后两个应用的数据互不同步；这个工具只把数据复制过来，不会回写 ChatGit。

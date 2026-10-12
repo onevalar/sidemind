@@ -205,6 +205,8 @@ export interface DiscussionDTO {
   revision: number
   archived: boolean
   turns: TurnDTO[]
+  /** Set on a discussion that was imported from another app; names where it came from and which import batch wrote it. */
+  imported?: { source: 'chatgit'; canvasId: string; batch: string }
   createdAt: number
   updatedAt: number
 }
