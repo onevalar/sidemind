@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
-// M0 baseline, not a Canvas Note test: it runs ChatGit's own front-end store (pinned commit) against a failing server and
+// M0 baseline, not a Canvas Note test. The failure simulated here is one that happens BEFORE the server creates a node
+// (network drop, rejected request, expired session). A provider error AFTER acceptance is different: the real server has
+// already created an error node holding the questions, with a Retry button (see the whole-machine check in M0 doc §6).
+// it runs ChatGit's own front-end store (pinned commit) against a failing server and
 // records what the user loses. Set CHATGIT_DIR to a checkout of onevalar/chat-git at 1d2e9bf; without it the file is skipped.
 // The assertions describe the CURRENT, KNOWN-BAD behaviour. When the unified product replaces this protocol, the
 // equivalent Canvas scenario (test/chat-workspace.test.tsx "keeps the question when sending fails") is the replacement.
@@ -46,7 +49,7 @@ describe.skipIf(!available)('ChatGit draft send failure (1d2e9bf)', () => {
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
   afterAll(() => fs.rmSync(path.join(import.meta.dirname, '.chatgit-src'), { recursive: true, force: true }))
 
-  it('sendPending: a failed request still empties the draft locally and saves the empty draft to the server', async () => {
+  it('sendPending: a request that fails before the server accepts it still empties the draft locally and saves the empty draft', async () => {
     const s = store as any
     s.sendPending('一起看')
     await vi.runAllTimersAsync()
