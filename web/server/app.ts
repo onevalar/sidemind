@@ -23,6 +23,7 @@ import { GitError, type Git } from './git'
 import { PushService } from './push'
 import { memoryFile, type MemoryTarget } from './memory'
 import { StorageError } from './persistence'
+import { MissingRecordError, ResearchStore } from './discussions'
 
 const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/
 
@@ -39,6 +40,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
   const changes = new ChangeEngine(store, files, bus)
   const proposals = new ProposalStore(store.paths.local, changes)
   const conversations = new ConversationStore(path.join(store.paths.local, 'conversations'), store.writer)
+  const research = new ResearchStore(store)
   const track = async <T>(task: Promise<T>): Promise<T> => {
     opts.tasks?.add(task)
     try { return await task } finally { opts.tasks?.delete(task) }
@@ -73,6 +75,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
 
   app.onError((err, c) => {
     if (err instanceof BadNameError) return c.json({ error: err.message }, 400)
+    if (err instanceof MissingRecordError) return c.json({ error: err.message }, 404)
     if (err instanceof NotFoundError) return c.json({ error: 'Note not found' }, 404)
     if (err instanceof ConflictError) return c.json({ error: err.message }, 409)
     if (err instanceof StorageError) return c.json({ error: err.message }, 503)
@@ -108,6 +111,35 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     bus.emit({ type: 'canvas-changed', folder: body.folder })
     return c.json(layout)
   })
+  // Unified discussions: frozen sources, discussion graphs, multi-question drafts and capture records.
+  const object = async (c: { req: { json: () => Promise<unknown> } }) => {
+    const body = await c.req.json().catch(() => null)
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw new BadNameError('请求内容无效。')
+    return body as Record<string, any>
+  }
+  app.post('/api/sources', async (c) => { const body = await object(c); return c.json(await research.createSource({ note: body.note, quote: body.quote, start: body.start }), 201) })
+  app.get('/api/sources/:id', async (c) => c.json(await research.resolveSource(c.req.param('id'))))
+  app.get('/api/discussions', async (c) => c.json(await research.listDiscussions(c.req.query('archived') === undefined ? {} : { archived: c.req.query('archived') === 'true' })))
+  app.post('/api/discussions', async (c) => { const body = await object(c); return c.json(await research.createDiscussion({ title: body.title, origin: body.origin }), 201) })
+  app.get('/api/discussions/:id', async (c) => c.json(await research.getDiscussion(c.req.param('id'))))
+  app.put('/api/discussions/:id/archived', async (c) => { const body = await object(c); if (typeof body.archived !== 'boolean') throw new BadNameError('请指定是否归档。'); return c.json(await research.setArchived(c.req.param('id'), body.archived)) })
+  app.get('/api/drafts', async (c) => { const discussion = c.req.query('discussion'); return c.json(await research.listDrafts(discussion === undefined ? undefined : discussion === '' ? null : discussion)) })
+  app.post('/api/drafts', async (c) => { const body = await object(c); return c.json(await research.createDraft(body), 201) })
+  app.get('/api/drafts/:id', async (c) => c.json(await research.getDraft(c.req.param('id'))))
+  app.patch('/api/drafts/:id', async (c) => {
+    const { revision, ...patch } = await object(c)
+    if (!Number.isInteger(revision)) throw new BadNameError('请提供草稿修订号。')
+    return c.json(await research.updateDraft(c.req.param('id'), revision, patch))
+  })
+  app.delete('/api/drafts/:id', async (c) => {
+    const revision = Number(c.req.query('revision'))
+    if (!Number.isInteger(revision)) throw new BadNameError('请提供草稿修订号。')
+    await research.deleteDraft(c.req.param('id'), revision)
+    return c.json({ ok: true })
+  })
+  app.post('/api/drafts/:id/send', async (c) => c.json(await research.sendDraft(c.req.param('id'), (await object(c)).items), 201))
+  app.get('/api/captures', async (c) => c.json(await research.listCaptures(c.req.query('note'))))
+  app.get('/api/captures/:id', async (c) => c.json(await research.getCapture(c.req.param('id'))))
   app.get('/api/search', async (c) => c.json(await store.search((c.req.query('q') ?? '').slice(0, 300))))
   app.get('/api/settings', async (c) => c.json({ notesDirectory: store.root, dataDirectory: store.paths.root, ai: await ai.publicConfig(), summary: await ai.forSlot('summary').publicConfig(), embedding: await ai.forSlot('embedding').publicConfig(), chatgpt: await chatgpt.publicConfig() }))
   app.post('/api/workspace/open', async (c) => {

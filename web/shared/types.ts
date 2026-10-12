@@ -157,3 +157,67 @@ export interface PushReport {
   pushed: boolean
   pushError?: string
 }
+
+/** A frozen reference to selected note text. The quote is evidence even when the note later changes. */
+export interface SourceRefDTO {
+  id: string
+  noteId: string
+  /** Path at capture time; resolve through `noteId` for the current path. */
+  notePath: string
+  noteVersion: string
+  quote: string
+  before: string
+  after: string
+  section: string
+  start: number
+  end: number
+  createdAt: number
+}
+export type SourceStatus = 'current' | 'moved' | 'changed' | 'ambiguous' | 'missing' | 'note-deleted'
+export interface ResolvedSourceDTO { source: SourceRefDTO; status: SourceStatus; notePath: string | null; start: number | null; end: number | null }
+
+export interface AnswerVersionDTO { id: string; text: string; createdAt: number; runId?: string }
+export interface TurnDTO {
+  id: string
+  /** Turns whose answers form the context; several parents is a merge. */
+  parents: string[]
+  question: string
+  sourceIds: string[]
+  /** Idempotency key that produced this turn. */
+  requestKey: string
+  answers: AnswerVersionDTO[]
+  createdAt: number
+}
+export interface DiscussionDTO {
+  id: string
+  title: string
+  origin: { kind: 'chat' } | { kind: 'note'; noteId: string; sourceId?: string }
+  revision: number
+  archived: boolean
+  turns: TurnDTO[]
+  createdAt: number
+  updatedAt: number
+}
+export interface DraftItemDTO { id: string; question: string; sourceIds: string[] }
+export interface DraftDTO {
+  id: string
+  title: string
+  discussionId: string | null
+  /** Answers' parent turns for every question in this draft. */
+  parentIds: string[]
+  origin: DiscussionDTO['origin']
+  items: DraftItemDTO[]
+  revision: number
+  createdAt: number
+  updatedAt: number
+}
+export interface CaptureDTO {
+  id: string
+  requestKey: string
+  mode: 'verbatim' | 'organized'
+  target: { kind: 'new' | 'append' | 'replace'; noteId: string; notePath: string; beforeVersion: string | null; afterVersion: string }
+  answers: { discussionId: string; turnId: string; answerId: string; text: string }[]
+  sourceIds: string[]
+  changeSetId?: string
+  createdAt: number
+}
