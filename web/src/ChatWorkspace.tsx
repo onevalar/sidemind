@@ -55,7 +55,12 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
   const origin = list.find(item => item.id === selected)?.notePath ?? null
   useEffect(() => { setTarget(origin ?? NONE) }, [selected, origin])
 
-  const open = (id: string | null) => { retry.current = null; setSelected(id); setView(null); setChanges({}); setDetailOpen(true); setQuestion('') }
+  const open = (id: string | null) => {
+    setDetailOpen(true)
+    // Choosing the conversation that is already open must not blank it: nothing would trigger a reload.
+    if (id === selected) { void load(); return }
+    retry.current = null; setSelected(id); setView(null); setChanges({}); setQuestion('')
+  }
   const noModel = !model
 
   // A send that failed after its draft was saved retries with the same draft, so it can never create a second question.
@@ -83,7 +88,7 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
   const heading = summary?.title ?? view?.discussion.title ?? '新对话'
   const submit = () => { if (!noModel) void send() }
   const waiting = !!view && !leaf && Object.values(kitValue.runs).some(run => run.status === 'queued' || run.status === 'running')
-  const hint = !selected ? '想问什么？回答会保存在对话里，之后可以选择写入笔记。Enter 发送，Shift+Enter 换行。' : leaf ? '继续提问（Enter 发送；想从别处分支，用每条回答下的“追问”）' : waiting ? '等待上一条回答完成后继续提问' : '上一条没有回答成功，请先在上面重试'
+  const hint = !selected ? '想问什么？回答会保存在对话里，之后可以选择写入笔记。Enter 发送，Shift+Enter 换行。' : leaf ? '继续提问（Enter 发送；想从别处分支，用每条回答下的“追问”）' : !view ? '正在读取对话…' : waiting ? '等待上一条回答完成后继续提问' : '上一条没有回答成功，请先在上面重试'
 
   return <div className="chat-workspace" data-detail={detailOpen ? 'true' : undefined} hidden={!active}>
     <nav className="chat-list" aria-label="对话列表">
@@ -117,7 +122,7 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
             <Select id="chat-target-note" label="写入笔记" value={target} onValueChange={setTarget} options={[{ value: NONE, label: '不追加（只能存为新笔记）' }, ...notes.map(note => ({ value: note.name, label: note.title }))]}/>
           </div>}
           <DiscussionThread kit={kitValue} discussion={view.discussion} sources={view.sources} captures={view.captures} changes={changes} model={model}
-            noteName={null} appendTo={target === NONE ? null : target} appendLabel={notes.find(note => note.name === target)?.title} newFolder=""/></>}
+            noteName={null} appendTo={target === NONE ? null : target} appendLabel={notes.find(note => note.name === target)?.title} newFolder="" notes={notes}/></>}
         {!selected && <p className="muted chat-empty">这是一段没有读取任何笔记的独立对话。想基于笔记内容提问，请在笔记里选中文字后使用「探索」。</p>}
         {selected && !view && !error && <p className="muted chat-empty">正在读取对话…</p>}
       </div>

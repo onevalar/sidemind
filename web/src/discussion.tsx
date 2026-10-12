@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MutableRefObject } from 'react'
 import type { AnswerVersionDTO, CaptureDTO, ChangeSetDetail, ContextPreviewDTO, DiscussionDTO, DraftDTO, ResolvedSourceDTO, RunDTO, SourceRefDTO, TurnDTO } from '../shared/types'
 import { api, subscribeRun, type CaptureTarget } from './api'
 import { NoteMarkdown } from './NoteMarkdown'
+import { WriteBackDialog, type WriteBackSubject } from './WriteBackDialog'
 import { Button, Dialog, TextArea } from './ui'
 
 export const title = (path: string) => path.split('/').at(-1)!.replace(/\.md$/, '')
@@ -38,6 +39,7 @@ export function useDiscussionKit(options: DiscussionKitOptions) {
   const [picked, setPicked] = useState<{ discussion: string; turns: string[] }>({ discussion: '', turns: [] })
   const [compareText, setCompareText] = useState('比较这几条分支的回答。')
   const [preview, setPreview] = useState<ContextPreviewDTO | null>(null)
+  const [writing, setWriting] = useState<WriteBackSubject | null>(null)
   const followed = useRef(new Map<string, () => void>())
   const keys = useRef(new Map<string, string>())
   const latest = useRef(options)
@@ -127,14 +129,14 @@ export function useDiscussionKit(options: DiscussionKitOptions) {
 
   return {
     error, setError, busy, guard, flush, texts, setTexts, runs, setRuns, followUp, setFollowUp, version, setVersion, picked, setPicked, compareText, setCompareText,
-    preview, setPreview, basis, setBasis, follow, adopt, adoptDrafts, answer, sendDraft, askFollowUp, toggle, compare, showContext, save, undo, showBasis, locate,
-    onOpenNote: (name: string) => latest.current.onOpenNote(name),
+    writing, setWriting, preview, setPreview, basis, setBasis, follow, adopt, adoptDrafts, answer, sendDraft, askFollowUp, toggle, compare, showContext, save, undo, showBasis, locate,
+    reload, onOpenNote: (name: string) => latest.current.onOpenNote(name),
   }
 }
 export type DiscussionKit = ReturnType<typeof useDiscussionKit>
 
 /** The questions and answers of one discussion, indented by branch depth, with every per-answer action. */
-export function DiscussionThread({ kit, discussion, sources, captures, changes, model, noteName, appendTo, appendLabel, newFolder }: {
+export function DiscussionThread({ kit, discussion, sources, captures, changes, model, noteName, appendTo, appendLabel, newFolder, notes }: {
   kit: DiscussionKit; discussion: DiscussionDTO; sources: Record<string, SourceRefDTO>; captures: CaptureDTO[]; changes: Record<string, ChangeSetDetail>
   model: string | null
   /** The note open in the editor, if any: relative links in answers resolve against it and quotes from it can be located there. */
@@ -145,6 +147,8 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
   appendLabel?: string
   /** Folder for "save as new note". */
   newFolder: string
+  /** Notes the write dialog may append to. Defaults to just `appendTo`. */
+  notes?: { name: string; title: string }[]
 }) {
   const { busy, runs, followUp, setFollowUp, version, setVersion, picked, compareText, setCompareText } = kit
   const noModel = !model
@@ -177,7 +181,7 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
         {saved.map(capture => {
           const detail = capture.changeSetId ? changes[capture.changeSetId] : undefined
           return <div className="explore-saved" key={capture.id}>
-            <span>{detail?.undone ? '已撤销 · ' : '已保存 · '}{capture.target.kind === 'new' ? '新笔记' : '追加到'}《{title(capture.target.notePath)}》</span>
+            <span>{detail?.undone ? '已撤销 · ' : '已保存 · '}{capture.mode === 'organized' ? '整理后 · ' : ''}{{ new: '新笔记', append: '追加到', replace: '替换了' }[capture.target.kind]}《{title(capture.target.notePath)}》{capture.target.kind === 'replace' ? '中的片段' : ''}</span>
             <span className="agent-change-actions">
               {capture.target.notePath !== noteName && !detail?.undone && <Button variant="ghost" size="sm" onPress={() => kit.onOpenNote(capture.target.notePath)}>打开</Button>}
               {detail && !detail.undone && <Button variant="ghost" size="sm" isDisabled={!!busy || !detail.undoable} title={detail.undoable ? undefined : '之后又有修改，撤销会覆盖新内容'} onPress={() => void kit.undo(capture)}>{detail.undoable ? '撤销' : '无法撤销'}</Button>}
@@ -186,7 +190,8 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
         <div className="explore-actions">
           {shown && <>
             {appendTo && <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.save(discussion, turn, shown, { kind: 'append', note: appendTo })}>{noteName !== null && appendTo === noteName ? '追加到本文' : `追加到《${appendLabel ?? title(appendTo)}》`}</Button>}
-            <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.save(discussion, turn, shown, { kind: 'new', folder: newFolder })}>存为新笔记</Button></>}
+            <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.save(discussion, turn, shown, { kind: 'new', folder: newFolder })}>存为新笔记</Button>
+            <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => kit.setWriting({ discussion, turn, answer: shown, sources, notes: notes ?? (appendTo ? [{ name: appendTo, title: appendLabel ?? title(appendTo) }] : []), defaultNote: appendTo, newFolder })}>写入…</Button></>}
           {!active && <Button variant="ghost" size="sm" isDisabled={!!busy || noModel} onPress={() => void kit.guard('retry' + turn.id, () => kit.answer(discussion.id, turn))}>{shown ? '重新回答' : finishedBad ? '重试' : '生成回答'}</Button>}
           {shown && <Button variant="ghost" size="sm" aria-pressed={choosing.includes(turn.id)} isDisabled={!!busy} onPress={() => kit.toggle(discussion, turn)}>{choosing.includes(turn.id) ? '已选 · 取消' : '选择比较'}</Button>}
           <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.showContext(discussion, turn)}>查看上下文</Button>
@@ -207,8 +212,9 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
 }
 
 export function DiscussionDialogs({ kit }: { kit: DiscussionKit }) {
-  const { preview, setPreview, basis, setBasis } = kit
+  const { preview, setPreview, basis, setBasis, writing, setWriting } = kit
   return <>
+    {writing && <WriteBackDialog key={writing.answer.id} subject={writing} onClose={() => setWriting(null)} onSaved={saved => { setWriting(null); void kit.reload(); if (saved.kind === 'new') kit.onOpenNote(saved.notePath) }}/>}
     <Dialog title="发送给模型的上下文" open={!!preview} onClose={() => setPreview(null)}>
       {preview && <><p className={preview.exceeded ? 'ai-error' : 'muted'}>约 {preview.estimatedTokens} / {preview.budget} 单位（粗略估计，不同模型的计数不同）。{preview.exceeded ? '超出上限，发送会被拒绝：请缩小选区或减少分支。' : '这就是发送时的全部内容；未选中的分支和笔记其他部分都不在其中。'}</p>
         <div className="explore-context">{preview.messages.map((entry, index) => <section key={index}><h4>{{ system: '指令', user: '提问与原文', assistant: '先前的回答' }[entry.role]}</h4><pre>{entry.content}</pre></section>)}</div></>}

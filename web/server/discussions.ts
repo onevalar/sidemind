@@ -420,9 +420,10 @@ export class ResearchStore {
    * so the evidence survives a retry, a deleted discussion or a Git-only clone. Repeating a `requestKey`
    * returns the first record.
    */
-  async recordCapture(input: { requestKey: string; mode: CaptureDTO['mode']; target: CaptureDTO['target']; answers: { discussionId: string; turnId: string; answerId: string }[]; sourceIds?: string[]; changeSetId?: string }): Promise<CaptureDTO> {
+  async recordCapture(input: { requestKey: string; mode: CaptureDTO['mode']; target: CaptureDTO['target']; answers: { discussionId: string; turnId: string; answerId: string }[]; sourceIds?: string[]; changeSetId?: string; writtenText?: string }): Promise<CaptureDTO> {
     const requestKey = text(input?.requestKey, '请求键', 200)
     if (input.mode !== 'verbatim' && input.mode !== 'organized') throw new BadNameError('保存方式无效。')
+    if ((input.mode === 'organized') !== (input.writtenText !== undefined) || (input.writtenText !== undefined && (typeof input.writtenText !== 'string' || !input.writtenText.trim() || input.writtenText.length > MAX_TEXT))) throw new BadNameError('整理后保存必须记录写入的文字。')
     const target = input.target
     if (!target || !['new', 'append', 'replace'].includes(target.kind) || !ID.test(target.noteId ?? '') || typeof target.notePath !== 'string' || !/^[a-f0-9]{64}$/.test(target.afterVersion ?? '') ||
       (target.beforeVersion !== null && !/^[a-f0-9]{64}$/.test(target.beforeVersion ?? '')) || (target.kind === 'new') !== (target.beforeVersion === null)) throw new BadNameError('保存目标无效。')
@@ -439,7 +440,7 @@ export class ResearchStore {
         for (const source of turn.sourceIds) sourceIds.add(source)
       }
       for (const source of sourceIds) await this.getSource(source)
-      const capture: CaptureDTO = { id, requestKey, mode: input.mode, target: { ...target }, answers, sourceIds: [...sourceIds].sort(), ...(input.changeSetId ? { changeSetId: input.changeSetId } : {}), createdAt: Date.now() }
+      const capture: CaptureDTO = { id, requestKey, mode: input.mode, target: { ...target }, answers, sourceIds: [...sourceIds].sort(), ...(input.writtenText !== undefined ? { writtenText: input.writtenText } : {}), ...(input.changeSetId ? { changeSetId: input.changeSetId } : {}), createdAt: Date.now() }
       const existing = await readRecord<CaptureDTO & { version: 1 }>(path.join(this.captures, id + '.json'))
       if (existing) {
         const { createdAt, version, ...old } = existing, { createdAt: _, ...fresh } = capture

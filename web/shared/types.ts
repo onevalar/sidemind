@@ -228,6 +228,8 @@ export interface CaptureDTO {
   target: { kind: 'new' | 'append' | 'replace'; noteId: string; notePath: string; beforeVersion: string | null; afterVersion: string }
   answers: { discussionId: string; turnId: string; answerId: string; text: string }[]
   sourceIds: string[]
+  /** For `organized` captures: the exact text that was written, as confirmed by the user. */
+  writtenText?: string
   changeSetId?: string
   createdAt: number
 }

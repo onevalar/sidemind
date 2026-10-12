@@ -41,7 +41,9 @@ async function ndjson<T extends { type: string }>(response: Response, onEvent: (
 
 export type NoteResearch = { noteId: string; discussions: DiscussionDTO[]; drafts: DraftDTO[]; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO>; runs: RunDTO[] }
 export type DiscussionView = { discussion: DiscussionDTO; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO>; runs: RunDTO[] }
-export type CaptureTarget = { kind: 'append'; note: string } | { kind: 'new'; folder: string }
+export type CaptureTarget = { kind: 'append'; note: string } | { kind: 'new'; folder: string } | { kind: 'replace'; sourceId: string }
+export type CaptureRequest = { discussionId: string; turnId: string; answerId: string; target: CaptureTarget; mode?: 'verbatim' | 'organized'; text?: string }
+export type CapturePreview = { kind: 'append' | 'new' | 'replace'; noteName: string; before: string | null; after: string; expectedVersion: string | null; content: string }
 
 /**
  * Reads a run's events until `done`. Every event has a sequence number, so a reconnect (the browser resends the last id)
@@ -89,7 +91,9 @@ export const api = {
   context: (discussionId: string, turnId: string) => request<ContextPreviewDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/context`),
   startRun: (discussionId: string, turnId: string, requestKey: string) => request<RunDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/runs`, { method: 'POST', body: JSON.stringify({ requestKey }) }),
   stopRun: (id: string) => request<RunDTO>(`/api/runs/${enc(id)}/stop`, { method: 'POST', body: '{}' }),
-  capture: (input: { requestKey: string; discussionId: string; turnId: string; answerId: string; target: CaptureTarget }) => request<{ capture: CaptureDTO; change: ChangeSetSummary }>('/api/captures', { method: 'POST', body: JSON.stringify(input) }),
+  organize: (input: Pick<CaptureRequest, 'discussionId' | 'turnId' | 'answerId'>) => request<{ text: string }>('/api/captures/organize', { method: 'POST', body: JSON.stringify(input) }),
+  capturePreview: (input: CaptureRequest) => request<CapturePreview>('/api/captures/preview', { method: 'POST', body: JSON.stringify(input) }),
+  capture: (input: CaptureRequest & { requestKey: string; expectedVersion?: string | null }) => request<{ capture: CaptureDTO; change: ChangeSetSummary }>('/api/captures', { method: 'POST', body: JSON.stringify(input) }),
   /**
    * Runs one Agent request on the server and streams its events. The run belongs to the server: aborting `signal`
    * only stops listening. Use `stopAgentRun` to stop the work itself.

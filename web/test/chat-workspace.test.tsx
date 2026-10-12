@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatWorkspace } from '../src/ChatWorkspace'
 import { api } from '../src/api'
 import type { DiscussionDTO, DiscussionSummaryDTO, RunDTO } from '../shared/types'
 
 vi.mock('../src/api', () => ({
-  api: { discussions: vi.fn(), discussionView: vi.fn(), archiveDiscussion: vi.fn(), createDraft: vi.fn(), sendDraft: vi.fn(), startRun: vi.fn(), capture: vi.fn(), changeSet: vi.fn(), context: vi.fn(), stopRun: vi.fn() },
+  api: { organize: vi.fn(), capturePreview: vi.fn(), discussions: vi.fn(), discussionView: vi.fn(), archiveDiscussion: vi.fn(), createDraft: vi.fn(), sendDraft: vi.fn(), startRun: vi.fn(), capture: vi.fn(), changeSet: vi.fn(), context: vi.fn(), stopRun: vi.fn() },
   subscribeEvents: () => () => {},
   subscribeRun: vi.fn(() => () => {}),
 }))
@@ -101,4 +101,67 @@ it('does not send on Enter while an input method is composing, and falls back wh
   fireEvent.change(box, { target: { value: '你好' } })
   fireEvent.keyDown(box, { key: 'Enter', isComposing: true })
   expect(api.createDraft).not.toHaveBeenCalled()
+})
+
+describe('write dialog', () => {
+  const first = discussion(hex(1), '什么是弹性模量？', '它衡量材料抵抗形变的能力。')
+  const captured = { capture: { id: hex(7), requestKey: 'r', mode: 'organized', target: { kind: 'append', noteId: hex(6), notePath: 'Materials.md', beforeVersion: 'a'.repeat(64), afterVersion: 'b'.repeat(64) }, answers: [], sourceIds: [], createdAt: 3 }, change: {} as never }
+  const shown = { kind: 'append' as const, noteName: 'Materials.md', before: '# 材料\n', after: '# 材料\n\n整理后的结论。\n', expectedVersion: 'c'.repeat(64), content: '整理后的结论。' }
+  async function openDialog() {
+    vi.mocked(api.discussions).mockResolvedValue([summary(first)])
+    vi.mocked(api.discussionView).mockResolvedValue({ discussion: first, captures: [], sources: {}, runs: [] })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: /什么是弹性模量/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '写入…' }))
+    return await screen.findByRole('dialog', { name: '写入笔记' })
+  }
+
+  it('organizes first, lets the text be edited, shows the difference, and saves exactly what was confirmed', async () => {
+    vi.mocked(api.organize).mockResolvedValue({ text: '整理后的结论。' })
+    vi.mocked(api.capturePreview).mockResolvedValue(shown)
+    vi.mocked(api.capture).mockResolvedValue(captured as never)
+    const dialog = await openDialog()
+    fireEvent.click(within(dialog).getByRole('button', { name: '整理后' }))
+    fireEvent.click(within(dialog).getByRole('button', { name: '生成整理结果' }))
+    const box = await within(dialog).findByRole('textbox', { name: '整理后的文字' }) as HTMLTextAreaElement
+    await waitFor(() => expect(box.value).toBe('整理后的结论。'))
+    fireEvent.change(box, { target: { value: '整理后的结论。（我改过）' } })
+    fireEvent.click(within(dialog).getByRole('button', { name: '预览差异' }))
+    expect(await within(dialog).findByRole('region', { name: '写入前后的差异' })).toBeTruthy()
+    expect(api.capturePreview).toHaveBeenCalledWith(expect.objectContaining({ mode: 'organized', text: '整理后的结论。（我改过）', target: { kind: 'append', note: 'Materials.md' } }))
+    expect(api.capture).not.toHaveBeenCalled()
+    fireEvent.click(within(dialog).getByRole('button', { name: '确认写入' }))
+    await waitFor(() => expect(api.capture).toHaveBeenCalledWith(expect.objectContaining({ mode: 'organized', text: '整理后的结论。（我改过）', expectedVersion: shown.expectedVersion })))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '写入笔记' })).toBe(null))
+  })
+
+  it('drops the shown difference when the note changed after the preview, so a fresh one is required', async () => {
+    vi.mocked(api.capturePreview).mockResolvedValue({ ...shown, after: '# 材料\n\n它衡量材料抵抗形变的能力。\n' })
+    vi.mocked(api.capture).mockRejectedValue(new Error('笔记在预览之后被修改，请重新预览后再写入。'))
+    const dialog = await openDialog()
+    fireEvent.click(within(dialog).getByRole('button', { name: '预览差异' }))
+    fireEvent.click(await within(dialog).findByRole('button', { name: '确认写入' }))
+    expect((await within(dialog).findByRole('alert')).textContent).toContain('预览之后被修改')
+    expect(within(dialog).queryByRole('region', { name: '写入前后的差异' })).toBe(null)
+    expect(within(dialog).getByRole('button', { name: '预览差异' })).toBeTruthy()
+  })
+
+  it('offers replacing the cited passage only for an answer that has one', async () => {
+    const dialog = await openDialog()
+    fireEvent.click(within(dialog).getByRole('combobox', { name: '方式' }))
+    expect(await screen.findByRole('option', { name: '存为新笔记' })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /替换/ })).toBe(null)
+  })
+})
+
+it('keeps the open conversation when it is chosen again instead of blanking it', async () => {
+  const first = discussion(hex(1), '什么是弹性模量？', '它衡量材料抵抗形变的能力。')
+  localStorage.setItem('canvas.chat-selected', first.id)
+  vi.mocked(api.discussions).mockResolvedValue([summary(first)])
+  vi.mocked(api.discussionView).mockResolvedValue({ discussion: first, captures: [], sources: {}, runs: [] })
+  mount()
+  expect(await screen.findByText('它衡量材料抵抗形变的能力。')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: /什么是弹性模量/ }))
+  expect(await screen.findByText('它衡量材料抵抗形变的能力。')).toBeTruthy()
+  expect(screen.queryByText('正在读取对话…')).toBe(null)
 })

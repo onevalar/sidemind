@@ -38,9 +38,9 @@ beforeEach(async () => {
 })
 afterEach(() => fs.rm(dir, { recursive: true, force: true }))
 
-async function ask(quote: string, question: string, extra: { discussionId?: string; parentIds?: string[] } = {}) {
-  const source = await call<SourceRefDTO>('POST', '/api/sources', { note: 'Materials.md', quote }, 201)
-  const draft = await call<DraftDTO>('POST', '/api/drafts', { ...extra, origin: extra.discussionId ? undefined : { kind: 'note', noteId: source.noteId, sourceId: source.id }, items: [{ id: 'q1', question, sourceIds: [source.id] }] }, 201)
+async function ask(quote: string, question: string, extra: { discussionId?: string; parentIds?: string[]; note?: string } = {}) {
+  const source = await call<SourceRefDTO>('POST', '/api/sources', { note: extra.note ?? 'Materials.md', quote }, 201)
+  const draft = await call<DraftDTO>('POST', '/api/drafts', { discussionId: extra.discussionId, parentIds: extra.parentIds, origin: extra.discussionId ? undefined : { kind: 'note', noteId: source.noteId, sourceId: source.id }, items: [{ id: 'q1', question, sourceIds: [source.id] }] }, 201)
   const sent = await call<{ discussion: DiscussionDTO; turns: { id: string }[] }>('POST', `/api/drafts/${draft.id}/send`, { items: [{ id: 'q1', question }] }, 201)
   const answer = await generate(sent.discussion.id, sent.turns[0]!.id)
   return { source, discussionId: sent.discussion.id, turnId: sent.turns[0]!.id, answer }
@@ -242,5 +242,129 @@ describe('standalone conversations', () => {
     expect(await call<unknown[]>('GET', '/api/discussions?archived=true')).toHaveLength(1)
     await call('PUT', `/api/discussions/${first.discussionId}/archived`, { archived: false })
     expect(await call<unknown[]>('GET', '/api/discussions?archived=false')).toHaveLength(1)
+  })
+})
+
+describe('organized and replace write-back', () => {
+  type Saved = { capture: CaptureDTO; change: ChangeSetSummary }
+  type Preview = { kind: string; noteName: string; before: string | null; after: string; expectedVersion: string | null; content: string }
+  const QUOTE = '铝很轻，密度约 2.7。'
+  const save = (base: { discussionId: string; turnId: string; answer: { id: string } }, extra: Record<string, unknown>, expected = 201) =>
+    call<Saved>('POST', '/api/captures', { requestKey: crypto.randomUUID(), discussionId: base.discussionId, turnId: base.turnId, answerId: base.answer.id, ...extra }, expected)
+  const preview = (base: { discussionId: string; turnId: string; answer: { id: string } }, extra: Record<string, unknown>, expected = 200) =>
+    call<Preview>('POST', '/api/captures/preview', { discussionId: base.discussionId, turnId: base.turnId, answerId: base.answer.id, ...extra }, expected)
+
+  it('organizes without writing, then saves exactly the text the user confirmed and never asks the model again', async () => {
+    const base = await ask(QUOTE, '为什么铝轻？')
+    const asked = requests.length
+    replies.push('铝轻，因为密度低（约 2.7）。')
+    const { text } = await call<{ text: string }>('POST', '/api/captures/organize', { discussionId: base.discussionId, turnId: base.turnId, answerId: base.answer.id })
+    expect(text).toBe('铝轻，因为密度低（约 2.7）。')
+    expect(requests).toHaveLength(asked + 1)
+    expect(JSON.stringify(requests.at(-1))).toContain(QUOTE)               // the answer is organized together with its basis
+    expect((await store.load('Materials.md')).content).toBe(note)           // nothing written yet
+
+    const target = { kind: 'append', note: 'Materials.md' }
+    const shown = await preview(base, { mode: 'organized', text, target })
+    expect(shown).toMatchObject({ kind: 'append', noteName: 'Materials.md', before: note, expectedVersion: expect.stringMatching(/^[a-f0-9]{64}$/) })
+    expect(shown.after).toContain('铝轻，因为密度低（约 2.7）。'); expect(shown.after).not.toContain(base.answer.text)
+    expect((await store.load('Materials.md')).content).toBe(note)           // previewing writes nothing
+
+    const edited = text + '（已编辑）'
+    const { capture, change } = await save(base, { mode: 'organized', text: edited, target, expectedVersion: shown.expectedVersion })
+    const written = (await store.load('Materials.md')).content
+    expect(written).toContain(edited); expect(written).not.toContain(base.answer.text)
+    expect(capture).toMatchObject({ mode: 'organized', writtenText: edited, answers: [{ answerId: base.answer.id, text: base.answer.text }] })
+    expect(requests).toHaveLength(asked + 1)                                // saving never calls the model
+    await call('POST', `/api/ai/changes/${change.id}/undo`, {})
+    expect((await store.load('Materials.md')).content).toBe(note)
+  })
+
+  it('verbatim never calls the model and refuses text it did not copy; organized needs confirmed text', async () => {
+    const base = await ask(QUOTE, '为什么铝轻？')
+    const asked = requests.length
+    const target = { kind: 'append', note: 'Materials.md' }
+    await save(base, { mode: 'verbatim', target, text: '改写过的' }, 400)
+    await save(base, { mode: 'organized', target }, 400)
+    await save(base, { mode: 'organized', target, text: '   ' }, 400)
+    const { capture } = await save(base, { target })
+    expect(capture.mode).toBe('verbatim'); expect(capture.writtenText).toBeUndefined()
+    expect(requests).toHaveLength(asked)
+    expect((await store.load('Materials.md')).content).toContain(base.answer.text)
+  })
+
+  it('saves organized text as a new note with its basis', async () => {
+    const base = await ask(QUOTE, '为什么铝轻？')
+    const { capture } = await save(base, { mode: 'organized', text: '整理后的结论。', target: { kind: 'new', folder: '' } })
+    const created = (await store.load(capture.target.notePath)).content
+    expect(created).toContain('整理后的结论。'); expect(created).toContain('> 依据：'); expect(created).not.toContain(base.answer.text)
+    expect(capture).toMatchObject({ mode: 'organized', target: { kind: 'new', beforeVersion: null } })
+  })
+
+  it('replaces exactly the cited passage, once, and undo puts the passage back', async () => {
+    const base = await ask(QUOTE, '为什么铝轻？')
+    const input = { requestKey: 'replace-1', mode: 'verbatim', target: { kind: 'replace', sourceId: base.source.id } }
+    const shown = await preview(base, input)
+    expect(shown).toMatchObject({ kind: 'replace', noteName: 'Materials.md', before: note })
+    expect(shown.after).toBe(note.replace(QUOTE, base.answer.text))
+    const first = await save(base, input)
+    expect((await store.load('Materials.md')).content).toBe(note.replace(QUOTE, base.answer.text))
+    expect(first.capture).toMatchObject({ mode: 'verbatim', target: { kind: 'replace', notePath: 'Materials.md' }, sourceIds: [base.source.id] })
+    await save(base, input)                                              // same request key
+    expect((await store.load('Materials.md')).content).toBe(note.replace(QUOTE, base.answer.text))
+    await call('POST', `/api/ai/changes/${first.change.id}/undo`, {})
+    expect((await store.load('Materials.md')).content).toBe(note)
+  })
+
+  it('follows the passage after the note moved on, and refuses a missing, repeated or foreign one without writing', async () => {
+    const base = await ask(QUOTE, '为什么铝轻？')
+    const replace = { mode: 'verbatim', target: { kind: 'replace', sourceId: base.source.id } }
+    // The passage moved: found by its unique text, replaced there.
+    const moved = '# 前言\n\n一段新内容。\n\n' + note
+    await store.saveContent('Materials.md', moved, note)
+    expect((await preview(base, replace)).after).toBe(moved.replace(QUOTE, base.answer.text))
+    // Repeated with identical surroundings: the position would be a guess, so nothing is replaced.
+    const block = '背景'.repeat(70) + '关键句。\n'
+    await store.create('Twice', block)
+    const dup = await ask('关键句。', '这句什么意思？', { note: 'Twice.md' })
+    await store.saveContent('Twice.md', block + block, block)
+    const ambiguous = { mode: 'verbatim', target: { kind: 'replace', sourceId: dup.source.id } }
+    expect((await preview(dup, ambiguous, 409) as unknown as { error: string }).error).toContain('多次')
+    await save(dup, ambiguous, 409)
+    expect((await store.load('Twice.md')).content).toBe(block + block)
+    const twice = moved
+    // Missing.
+    await store.saveContent('Materials.md', '# 空\n', moved)
+    expect((await preview(base, replace, 409) as unknown as { error: string }).error).toContain('找不到')
+    // A source the question never cited.
+    const other = await call<SourceRefDTO>('POST', '/api/sources', { note: 'Materials.md', quote: '空' }, 201)
+    await save(base, { mode: 'verbatim', target: { kind: 'replace', sourceId: other.id } }, 400)
+    expect(await call<CaptureDTO[]>('GET', '/api/captures')).toHaveLength(0)
+  })
+
+  it('refuses to save over a note that changed after the preview, for append and for replace', async () => {
+    const base = await ask(QUOTE, '为什么铝轻？')
+    for (const target of [{ kind: 'append', note: 'Materials.md' }, { kind: 'replace', sourceId: base.source.id }]) {
+      const current = (await store.load('Materials.md')).content
+      const shown = await preview(base, { mode: 'verbatim', target })
+      const edited = current + '\n预览之后别处加的一行。\n'
+      await store.saveContent('Materials.md', edited, current)
+      await save(base, { mode: 'verbatim', target, expectedVersion: shown.expectedVersion }, 409)
+      expect((await store.load('Materials.md')).content).toBe(edited)
+      await store.saveContent('Materials.md', current, edited)
+    }
+    expect(await call<CaptureDTO[]>('GET', '/api/captures')).toHaveLength(0)
+  })
+
+  it('refuses to organize an answer too long to send, and reports an unconfigured model', async () => {
+    const base = await ask(QUOTE, '为什么铝轻？')
+    const research = new ResearchStore(store)
+    const long = await research.addAnswer(base.discussionId, base.turnId, { text: '很长的回答。'.repeat(8000), runId: 'long' })
+    const asked = requests.length
+    const refused = await call<{ error: string }>('POST', '/api/captures/organize', { discussionId: base.discussionId, turnId: base.turnId, answerId: long.id }, 400)
+    expect(refused.error).toContain('超过整理的上限'); expect(requests).toHaveLength(asked)
+    const bare = createApp(store, new EventBus(), { aiSettings: new AISettings(path.join(dir, 'notes'), path.join(dir, 'empty'), {}) })
+    const response = await bare.request('/api/captures/organize', { method: 'POST', headers: J, body: JSON.stringify({ discussionId: base.discussionId, turnId: base.turnId, answerId: base.answer.id }) })
+    expect(response.status).toBe(502)
   })
 })

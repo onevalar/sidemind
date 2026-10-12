@@ -24,7 +24,7 @@ import { PushService } from './push'
 import { memoryFile, type MemoryTarget } from './memory'
 import { StorageError } from './persistence'
 import { MissingRecordError, ResearchStore } from './discussions'
-import { captureAnswer, contextFor } from './explore'
+import { captureAnswer, contextFor, organizeAnswer, previewCapture } from './explore'
 import { RunService } from './runs'
 import { AgentRunService } from './agent-runs'
 
@@ -190,6 +190,14 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
       unsubscribe()
     })
   })
+  app.post('/api/captures/organize', async (c) => {
+    const body = await object(c)
+    let model: Awaited<ReturnType<Models['mainModel']>>['call']
+    try { model = (await models.mainModel()).call }
+    catch (error) { return c.json({ error: error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError ? error.message : '无法读取模型连接。' }, 502) }
+    return c.json({ text: await organizeAnswer(research, model, { discussionId: body.discussionId, turnId: body.turnId, answerId: body.answerId }, AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(120000)])) })
+  })
+  app.post('/api/captures/preview', async (c) => c.json(await previewCapture(store, research, await object(c) as Parameters<typeof previewCapture>[2])))
   app.post('/api/captures', async (c) => {
     const body = await object(c)
     const result = await track(captureAnswer(store, research, changes, body as Parameters<typeof captureAnswer>[3]))
