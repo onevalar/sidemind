@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import type { AnswerVersionDTO, CaptureDTO, ChangeSetDetail, DiscussionDTO, DraftDTO, ResolvedSourceDTO, RunDTO, SourceRefDTO, TurnDTO } from '../shared/types'
+import type { AnswerVersionDTO, CaptureDTO, ContextPreviewDTO, ChangeSetDetail, DiscussionDTO, DraftDTO, ResolvedSourceDTO, RunDTO, SourceRefDTO, TurnDTO } from '../shared/types'
 import { api, subscribeEvents, subscribeRun, type CaptureTarget, type NoteResearch } from './api'
 import { NoteMarkdown } from './NoteMarkdown'
 import { Button, Dialog, TextArea } from './ui'
@@ -30,6 +30,9 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
   const [followUp, setFollowUp] = useState<{ turn: string; text: string } | null>(null)
   const [version, setVersion] = useState<Record<string, number>>({})
   const [basis, setBasis] = useState<ResolvedSourceDTO | null>(null)
+  const [picked, setPicked] = useState<{ discussion: string; turns: string[] }>({ discussion: '', turns: [] })
+  const [compareText, setCompareText] = useState('比较这几条分支的回答。')
+  const [preview, setPreview] = useState<ContextPreviewDTO | null>(null)
   const keys = useRef(new Map<string, string>())
   const current = useRef(name)
   current.current = name
@@ -116,6 +119,21 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
     await sendDraft(draft, [id])
   })
 
+  /** Choose answers to compare: only within one discussion, and a shared ancestor is sent once. */
+  const toggle = (discussion: DiscussionDTO, turn: TurnDTO) => setPicked(current => {
+    const turns = current.discussion === discussion.id ? current.turns : []
+    return { discussion: discussion.id, turns: turns.includes(turn.id) ? turns.filter(id => id !== turn.id) : [...turns, turn.id] }
+  })
+  const compare = (discussion: DiscussionDTO) => guard('compare' + discussion.id, async () => {
+    const text = compareText.trim()
+    if (picked.turns.length < 2 || !text) throw new Error('请选择至少两条回答，并写下比较的问题。')
+    const id = crypto.randomUUID()
+    const draft = await api.createDraft({ discussionId: discussion.id, parentIds: picked.turns, items: [{ id, question: text, sourceIds: [] }] })
+    setTexts(value => ({ ...value, [id]: text })); setPicked({ discussion: '', turns: [] })
+    await sendDraft(draft, [id])
+  })
+  const showContext = (discussion: DiscussionDTO, turn: TurnDTO) => guard('context' + turn.id, async () => setPreview(await api.context(discussion.id, turn.id)))
+
   const save = (discussion: DiscussionDTO, turn: TurnDTO, saved: AnswerVersionDTO, target: CaptureTarget) => guard('save' + saved.id, async () => {
     await flush()
     const id = saved.id + '|' + JSON.stringify(target)
@@ -167,13 +185,18 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
       </div>)}
     </section>)}
 
-    {view?.discussions.map(discussion => <section className="explore-discussion" key={discussion.id} aria-label={'讨论：' + discussion.title}>
+    {view?.discussions.map(discussion => {
+      const depth = new Map<string, number>(), byId = new Map(discussion.turns.map(turn => [turn.id, turn]))
+      const depthOf = (turn: TurnDTO): number => { if (!depth.has(turn.id)) depth.set(turn.id, turn.parents.length ? 1 + Math.max(...turn.parents.map(id => depthOf(byId.get(id)!))) : 0); return depth.get(turn.id)! }
+      const choosing = picked.discussion === discussion.id ? picked.turns : []
+      return <section className="explore-discussion" key={discussion.id} aria-label={'讨论：' + discussion.title}>
       {discussion.turns.map(turn => {
         const answers = turn.answers, index = Math.min(version[turn.id] ?? answers.length - 1, answers.length - 1), shown = answers[index]
         const live = runs[turn.id], active = !!live && (live.status === 'queued' || live.status === 'running')
         const finishedBad = !!live && ['failed', 'cancelled', 'interrupted'].includes(live.status)
         const saved = shown ? view.captures.filter(capture => capture.answers.some(entry => entry.answerId === shown.id)) : []
-        return <article className="explore-turn" key={turn.id} data-follow-up={turn.parents.length ? 'true' : undefined}>
+        return <article className="explore-turn" key={turn.id} data-follow-up={turn.parents.length ? 'true' : undefined} style={{ marginLeft: Math.min(depthOf(turn), 3) * 14 }}>
+          {turn.parents.length > 1 && <p className="muted explore-merge">合并比较 · 来自 {turn.parents.length} 条分支</p>}
           {turn.sourceIds.map(id => sources[id] && <blockquote className="explore-quote" key={id}>{clip(sources[id]!.quote, 160)}<span className="explore-quote-actions"><Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void locate(id)}>在原文中定位</Button><Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void showBasis(id)}>查看依据</Button></span></blockquote>)}
           <p className="explore-question">{turn.question}</p>
           {(active || finishedBad) && live && <div className="explore-run" aria-live="polite">
@@ -199,6 +222,8 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
               <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void save(discussion, turn, shown, { kind: 'append', note: name })}>追加到本文</Button>
               <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void save(discussion, turn, shown, { kind: 'new', folder: folderOf(name) })}>存为新笔记</Button></>}
             {!active && <Button variant="ghost" size="sm" isDisabled={!!busy || noModel} onPress={() => void guard('retry' + turn.id, () => answer(discussion.id, turn))}>{shown ? '重新回答' : finishedBad ? '重试' : '生成回答'}</Button>}
+            {shown && <Button variant="ghost" size="sm" aria-pressed={choosing.includes(turn.id)} isDisabled={!!busy} onPress={() => toggle(discussion, turn)}>{choosing.includes(turn.id) ? '已选 · 取消' : '选择比较'}</Button>}
+            <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void showContext(discussion, turn)}>查看上下文</Button>
             <Button variant="ghost" size="sm" isDisabled={!!busy || noModel || !shown} onPress={() => setFollowUp(followUp?.turn === turn.id ? null : { turn: turn.id, text: '' })}>追问</Button>
           </div>
           {followUp?.turn === turn.id && <div className="explore-follow">
@@ -206,9 +231,17 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
             <div className="explore-actions"><Button variant="ghost" size="sm" onPress={() => setFollowUp(null)}>取消</Button><Button size="sm" isDisabled={!!busy || !followUp.text.trim()} onPress={() => void askFollowUp(discussion, turn)}>发送追问</Button></div></div>}
         </article>
       })}
-    </section>)}
+      {choosing.length >= 2 && <div className="explore-compare" role="group" aria-label="比较所选回答">
+        <p className="muted">已选 {choosing.length} 条回答。比较会保留各分支，不会把它们合并掉。</p>
+        <TextArea aria-label="比较的问题" rows={2} value={compareText} onChange={event => setCompareText(event.target.value)}/>
+        <div className="explore-actions"><Button variant="ghost" size="sm" onPress={() => setPicked({ discussion: '', turns: [] })}>取消</Button><Button size="sm" isDisabled={!!busy || noModel || !compareText.trim()} onPress={() => void compare(discussion)}>发送比较</Button></div></div>}
+    </section> })}
     {view && !view.discussions.length && !drafts.length && <p className="muted explore-empty">还没有探索记录。选中文字并提问后，回答会保留在这里，可以选择写回笔记。</p>}
 
+ <Dialog title="发送给模型的上下文" open={!!preview} onClose={() => setPreview(null)}>
+      {preview && <><p className={preview.exceeded ? 'ai-error' : 'muted'}>约 {preview.estimatedTokens} / {preview.budget} 单位（粗略估计，不同模型的计数不同）。{preview.exceeded ? '超出上限，发送会被拒绝：请缩小选区或减少分支。' : '这就是发送时的全部内容；未选中的分支和笔记其他部分都不在其中。'}</p>
+        <div className="explore-context">{preview.messages.map((message, index) => <section key={index}><h4>{{ system: '指令', user: '提问与原文', assistant: '先前的回答' }[message.role]}</h4><pre>{message.content}</pre></section>)}</div></>}
+    </Dialog>
     <Dialog title="查看依据" open={!!basis} onClose={() => setBasis(null)}>
       {basis && <><p className="muted">《{title(basis.notePath ?? basis.source.notePath)}》{basis.source.section ? ' · ' + basis.source.section : ''}</p>
         <blockquote className="explore-quote">{basis.source.quote}</blockquote>

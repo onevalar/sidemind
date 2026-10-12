@@ -185,6 +185,8 @@ export interface TurnDTO {
   sourceIds: string[]
   /** Idempotency key that produced this turn. */
   requestKey: string
+  /** Answer version of every ancestor as it was when this question was asked; later retries do not change this question's context. */
+  frozen?: Record<string, string>
   answers: AnswerVersionDTO[]
   createdAt: number
 }
@@ -240,3 +242,13 @@ export interface RunDTO {
   updatedAt: number
 }
 export type RunEvent = { seq: number; type: 'delta'; text: string } | { seq: number; type: 'status'; run: RunDTO }
+
+export interface ContextPreviewDTO {
+  messages: { role: 'system' | 'user' | 'assistant'; content: string }[]
+  /** Rough size, not an exact token count: each model counts differently. */
+  estimatedTokens: number
+  budget: number
+  exceeded: boolean
+  /** Turns whose answers are in this context, oldest first. */
+  turns: { id: string; question: string; answerId: string | null }[]
+}

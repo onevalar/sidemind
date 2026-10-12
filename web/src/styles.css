@@ -438,3 +438,9 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .explore-run-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 12px; }
 .explore-answer[data-partial] { color: var(--text-secondary); }
 ::highlight(explore-source) { background: color-mix(in oklab, var(--text) 18%, transparent); }
+.explore-merge { margin: 0; font-size: 12px; }
+.explore-compare { display: flex; flex-direction: column; gap: 8px; padding: 12px; border-radius: var(--radius-sm); background: var(--surface-muted); }
+.explore-compare > p { margin: 0; font-size: 12px; }
+.explore-context { display: flex; flex-direction: column; gap: 12px; max-height: 55vh; overflow-y: auto; }
+.explore-context h4 { margin: 0 0 4px; font-size: 12px; font-weight: 550; color: var(--text-secondary); }
+.explore-context pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.7; }

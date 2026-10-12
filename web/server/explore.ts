@@ -1,7 +1,7 @@
-import type { CaptureDTO, ChangeSetSummary, DiscussionDTO, SourceRefDTO, TurnDTO } from '../shared/types'
+import type { CaptureDTO, ChangeSetSummary, ContextPreviewDTO, DiscussionDTO, SourceRefDTO, TurnDTO } from '../shared/types'
 import type { AIMessage } from './ai'
 import { summarize, type ChangeEngine } from './changes'
-import { MissingRecordError, type ResearchStore } from './discussions'
+import { MissingRecordError, ancestry, type ResearchStore } from './discussions'
 import { extent } from './layout'
 import { BadNameError, NotFoundError, contentVersion, type NoteStore } from './store'
 
@@ -13,30 +13,47 @@ const INSTRUCTIONS = `你是用户的研究写作助手。用户正在阅读自�
 const sourceText = (source: SourceRefDTO) =>
   `【原文片段】《${source.notePath.replace(/\.md$/, '')}》${source.section ? ' · ' + source.section : ''}\n${source.quote}`
 
-/** Ancestors first, each exactly once, regardless of how many paths reach them. */
-function lineage(discussion: DiscussionDTO, turn: TurnDTO): TurnDTO[] {
-  const byId = new Map(discussion.turns.map(item => [item.id, item]))
-  const seen = new Set<string>(), order: TurnDTO[] = []
-  const visit = (item: TurnDTO) => {
-    if (seen.has(item.id)) return
-    seen.add(item.id)
-    for (const parent of item.parents) visit(byId.get(parent)!)
-    order.push(item)
-  }
-  visit(turn)
-  return order
+const COMPARE = `这次要比较多条分支各自的回答。按以下结构回答，并保留每条分支的原有结论，不要把它们混成一个观点：
+1. 共识：各分支都支持的内容。
+2. 分歧：各分支不一致的地方，标明各自出自哪条分支（用分支问题的原话指代）。
+3. 成立条件：每个结论在什么前提下成立。
+4. 待验证：证据不足、需要进一步核实的问题。
+只依据各分支的问答和其中的原文片段；不确定的明确写出，不要编造。`
+
+export const CONTEXT_BUDGET = Number(process.env.CANVAS_CONTEXT_BUDGET) || 24000
+/** Rough input-size estimate: CJK characters count about one token each, other text about one per three characters. */
+export function estimateTokens(text: string): number {
+  const cjk = (text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu) ?? []).length
+  return cjk + Math.ceil((text.length - cjk) / 3)
 }
 
-/** Only the selected material and the chosen branch are sent: nothing else from the note or other branches. */
-export async function buildMessages(research: ResearchStore, discussion: DiscussionDTO, turn: TurnDTO): Promise<AIMessage[]> {
-  const messages: AIMessage[] = [{ role: 'system', content: INSTRUCTIONS }]
-  for (const item of lineage(discussion, turn)) {
+/**
+ * Exactly what the model will see for a question: only the selected material and the chosen branch(es), parents
+ * before children, shared ancestors once, answers pinned to the version that existed when the question was asked.
+ */
+export async function contextFor(research: ResearchStore, discussion: DiscussionDTO, turn: TurnDTO): Promise<ContextPreviewDTO> {
+  const messages: ContextPreviewDTO['messages'] = [{ role: 'system', content: INSTRUCTIONS + (turn.parents.length > 1 ? '\n\n' + COMPARE : '') }]
+  const turns: ContextPreviewDTO['turns'] = []
+  for (const item of [...ancestry(discussion.turns, turn.parents), turn]) {
     const sources = await Promise.all(item.sourceIds.map(id => research.getSource(id)))
     messages.push({ role: 'user', content: [...sources.map(sourceText), '问题：' + item.question].join('\n\n') })
-    const answer = item.answers.at(-1)
-    if (item.id !== turn.id && answer) messages.push({ role: 'assistant', content: answer.text })
+    let answerId: string | null = null
+    if (item.id !== turn.id) {
+      const pinned = turn.frozen?.[item.id]
+      const answer = pinned ? item.answers.find(candidate => candidate.id === pinned) : turn.frozen ? undefined : item.answers.at(-1)
+      if (answer) { messages.push({ role: 'assistant', content: answer.text }); answerId = answer.id }
+    }
+    turns.push({ id: item.id, question: item.question, answerId })
   }
-  return messages
+  const estimatedTokens = messages.reduce((sum, message) => sum + estimateTokens(message.content), 0)
+  return { messages, estimatedTokens, budget: CONTEXT_BUDGET, exceeded: estimatedTokens > CONTEXT_BUDGET, turns }
+}
+
+/** The messages for the model. Refuses an over-budget context instead of silently dropping material. */
+export async function buildMessages(research: ResearchStore, discussion: DiscussionDTO, turn: TurnDTO): Promise<AIMessage[]> {
+  const context = await contextFor(research, discussion, turn)
+  if (context.exceeded) throw new BadNameError(`这条分支的上下文约 ${context.estimatedTokens} 个单位，超过上限 ${context.budget}。请缩小选区、减少合并的分支，或从较短的分支继续提问。`)
+  return context.messages
 }
 
 export type CaptureTarget = { kind: 'append'; note: string } | { kind: 'new'; folder?: string; title?: string }

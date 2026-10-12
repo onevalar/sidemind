@@ -1,4 +1,4 @@
-import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent, SourceRefDTO, ResolvedSourceDTO, DiscussionDTO, DraftDTO, TurnDTO, CaptureDTO, RunDTO, RunEvent } from '../shared/types'
+import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent, SourceRefDTO, ResolvedSourceDTO, DiscussionDTO, DraftDTO, TurnDTO, CaptureDTO, RunDTO, RunEvent, ContextPreviewDTO } from '../shared/types'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -53,6 +53,7 @@ export const api = {
   createDraft: (input: { discussionId?: string; parentIds?: string[]; origin?: DiscussionDTO['origin']; items: { id: string; question: string; sourceIds: string[] }[] }) => request<DraftDTO>('/api/drafts', { method: 'POST', body: JSON.stringify(input) }),
   updateDraft: (id: string, revision: number, items: { id: string; question: string; sourceIds: string[] }[]) => request<DraftDTO>(`/api/drafts/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ revision, items }) }),
   sendDraft: (id: string, items: { id: string; question: string }[]) => request<{ discussion: DiscussionDTO; turns: TurnDTO[]; draft: DraftDTO }>(`/api/drafts/${enc(id)}/send`, { method: 'POST', body: JSON.stringify({ items }) }),
+  context: (discussionId: string, turnId: string) => request<ContextPreviewDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/context`),
   startRun: (discussionId: string, turnId: string, requestKey: string) => request<RunDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/runs`, { method: 'POST', body: JSON.stringify({ requestKey }) }),
   stopRun: (id: string) => request<RunDTO>(`/api/runs/${enc(id)}/stop`, { method: 'POST', body: '{}' }),
   capture: (input: { requestKey: string; discussionId: string; turnId: string; answerId: string; target: CaptureTarget }) => request<{ capture: CaptureDTO; change: ChangeSetSummary }>('/api/captures', { method: 'POST', body: JSON.stringify(input) }),

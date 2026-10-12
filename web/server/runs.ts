@@ -5,7 +5,7 @@ import { AIRequestError } from './ai'
 import { ChatGPTError } from './chatgpt'
 import { AISettingsError } from './ai-settings'
 import { MissingRecordError, type ResearchStore } from './discussions'
-import { buildMessages } from './explore'
+import { buildMessages, contextFor } from './explore'
 import type { ModelCall } from './models'
 import { readRecord, StorageError, writeRecord } from './persistence'
 import { BadNameError, ConflictError, contentVersion, type NoteStore } from './store'
@@ -86,6 +86,9 @@ export class RunService {
       }
       const discussion = await this.research.getDiscussion(input.discussionId)
       if (!discussion.turns.some(turn => turn.id === input.turnId)) throw new MissingRecordError('找不到这个问题节点。')
+      // Refuse an over-budget context now, with the reason, rather than after creating a run that cannot work.
+      const context = await contextFor(this.research, discussion, discussion.turns.find(turn => turn.id === input.turnId)!)
+      if (context.exceeded) throw new BadNameError(`这条分支的上下文约 ${context.estimatedTokens} 个单位，超过上限 ${context.budget}。请缩小选区、减少合并的分支，或从较短的分支继续提问。`)
       if ([...this.active.values()].some(item => item.run.turnId === input.turnId && !finished(item.run.status))) throw new ConflictError('这个问题正在回答，请等待或先停止。')
       const now = Date.now()
       const run: RunDTO = { id, discussionId: input.discussionId, turnId: input.turnId, requestKey: input.requestKey, status: 'queued', text: '', seq: 0, createdAt: now, updatedAt: now }

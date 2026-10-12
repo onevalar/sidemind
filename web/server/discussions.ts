@@ -44,6 +44,20 @@ export function validateTurns(turns: TurnDTO[]): void {
   for (const turn of turns) visit(turn)
 }
 
+/** Every ancestor of the given parents, parents before children, each exactly once however many paths reach it. */
+export function ancestry(turns: TurnDTO[], parents: string[]): TurnDTO[] {
+  const byId = new Map(turns.map(item => [item.id, item]))
+  const seen = new Set<string>(), order: TurnDTO[] = []
+  const visit = (item: TurnDTO) => {
+    if (seen.has(item.id)) return
+    seen.add(item.id)
+    for (const parent of item.parents) visit(byId.get(parent)!)
+    order.push(item)
+  }
+  for (const parent of parents) visit(byId.get(parent)!)
+  return order
+}
+
 const text = (value: unknown, label: string, max: number, empty = false): string => {
   if (typeof value !== 'string' || (!empty && !value.trim()) || value.length > max) throw new BadNameError(label + '无效或过长。')
   return value
@@ -206,7 +220,9 @@ export class ResearchStore {
       const parents = ids(input.parents ?? [], '父节点'), sourceIds = ids(input.sourceIds ?? [], '来源')
       for (const parent of parents) if (!discussion.turns.some(turn => turn.id === parent)) throw new BadNameError('父节点不在这段讨论中。')
       for (const source of sourceIds) await this.getSource(source)
-      const turn: TurnDTO = { id: derive(discussionId, requestKey), parents, question, sourceIds, requestKey, answers: [], createdAt: Date.now() }
+      const frozen: Record<string, string> = {}
+      for (const ancestor of ancestry(discussion.turns, parents)) { const answer = ancestor.answers.at(-1); if (answer) frozen[ancestor.id] = answer.id }
+      const turn: TurnDTO = { id: derive(discussionId, requestKey), parents, question, sourceIds, requestKey, ...(parents.length ? { frozen } : {}), answers: [], createdAt: Date.now() }
       const revision = discussion.revision
       discussion.turns.push(turn)
       await this.saveDiscussion(discussion, revision)

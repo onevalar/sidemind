@@ -24,7 +24,7 @@ import { PushService } from './push'
 import { memoryFile, type MemoryTarget } from './memory'
 import { StorageError } from './persistence'
 import { MissingRecordError, ResearchStore } from './discussions'
-import { captureAnswer } from './explore'
+import { captureAnswer, contextFor } from './explore'
 import { RunService } from './runs'
 
 const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/
@@ -152,6 +152,12 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     try { model = (await models.mainModel()).call }
     catch (error) { return c.json({ error: error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError ? error.message : '无法读取模型连接。' }, 502) }
     return c.json(await runs.start({ discussionId: c.req.param('id'), turnId: c.req.param('turn'), requestKey: body.requestKey }, model), 202)
+  })
+  app.get('/api/discussions/:id/turns/:turn/context', async (c) => {
+    const discussion = await research.getDiscussion(c.req.param('id'))
+    const turn = discussion.turns.find(item => item.id === c.req.param('turn'))
+    if (!turn) throw new MissingRecordError('找不到这个问题节点。')
+    return c.json(await contextFor(research, discussion, turn))
   })
   app.get('/api/runs/:id', async (c) => c.json(await runs.get(c.req.param('id'))))
   app.post('/api/runs/:id/stop', async (c) => c.json(await runs.stop(c.req.param('id'))))
