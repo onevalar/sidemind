@@ -15,6 +15,7 @@ let dir: string, store: NoteStore, ai: AISettings, research: ResearchStore, shut
 /** A model whose output the test releases piece by piece. */
 let gate: ReturnType<typeof makeGate>
 let transports = 0
+const running = new Set<Promise<unknown>>()
 
 function makeGate() {
   const encoder = new TextEncoder()
@@ -33,7 +34,7 @@ function makeGate() {
 function build(options: { fresh?: boolean } = {}) {
   shutdown = new AbortController()
   gate = undefined as unknown as typeof gate
-  const tasks = new Set<Promise<unknown>>()
+  const tasks = running
   const app = createApp(store, new EventBus(), { aiSettings: ai, shutdown: shutdown.signal, tasks, aiTransport: async (_, init) => {
     transports++
     const current = makeGate()
@@ -90,7 +91,7 @@ beforeEach(async () => {
   research = new ResearchStore(store)
   transports = 0
 })
-afterEach(() => fs.rm(dir, { recursive: true, force: true }))
+afterEach(async () => { await Promise.allSettled([...running]); await fs.rm(dir, { recursive: true, force: true }) })
 
 describe('persistent answer runs', () => {
   it('accepts a run once, streams its progress, and saves the answer when it completes', async () => {

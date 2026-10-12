@@ -252,3 +252,20 @@ export interface ContextPreviewDTO {
   /** Turns whose answers are in this context, oldest first. */
   turns: { id: string; question: string; answerId: string | null }[]
 }
+
+/** One Note Agent request running on the server. Its history lives in the conversation; this tracks the run itself. */
+export interface AgentRunDTO {
+  id: string
+  scope: AgentScope
+  /** Conversation this run writes to, once known. */
+  session?: string
+  requestKey: string
+  status: RunStatus
+  /** Sequence number of the latest event; events are numbered from 1. */
+  seq: number
+  error?: string
+  /** Legacy behaviour: the run is cancelled when its last listener disconnects. */
+  cancelOnDisconnect: boolean
+  createdAt: number
+  updatedAt: number
+}
