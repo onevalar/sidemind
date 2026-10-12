@@ -25,11 +25,21 @@ export class AgentRunService {
   private active = new Map<string, Active>()
   private recovered = false
 
-  constructor(private store: NoteStore, private agent: NoteAgent, private options: { track?: <T>(task: Promise<T>) => Promise<T>; shutdown?: AbortSignal; guard?: () => void; /** Which of these proposals still await the user. */ pendingProposals?: (ids: string[]) => Promise<string[]> } = {}) {
+  constructor(private store: NoteStore, private agent: NoteAgent, private options: { track?: <T>(task: Promise<T>) => Promise<T>; shutdown?: AbortSignal; guard?: () => void; /** Which of these proposals still await the user. */ pendingProposals?: (ids: string[]) => Promise<string[]>; /** Change sets this conversation's requests made since a time, from the change engine's own records. */ changesSince?: (session: string, since: number) => Promise<string[]> } = {}) {
     this.directory = path.join(store.paths.local, 'agent-runs')
   }
 
   private file = (id: string) => path.join(this.directory, id + '.json')
+
+  /**
+   * What an unfinished run changed: what it recorded as it went, plus anything the change engine committed for its
+   * conversation since it began. The second source closes the window between a write committing and the run's own
+   * record being saved, so a crash there is still reported as needing recovery.
+   */
+  private async touched(run: AgentRunDTO): Promise<string[]> {
+    const found = run.session && this.options.changesSince ? await this.options.changesSince(run.session, run.createdAt).catch(() => []) : []
+    return [...new Set([...(run.changes ?? []), ...found])]
+  }
 
   /** The unfinished run writing to a conversation, so a page that opens mid-run can follow it. */
   runForSession(session: string): AgentRunDTO | null {
@@ -92,9 +102,9 @@ export class AgentRunService {
     for (const name of names) {
       const run = await this.get(name.slice(0, -5))
       if (finished(run.status) || this.active.has(run.id)) continue
-      const changed = run.changes?.length ?? 0
+      const changes = await this.touched(run), changed = changes.length
       await writeRecord(this.file(run.id), { version: 1, ...run, ...(changed
-        ? { status: 'recovery_required', error: RECOVERY(changed, '服务重启时这次任务尚未完成。') }
+        ? { status: 'recovery_required', changes, error: RECOVERY(changed, '服务重启时这次任务尚未完成。') }
         : { status: 'interrupted', error: '服务重启时这次任务尚未完成，还没有修改任何笔记。不会自动重新执行；请重新发起。' }), updatedAt: Date.now() })
     }
   }
@@ -150,7 +160,8 @@ export class AgentRunService {
       const known = failure instanceof BadNameError || failure instanceof ConflictError || failure instanceof ChatGPTError || failure instanceof AISettingsError || failure instanceof AIRequestError
       if (signal.aborted) {
         const shutdown = !state.stopped && !!this.options.shutdown?.aborted
-        const changed = run.changes?.length ?? 0
+        const changes = shutdown ? await this.touched(run) : run.changes ?? [], changed = changes.length
+        if (shutdown && changed) run.changes = changes
         status = shutdown ? (changed ? 'recovery_required' : 'interrupted') : state.stopped ? 'cancelled' : 'failed'
         error = shutdown ? (changed ? RECOVERY(changed, '服务正在停止，任务被中断。') : '服务正在停止，任务被中断，还没有修改任何笔记。') : state.stopped ? '已停止。已完成的修改保留在修改记录中，可以撤销。' : '任务超时。已完成的修改保留在修改记录中。'
       } else {

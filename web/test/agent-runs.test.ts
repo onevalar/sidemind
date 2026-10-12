@@ -140,6 +140,7 @@ describe('Note Agent on the run layer', () => {
   /** Runs a script until the model is mid-reply, then simulates a crash: the record on disk still says "running". */
   async function crashMidRun(requestKey: string, steps: Step[], message: string) {
     const release = gate()
+    transports = 0
     script = steps.map((step, index) => index === steps.length - 1 ? { ...step, hold: release.hold } : step)
     const first = build()
     const run = await call<AgentRunDTO>(first, 'POST', '/api/agent-runs', { requestKey, scope, message }, 202)
@@ -165,6 +166,32 @@ describe('Note Agent on the run layer', () => {
     expect(state.messages[0]!.text).toBe('创建并继续')
     expect(state.recovery?.map(item => item.id)).toEqual([run.id])
     expect(state.changes.map(change => change.id)).toEqual(seen.changes)
+  })
+
+  it('still needs recovery when the crash came after the change committed but before the run recorded it', async () => {
+    const { run, restarted } = await crashMidRun('k5e', [{ calls: [{ name: 'create_note', args: { title: '窗口内', content: '# 窗口内\n' } }] }, { text: '还在写' }], '创建并继续')
+    // Simulate the crash window: the change set is committed, the run's own record never learned about it.
+    const file = path.join(store.paths.local, 'agent-runs', run.id + '.json')
+    const record = JSON.parse(await fs.readFile(file, 'utf8')); delete record.changes
+    await fs.writeFile(file, JSON.stringify(record))
+    const seen = await call<AgentRunDTO>(build(), 'GET', `/api/agent-runs/${run.id}`)
+    expect(seen.status).toBe('recovery_required')
+    expect(seen.changes).toHaveLength(1)
+    expect(seen.error).toContain('已经修改了 1 处笔记')
+    void restarted
+  })
+
+  it('does not count another conversation, an earlier request, or an accepted proposal as this run\'s changes', async () => {
+    // An earlier, finished request in the same conversation, then a crashed run that changed nothing.
+    script = [{ calls: [{ name: 'create_note', args: { title: '更早的', content: '# 更早的\n' } }] }, { text: '完成' }]
+    const first = build()
+    const earlier = await call<AgentRunDTO>(first, 'POST', '/api/agent-runs', { requestKey: 'k5f', scope, message: '先做一件事' }, 202)
+    await until(async () => (await status(first, earlier.id)) === 'completed')
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const { run, restarted } = await crashMidRun('k5g', [{ text: '只是在想' }], '再聊聊')
+    const seen = await call<AgentRunDTO>(restarted, 'GET', `/api/agent-runs/${run.id}`)
+    expect(seen.status).toBe('interrupted')
+    expect(seen.changes).toBeUndefined()
   })
 
   it('stays flagged across further restarts until the user acknowledges it, and only a run that needs it can be acknowledged', async () => {

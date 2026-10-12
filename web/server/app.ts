@@ -58,7 +58,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     return semantic
   }
   const agent = new NoteAgent({ store, index, files, changes, proposals, git, models, conversations, bus, semantic: semanticIndex })
-  const agentRuns = new AgentRunService(store, agent, { track: task => track(task), shutdown: opts.shutdown, pendingProposals: async ids => { const pending: string[] = []; for (const id of ids) if ((await proposals.get(id).catch(() => null))?.status === 'pending') pending.push(id); return pending }, guard: () => { if (syncing) throw new ConflictError('正在同步笔记和对话记忆，请完成后再发送。') } })
+  const agentRuns = new AgentRunService(store, agent, { track: task => track(task), shutdown: opts.shutdown, changesSince: async (session, since) => (await changes.list({ conversation: session })).filter(set => set.origin === 'request' && set.createdAt >= since).map(set => set.id), pendingProposals: async ids => { const pending: string[] = []; for (const id of ids) if ((await proposals.get(id).catch(() => null))?.status === 'pending') pending.push(id); return pending }, guard: () => { if (syncing) throw new ConflictError('正在同步笔记和对话记忆，请完成后再发送。') } })
   const pusher = new PushService({ store, files, git, models, conversations, index, bus })
   let syncing = false
   const slotOf = (value: string | undefined): ModelSlot => { if (value === undefined) return 'main'; if (!MODEL_SLOTS.includes(value as ModelSlot)) throw new BadNameError('模型槽位无效。'); return value as ModelSlot }
