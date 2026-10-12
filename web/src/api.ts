@@ -1,4 +1,4 @@
-import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent } from '../shared/types'
+import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent, SourceRefDTO, ResolvedSourceDTO, DiscussionDTO, DraftDTO, TurnDTO, AnswerVersionDTO, CaptureDTO } from '../shared/types'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -39,11 +39,22 @@ async function ndjson<T extends { type: string }>(response: Response, onEvent: (
   } finally { await reader.cancel().catch(() => {}); reader.releaseLock() }
 }
 
+export type NoteResearch = { noteId: string; discussions: DiscussionDTO[]; drafts: DraftDTO[]; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO> }
+export type CaptureTarget = { kind: 'append'; note: string } | { kind: 'new'; folder: string }
+
 export type ModelSlot = 'main' | 'summary' | 'embedding'
 export type AppSettings = { notesDirectory: string; dataDirectory: string; ai: PublicAIConfig; summary: PublicAIConfig; embedding: PublicAIConfig; chatgpt: PublicChatGPTConfig }
 const slot = (value: ModelSlot) => value === 'main' ? '' : '?slot=' + value
 
 export const api = {
+  researchNote: (name: string) => request<NoteResearch>(`/api/research/note?name=${enc(name)}`),
+  createSource: (note: string, quote: string) => request<SourceRefDTO>('/api/sources', { method: 'POST', body: JSON.stringify({ note, quote }) }),
+  source: (id: string) => request<ResolvedSourceDTO>(`/api/sources/${enc(id)}`),
+  createDraft: (input: { discussionId?: string; parentIds?: string[]; origin?: DiscussionDTO['origin']; items: { id: string; question: string; sourceIds: string[] }[] }) => request<DraftDTO>('/api/drafts', { method: 'POST', body: JSON.stringify(input) }),
+  updateDraft: (id: string, revision: number, items: { id: string; question: string; sourceIds: string[] }[]) => request<DraftDTO>(`/api/drafts/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ revision, items }) }),
+  sendDraft: (id: string, items: { id: string; question: string }[]) => request<{ discussion: DiscussionDTO; turns: TurnDTO[]; draft: DraftDTO }>(`/api/drafts/${enc(id)}/send`, { method: 'POST', body: JSON.stringify({ items }) }),
+  answerTurn: (discussionId: string, turnId: string, runId?: string, signal?: AbortSignal) => request<AnswerVersionDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/answer`, { method: 'POST', body: JSON.stringify({ runId }), signal }),
+  capture: (input: { requestKey: string; discussionId: string; turnId: string; answerId: string; target: CaptureTarget }) => request<{ capture: CaptureDTO; change: ChangeSetSummary }>('/api/captures', { method: 'POST', body: JSON.stringify(input) }),
   agent: async (input: { session?: string; scope: AgentScope; message: string; selection?: string }, onEvent: (event: AgentEvent) => void, signal: AbortSignal) => {
     const response = await fetch('/api/ai/agent', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input), signal })
     if (!response.ok) throw new Error((await response.json().catch(() => null))?.error || '无法连接 AI 助手。')

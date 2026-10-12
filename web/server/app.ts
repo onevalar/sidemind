@@ -24,6 +24,7 @@ import { PushService } from './push'
 import { memoryFile, type MemoryTarget } from './memory'
 import { StorageError } from './persistence'
 import { MissingRecordError, ResearchStore } from './discussions'
+import { answerTurn, captureAnswer } from './explore'
 
 const LOCAL_HOSTS = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/
 
@@ -119,6 +120,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
   }
   app.post('/api/sources', async (c) => { const body = await object(c); return c.json(await research.createSource({ note: body.note, quote: body.quote, start: body.start }), 201) })
   app.get('/api/sources/:id', async (c) => c.json(await research.resolveSource(c.req.param('id'))))
+  app.get('/api/research/note', async (c) => c.json(await research.forNote(c.req.query('name') ?? '')))
   app.get('/api/discussions', async (c) => c.json(await research.listDiscussions(c.req.query('archived') === undefined ? {} : { archived: c.req.query('archived') === 'true' })))
   app.post('/api/discussions', async (c) => { const body = await object(c); return c.json(await research.createDiscussion({ title: body.title, origin: body.origin }), 201) })
   app.get('/api/discussions/:id', async (c) => c.json(await research.getDiscussion(c.req.param('id'))))
@@ -138,6 +140,25 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     return c.json({ ok: true })
   })
   app.post('/api/drafts/:id/send', async (c) => c.json(await research.sendDraft(c.req.param('id'), (await object(c)).items), 201))
+  app.post('/api/discussions/:id/turns/:turn/answer', async (c) => {
+    const body = await c.req.json().catch(() => null)
+    if (body?.runId !== undefined && (typeof body.runId !== 'string' || !body.runId || body.runId.length > 200)) throw new BadNameError('运行编号无效。')
+    let model: Awaited<ReturnType<Models['mainModel']>>['call']
+    try { model = (await models.mainModel()).call }
+    catch (error) { return c.json({ error: error instanceof ChatGPTError || error instanceof AISettingsError || error instanceof AIRequestError ? error.message : '无法读取模型连接。' }, 502) }
+    const signal = AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(300000), ...(opts.shutdown ? [opts.shutdown] : [])])
+    try { return c.json(await track(answerTurn(research, c.req.param('id'), c.req.param('turn'), model, signal, body?.runId)), 201) }
+    catch (error) {
+      if (error instanceof AIRequestError || error instanceof ChatGPTError || error instanceof AISettingsError) return c.json({ error: error.message }, 502)
+      if (signal.aborted) return c.json({ error: '已停止或超时，未保存回答。' }, 504)
+      throw error
+    }
+  })
+  app.post('/api/captures', async (c) => {
+    const body = await object(c)
+    const result = await track(captureAnswer(store, research, changes, body as Parameters<typeof captureAnswer>[3]))
+    return c.json(result, 201)
+  })
   app.get('/api/captures', async (c) => c.json(await research.listCaptures(c.req.query('note'))))
   app.get('/api/captures/:id', async (c) => c.json(await research.getCapture(c.req.param('id'))))
   app.get('/api/search', async (c) => c.json(await store.search((c.req.query('q') ?? '').slice(0, 300))))

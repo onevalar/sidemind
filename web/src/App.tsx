@@ -12,6 +12,7 @@ import { Button, ContextMenu, Dialog, Icon, IconButton, Input, TextArea, Select,
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/arc/tabs/tabs'
 import { ResizablePanel, ResizablePanels } from './components/arc/resizable-panels/resizable-panels'
 import { AgentPanel } from './AgentPanel'
+import { ExplorePanel } from './ExplorePanel'
 import { PushControl, RepoSettings } from './PushControl'
 import { MemoryDialog } from './MemoryDialog'
 
@@ -54,6 +55,7 @@ export function App() {
   const beforeLeave = useRef<() => Promise<boolean>>(async () => true)
   const agentSelection = useRef<() => string | undefined>(() => undefined)
   const [aiOpen, setAiOpen] = useState(() => localStorage.getItem('canvas.ai-open') !== 'false')
+  const [aiTab, setAiTab] = useState<'agent' | 'explore'>('agent')
   const [focus, setFocus] = useState<{ names: string[]; key: number } | null>(null)
   const [folderMemoryOpen, setFolderMemoryOpen] = useState(false)
   const [aiShare] = useState(() => Math.min(65, Math.max(15, Number(localStorage.getItem('canvas.ai-width')) || 30)))
@@ -184,7 +186,15 @@ export function App() {
       </>}
       </ResizablePanel>
       <ResizablePanel id="ai-assistant-pane" label="AI 助手" defaultSize={aiShare} minSize={320} maxSize={720} hidden={!aiOpen}>
+        <div className="ai-pane-stack">
+        <SegmentedControl label="助手或探索" value={aiTab} onValueChange={value => setAiTab(value as typeof aiTab)} options={[{ value: 'agent', label: '助手' }, { value: 'explore', label: '探索' }]}/>
+        <div className="ai-pane-tab" hidden={aiTab !== 'agent'}>
         <AgentPanel folder={space} name={selected} model={aiModel} beforeSend={beforeLeave} selection={agentSelection} onConfigure={() => setSettingsOpen(true)} onClose={closeAI} onOpenNote={openNote} onFocus={focusNotes}/>
+        </div>
+        <div className="ai-pane-tab" hidden={aiTab !== 'explore'}>
+          <ExplorePanel name={selected} model={aiModel} active={aiOpen && aiTab === 'explore'} beforeSend={beforeLeave} selection={agentSelection} onConfigure={() => setSettingsOpen(true)} onOpenNote={openNote}/>
+        </div>
+        </div>
       </ResizablePanel>
       </ResizablePanels></div>
     </main>

@@ -173,7 +173,7 @@ export interface SourceRefDTO {
   end: number
   createdAt: number
 }
-export type SourceStatus = 'current' | 'moved' | 'changed' | 'ambiguous' | 'missing' | 'note-deleted'
+export type SourceStatus = 'current' | 'moved' | 'ambiguous' | 'missing' | 'note-deleted'
 export interface ResolvedSourceDTO { source: SourceRefDTO; status: SourceStatus; notePath: string | null; start: number | null; end: number | null }
 
 export interface AnswerVersionDTO { id: string; text: string; createdAt: number; runId?: string }

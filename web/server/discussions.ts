@@ -345,6 +345,25 @@ export class ResearchStore {
     })
   }
 
+  /** Everything started from one note: its discussions, unsent drafts, saved captures and the sources they cite. */
+  async forNote(name: string): Promise<{ noteId: string; discussions: DiscussionDTO[]; drafts: DraftDTO[]; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO> }> {
+    return this.exclusive(async () => {
+      const { id: noteId } = await this.store.identity(name)
+      const fromNote = (origin: Origin) => origin.kind === 'note' && origin.noteId === noteId
+      const discussions: DiscussionDTO[] = []
+      for (const item of await this.list<DiscussionDTO & { version: 1 }>(this.discussions, '讨论')) {
+        if (!item.archived && fromNote(item.origin)) discussions.push(await this.getDiscussion(item.id))
+      }
+      discussions.sort((a, b) => b.updatedAt - a.updatedAt)
+      const drafts = (await this.listDrafts()).filter(draft => fromNote(draft.origin) && draft.items.length)
+      const captures = await this.listCaptures(noteId)
+      const sources: Record<string, SourceRefDTO> = {}
+      const ids = new Set([...discussions.flatMap(d => d.turns.flatMap(t => t.sourceIds)), ...drafts.flatMap(d => d.items.flatMap(i => i.sourceIds))])
+      for (const id of ids) sources[id] = await this.getSource(id)
+      return { noteId, discussions, drafts, captures, sources }
+    })
+  }
+
   // ---- Captures ----
 
   async getCapture(id: string): Promise<CaptureDTO> { return stripVersion(await this.read<CaptureDTO & { version: 1 }>(this.captures, id, '保存记录')) }
