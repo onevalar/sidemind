@@ -180,7 +180,11 @@ export interface SourceRefDTO {
 export type SourceStatus = 'current' | 'moved' | 'ambiguous' | 'missing' | 'note-deleted'
 export interface ResolvedSourceDTO { source: SourceRefDTO; status: SourceStatus; notePath: string | null; start: number | null; end: number | null }
 
-export interface AnswerVersionDTO { id: string; text: string; createdAt: number; runId?: string }
+export interface AnswerVersionDTO {
+  id: string; text: string; createdAt: number; runId?: string
+  /** Earlier turns whose answers were sent as summaries (not verbatim) when this answer was generated. */
+  summarizedTurns?: string[]
+}
 export interface TurnDTO {
   id: string
   /** Turns whose answers form the context; several parents is a merge. */
@@ -262,7 +266,9 @@ export interface ContextPreviewDTO {
   budget: number
   exceeded: boolean
   /** Turns whose answers are in this context, oldest first. */
-  turns: { id: string; question: string; answerId: string | null }[]
+  turns: { id: string; question: string; answerId: string | null; /** `summary`: the earlier answer is sent as a summary because the context would not fit otherwise. */ mode: 'raw' | 'summary' }[]
+  /** Earlier answers that could be shortened to a summary but have none yet (never the branches selected directly). */
+  summarizable: { turnId: string; answerId: string }[]
 }
 
 /** One Note Agent request running on the server. Its history lives in the conversation; this tracks the run itself. */

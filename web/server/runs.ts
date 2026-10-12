@@ -129,7 +129,8 @@ export class RunService {
       this.emit(state, { type: 'status', run: this.snapshot(run) })
       const discussion = await this.research.getDiscussion(run.discussionId)
       const turn = discussion.turns.find(item => item.id === run.turnId)!
-      const reply = await call(await buildMessages(this.research, discussion, turn), [], signal, text => {
+      const { messages, summarizedTurns } = await buildMessages(this.research, discussion, turn)
+      const reply = await call(messages, [], signal, text => {
         run.text += text
         this.emit(state, { type: 'delta', text })
         if (Date.now() - state.saved >= PERSIST_EVERY) { state.saved = Date.now(); void this.save(state).catch(() => undefined) }
@@ -137,7 +138,7 @@ export class RunService {
       signal.throwIfAborted()
       const text = (reply.text || run.text).trim()
       if (!text) throw new AIRequestError('模型没有返回内容，请重试。')
-      const answer = await this.research.addAnswer(run.discussionId, run.turnId, { text, runId: run.id })
+      const answer = await this.research.addAnswer(run.discussionId, run.turnId, { text, runId: run.id, summarizedTurns })
       await this.finish(state, 'completed', { text, answerId: answer.id })
     } catch (error) {
             if (signal.aborted) {

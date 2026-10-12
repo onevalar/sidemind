@@ -77,12 +77,14 @@ export class ResearchStore {
   private readonly drafts: string
   private readonly sources: string
   private readonly captures: string
+  private readonly summaryDir: string
 
   constructor(private store: NoteStore) {
     this.discussions = path.join(store.paths.local, 'discussions')
     this.drafts = path.join(store.paths.local, 'drafts')
     this.sources = path.join(store.paths.research, 'sources')
     this.captures = path.join(store.paths.research, 'captures')
+    this.summaryDir = path.join(store.paths.local, 'summaries')
   }
 
   private exclusive<T>(action: () => Promise<T>) { return this.store.writer.run(action) }
@@ -231,20 +233,42 @@ export class ResearchStore {
   }
 
   /** Answers are append-only versions: retrying never rewrites what a note or capture already cites. */
-  async addAnswer(discussionId: string, turnId: string, input: { text: string; runId?: string }): Promise<AnswerVersionDTO> {
+  async addAnswer(discussionId: string, turnId: string, input: { text: string; runId?: string; summarizedTurns?: string[] }): Promise<AnswerVersionDTO> {
     const body = text(input?.text, '回答', MAX_TEXT, true)
     if (input.runId !== undefined) text(input.runId, '运行编号', 200)
+    const summarizedTurns = input.summarizedTurns?.length ? ids(input.summarizedTurns, '摘要节点') : undefined
     return this.exclusive(async () => {
       const discussion = await this.getDiscussion(discussionId)
       const turn = discussion.turns.find(item => item.id === turnId)
       if (!turn) throw new MissingRecordError('找不到这个问题节点。')
       const existing = input.runId === undefined ? undefined : turn.answers.find(answer => answer.runId === input.runId)
       if (existing) return existing
-      const answer: AnswerVersionDTO = { id: randomUUID(), text: body, createdAt: Date.now(), ...(input.runId === undefined ? {} : { runId: input.runId }) }
+      const answer: AnswerVersionDTO = { id: randomUUID(), text: body, createdAt: Date.now(), ...(input.runId === undefined ? {} : { runId: input.runId }), ...(summarizedTurns ? { summarizedTurns } : {}) }
       const revision = discussion.revision
       turn.answers.push(answer)
       await this.saveDiscussion(discussion, revision)
       return answer
+    })
+  }
+
+  // ---- Summaries (derived, local, rebuildable: they only ever shorten an older answer inside a request) ----
+
+  async getSummary(answerId: string): Promise<string | null> {
+    if (!ID.test(answerId)) return null
+    const record = await readRecord<{ version: 1; answerId: string; text: string }>(path.join(this.summaryDir, answerId + '.json'))
+    return record && record.version === 1 && record.answerId === answerId && typeof record.text === 'string' ? record.text : null
+  }
+
+  /** Keeps the first summary of an answer version, so a later request never silently sees different wording. */
+  async setSummary(answerId: string, input: { text: string; model: string }): Promise<string> {
+    if (!ID.test(answerId)) throw new BadNameError('回答编号无效。')
+    const body = text(input?.text, '摘要', MAX_TEXT)
+    return this.exclusive(async () => {
+      const file = path.join(this.summaryDir, answerId + '.json')
+      const existing = await readRecord<{ text: string }>(file)
+      if (existing) return existing.text
+      await writeRecord(file, { version: 1, answerId, text: body, model: input.model, createdAt: Date.now() })
+      return body
     })
   }
 

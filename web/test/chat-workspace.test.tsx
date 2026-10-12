@@ -6,7 +6,7 @@ import { api } from '../src/api'
 import type { DiscussionDTO, DiscussionSummaryDTO, RunDTO } from '../shared/types'
 
 vi.mock('../src/api', () => ({
-  api: { organize: vi.fn(), capturePreview: vi.fn(), discussions: vi.fn(), discussionView: vi.fn(), archiveDiscussion: vi.fn(), createDraft: vi.fn(), sendDraft: vi.fn(), startRun: vi.fn(), capture: vi.fn(), changeSet: vi.fn(), context: vi.fn(), stopRun: vi.fn() },
+  api: { summarizeEarlier: vi.fn(), organize: vi.fn(), capturePreview: vi.fn(), discussions: vi.fn(), discussionView: vi.fn(), archiveDiscussion: vi.fn(), createDraft: vi.fn(), sendDraft: vi.fn(), startRun: vi.fn(), capture: vi.fn(), changeSet: vi.fn(), context: vi.fn(), stopRun: vi.fn() },
   subscribeEvents: () => () => {},
   subscribeRun: vi.fn(() => () => {}),
 }))
@@ -164,4 +164,38 @@ it('keeps the open conversation when it is chosen again instead of blanking it',
   fireEvent.click(screen.getByRole('button', { name: /什么是弹性模量/ }))
   expect(await screen.findByText('它衡量材料抵抗形变的能力。')).toBeTruthy()
   expect(screen.queryByText('正在读取对话…')).toBe(null)
+})
+
+describe('context over budget', () => {
+  const first = discussion(hex(1), '什么是弹性模量？', '它衡量材料抵抗形变的能力。')
+  const base = { messages: [{ role: 'system' as const, content: '指令' }, { role: 'user' as const, content: '问题：什么是弹性模量？' }], budget: 24000, estimatedTokens: 31000 }
+
+  it('offers summaries when earlier answers could be shortened, and then explains which were replaced', async () => {
+    vi.mocked(api.discussions).mockResolvedValue([summary(first)])
+    vi.mocked(api.discussionView).mockResolvedValue({ discussion: first, captures: [], sources: {}, runs: [] })
+    vi.mocked(api.context).mockResolvedValue({ ...base, exceeded: true, summarizable: [{ turnId: hex(9), answerId: hex(8) }], turns: [{ id: hex(9), question: 'q', answerId: hex(8), mode: 'raw' }] })
+    vi.mocked(api.summarizeEarlier).mockResolvedValue({ ...base, estimatedTokens: 9000, exceeded: false, summarizable: [], turns: [{ id: hex(9), question: 'q', answerId: hex(8), mode: 'summary' }], messages: [...base.messages, { role: 'assistant', content: '（以下是较早回答的摘要，不是原文）\n摘要。' }] })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: /什么是弹性模量/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看上下文' }))
+    const dialog = await screen.findByRole('dialog', { name: '发送给模型的上下文' })
+    expect(within(dialog).getByText(/超出上限，发送会被拒绝/)).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('button', { name: '为较早的 1 条回答生成摘要' }))
+    await waitFor(() => expect(api.summarizeEarlier).toHaveBeenCalledWith(first.id, hex(9)))
+    expect((await within(dialog).findByRole('status')).textContent).toContain('1 条回答以摘要代替原文')
+    expect(within(dialog).getByText('先前回答的摘要')).toBeTruthy()
+    expect(within(dialog).queryByRole('button', { name: /生成摘要/ })).toBe(null)
+  })
+
+  it('says plainly when nothing can be summarized instead of offering a useless button', async () => {
+    vi.mocked(api.discussions).mockResolvedValue([summary(first)])
+    vi.mocked(api.discussionView).mockResolvedValue({ discussion: first, captures: [], sources: {}, runs: [] })
+    vi.mocked(api.context).mockResolvedValue({ ...base, exceeded: true, summarizable: [], turns: [{ id: hex(9), question: 'q', answerId: null, mode: 'raw' }] })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: /什么是弹性模量/ }))
+    fireEvent.click(await screen.findByRole('button', { name: '查看上下文' }))
+    const dialog = await screen.findByRole('dialog', { name: '发送给模型的上下文' })
+    expect(within(dialog).queryByRole('button', { name: /生成摘要/ })).toBe(null)
+    expect(within(dialog).getByText(/直接选中的分支不会被摘要/)).toBeTruthy()
+  })
 })

@@ -40,6 +40,7 @@ export function useDiscussionKit(options: DiscussionKitOptions) {
   const [compareText, setCompareText] = useState('比较这几条分支的回答。')
   const [preview, setPreview] = useState<ContextPreviewDTO | null>(null)
   const [writing, setWriting] = useState<WriteBackSubject | null>(null)
+  const [previewFor, setPreviewFor] = useState<{ discussionId: string; turnId: string } | null>(null)
   const followed = useRef(new Map<string, () => void>())
   const keys = useRef(new Map<string, string>())
   const latest = useRef(options)
@@ -107,7 +108,9 @@ export function useDiscussionKit(options: DiscussionKitOptions) {
     setTexts(value => ({ ...value, [id]: text })); setPicked({ discussion: '', turns: [] })
     await sendDraft(draft, [id])
   })
-  const showContext = (discussion: DiscussionDTO, turn: TurnDTO) => guard('context' + turn.id, async () => setPreview(await api.context(discussion.id, turn.id)))
+  const showContext = (discussion: DiscussionDTO, turn: TurnDTO) => guard('context' + turn.id, async () => { setPreview(await api.context(discussion.id, turn.id)); setPreviewFor({ discussionId: discussion.id, turnId: turn.id }) })
+  /** Shorten older answers to summaries so the request fits; an explicit action, and the result is shown before anything is sent. */
+  const summarizeEarlier = () => guard('summaries', async () => { if (previewFor) setPreview(await api.summarizeEarlier(previewFor.discussionId, previewFor.turnId)) })
   const save = (discussion: DiscussionDTO, turn: TurnDTO, saved: AnswerVersionDTO, target: CaptureTarget) => guard('save' + saved.id, async () => {
     await flush()
     const id = saved.id + '|' + JSON.stringify(target)
@@ -129,7 +132,7 @@ export function useDiscussionKit(options: DiscussionKitOptions) {
 
   return {
     error, setError, busy, guard, flush, texts, setTexts, runs, setRuns, followUp, setFollowUp, version, setVersion, picked, setPicked, compareText, setCompareText,
-    writing, setWriting, preview, setPreview, basis, setBasis, follow, adopt, adoptDrafts, answer, sendDraft, askFollowUp, toggle, compare, showContext, save, undo, showBasis, locate,
+    writing, setWriting, summarizeEarlier, preview, setPreview, basis, setBasis, follow, adopt, adoptDrafts, answer, sendDraft, askFollowUp, toggle, compare, showContext, save, undo, showBasis, locate,
     reload, onOpenNote: (name: string) => latest.current.onOpenNote(name),
   }
 }
@@ -174,6 +177,7 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
           {live.text && <div className="explore-answer" data-partial={finishedBad ? 'true' : undefined}><NoteMarkdown name={base} onOpenNote={kit.onOpenNote}>{live.text}</NoteMarkdown></div>}
           {finishedBad && (live.status === 'cancelled' ? <p className="muted" role="status">{live.error}</p> : <p className="ai-error" role="alert">{live.error}</p>)}</div>}
         {shown && !active && <div className="explore-answer"><NoteMarkdown name={base} onOpenNote={kit.onOpenNote}>{shown.text}</NoteMarkdown></div>}
+        {shown && !active && !!shown.summarizedTurns?.length && <p className="muted explore-hint">生成这条回答时，较早的 {shown.summarizedTurns.length} 条回答以摘要代替了原文。</p>}
         {answers.length > 1 && <div className="explore-versions" aria-label="回答版本">
           <Button variant="ghost" size="sm" isDisabled={index === 0} onPress={() => setVersion(value => ({ ...value, [turn.id]: index - 1 }))}>上一版</Button>
           <span className="muted">第 {index + 1} / {answers.length} 版</span>
@@ -216,8 +220,13 @@ export function DiscussionDialogs({ kit }: { kit: DiscussionKit }) {
   return <>
     {writing && <WriteBackDialog key={writing.answer.id} subject={writing} onClose={() => setWriting(null)} onSaved={saved => { setWriting(null); void kit.reload(); if (saved.kind === 'new') kit.onOpenNote(saved.notePath) }}/>}
     <Dialog title="发送给模型的上下文" open={!!preview} onClose={() => setPreview(null)}>
-      {preview && <><p className={preview.exceeded ? 'ai-error' : 'muted'}>约 {preview.estimatedTokens} / {preview.budget} 单位（粗略估计，不同模型的计数不同）。{preview.exceeded ? '超出上限，发送会被拒绝：请缩小选区或减少分支。' : '这就是发送时的全部内容；未选中的分支和笔记其他部分都不在其中。'}</p>
-        <div className="explore-context">{preview.messages.map((entry, index) => <section key={index}><h4>{{ system: '指令', user: '提问与原文', assistant: '先前的回答' }[entry.role]}</h4><pre>{entry.content}</pre></section>)}</div></>}
+      {preview && <><p className={preview.exceeded ? 'ai-error' : 'muted'}>约 {preview.estimatedTokens} / {preview.budget} 单位（粗略估计，不同模型的计数不同）。{preview.exceeded ? '超出上限，发送会被拒绝。' : '这就是发送时的全部内容；未选中的分支和笔记其他部分都不在其中。'}</p>
+        {preview.turns.some(turn => turn.mode === 'summary') && <p className="muted" role="status">为了放进上限，较早的 {preview.turns.filter(turn => turn.mode === 'summary').length} 条回答以摘要代替原文；你直接选中的分支和所有引用的原文都保持原样。</p>}
+        {preview.exceeded && (preview.summarizable.length
+          ? <div className="explore-actions"><Button size="sm" isDisabled={!!kit.busy} onPress={() => void kit.summarizeEarlier()}>{kit.busy === 'summaries' ? '正在生成摘要…' : `为较早的 ${preview.summarizable.length} 条回答生成摘要`}</Button></div>
+          : <p className="muted">没有可以用摘要代替的较早回答（直接选中的分支不会被摘要）。请缩小选区、减少合并的分支，或从较短的分支继续提问。</p>)}
+        {kit.error && <p className="ai-error" role="alert">{kit.error}</p>}
+        <div className="explore-context">{preview.messages.map((entry, index) => <section key={index}><h4>{entry.role === 'assistant' && entry.content.startsWith('（以下是较早回答的摘要') ? '先前回答的摘要' : { system: '指令', user: '提问与原文', assistant: '先前的回答' }[entry.role]}</h4><pre>{entry.content}</pre></section>)}</div></>}
     </Dialog>
     <Dialog title="查看依据" open={!!basis} onClose={() => setBasis(null)}>
       {basis && <><p className="muted">《{title(basis.notePath ?? basis.source.notePath)}》{basis.source.section ? ' · ' + basis.source.section : ''}</p>

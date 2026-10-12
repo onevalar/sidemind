@@ -89,6 +89,7 @@ export const api = {
   updateDraft: (id: string, revision: number, items: { id: string; question: string; sourceIds: string[] }[]) => request<DraftDTO>(`/api/drafts/${enc(id)}`, { method: 'PATCH', body: JSON.stringify({ revision, items }) }),
   sendDraft: (id: string, items: { id: string; question: string }[]) => request<{ discussion: DiscussionDTO; turns: TurnDTO[]; draft: DraftDTO }>(`/api/drafts/${enc(id)}/send`, { method: 'POST', body: JSON.stringify({ items }) }),
   context: (discussionId: string, turnId: string) => request<ContextPreviewDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/context`),
+  summarizeEarlier: (discussionId: string, turnId: string) => request<ContextPreviewDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/context/summaries`, { method: 'POST', body: '{}' }),
   startRun: (discussionId: string, turnId: string, requestKey: string) => request<RunDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/runs`, { method: 'POST', body: JSON.stringify({ requestKey }) }),
   stopRun: (id: string) => request<RunDTO>(`/api/runs/${enc(id)}/stop`, { method: 'POST', body: '{}' }),
   organize: (input: Pick<CaptureRequest, 'discussionId' | 'turnId' | 'answerId'>) => request<{ text: string }>('/api/captures/organize', { method: 'POST', body: JSON.stringify(input) }),

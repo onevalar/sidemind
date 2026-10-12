@@ -32,35 +32,82 @@ export function estimateTokens(text: string): number {
   return cjk + Math.ceil((text.length - cjk) / 3)
 }
 
+const SUMMARY_NOTICE = '（以下是较早回答的摘要，不是原文）\n'
+const SUMMARY = `把下面这条回答压缩成摘要，供后续提问时代替原文。
+- 保留结论、关键数字、成立条件和不确定之处；不添加原文没有的信息。
+- 不超过原文长度的三分之一；用原文的语言；直接输出摘要，不要加标题或说明。`
+/** An answer shorter than this is not worth summarizing. */
+const SUMMARIZABLE_FROM = 300
+
 /**
  * Exactly what the model will see for a question: only the selected material and the chosen branch(es), parents
  * before children, shared ancestors once, answers pinned to the version that existed when the question was asked.
+ *
+ * When that would not fit the budget, older answers (never the branches the user selected directly, and never any
+ * quoted passage) are replaced by their summaries, oldest first and only as far as needed. An answer with no summary
+ * is left alone and listed in `summarizable`, so the user decides whether to generate one; nothing is dropped silently.
  */
 export async function contextFor(research: ResearchStore, discussion: DiscussionDTO, turn: TurnDTO): Promise<ContextPreviewDTO> {
   const lineage = [...ancestry(discussion.turns, turn.parents), turn]
   const hasSource = lineage.some(item => item.sourceIds.length)
-  const messages: ContextPreviewDTO['messages'] = [{ role: 'system', content: (hasSource ? INSTRUCTIONS : CHAT_INSTRUCTIONS) + (turn.parents.length > 1 ? '\n\n' + COMPARE : '') }]
-  const turns: ContextPreviewDTO['turns'] = []
+  const system = (hasSource ? INSTRUCTIONS : CHAT_INSTRUCTIONS) + (turn.parents.length > 1 ? '\n\n' + COMPARE : '')
+  const entries: { item: TurnDTO; user: string; answer: TurnDTO['answers'][number] | null; summary: string | null; direct: boolean; summarized: boolean }[] = []
   for (const item of lineage) {
     const sources = await Promise.all(item.sourceIds.map(id => research.getSource(id)))
-    messages.push({ role: 'user', content: [...sources.map(sourceText), '问题：' + item.question].join('\n\n') })
-    let answerId: string | null = null
+    let answer: TurnDTO['answers'][number] | null = null
     if (item.id !== turn.id) {
       const pinned = turn.frozen?.[item.id]
-      const answer = pinned ? item.answers.find(candidate => candidate.id === pinned) : turn.frozen ? undefined : item.answers.at(-1)
-      if (answer) { messages.push({ role: 'assistant', content: answer.text }); answerId = answer.id }
+      answer = (pinned ? item.answers.find(candidate => candidate.id === pinned) : turn.frozen ? undefined : item.answers.at(-1)) ?? null
     }
-    turns.push({ id: item.id, question: item.question, answerId })
+    const direct = item.id === turn.id || turn.parents.includes(item.id)
+    entries.push({ item, user: [...sources.map(sourceText), '问题：' + item.question].join('\n\n'), answer, summary: answer && !direct ? await research.getSummary(answer.id) : null, direct, summarized: false })
   }
-  const estimatedTokens = messages.reduce((sum, message) => sum + estimateTokens(message.content), 0)
-  return { messages, estimatedTokens, budget: CONTEXT_BUDGET, exceeded: estimatedTokens > CONTEXT_BUDGET, turns }
+  const build = () => {
+    const messages: ContextPreviewDTO['messages'] = [{ role: 'system', content: system }]
+    for (const entry of entries) {
+      messages.push({ role: 'user', content: entry.user })
+      if (entry.answer) messages.push({ role: 'assistant', content: entry.summarized ? SUMMARY_NOTICE + entry.summary : entry.answer.text })
+    }
+    return { messages, estimated: messages.reduce((sum, message) => sum + estimateTokens(message.content), 0) }
+  }
+  let built = build()
+  for (const entry of entries) {
+    if (built.estimated <= CONTEXT_BUDGET) break
+    if (entry.direct || !entry.answer || !entry.summary || entry.summary.length >= entry.answer.text.length) continue
+    entry.summarized = true
+    built = build()
+  }
+  const summarizable = entries.filter(entry => !entry.direct && entry.answer && !entry.summary && entry.answer.text.length >= SUMMARIZABLE_FROM).map(entry => ({ turnId: entry.item.id, answerId: entry.answer!.id }))
+  return {
+    messages: built.messages, estimatedTokens: built.estimated, budget: CONTEXT_BUDGET, exceeded: built.estimated > CONTEXT_BUDGET, summarizable,
+    turns: entries.map(entry => ({ id: entry.item.id, question: entry.item.question, answerId: entry.answer?.id ?? null, mode: entry.summarized ? 'summary' as const : 'raw' as const })),
+  }
 }
 
 /** The messages for the model. Refuses an over-budget context instead of silently dropping material. */
-export async function buildMessages(research: ResearchStore, discussion: DiscussionDTO, turn: TurnDTO): Promise<AIMessage[]> {
+export async function buildMessages(research: ResearchStore, discussion: DiscussionDTO, turn: TurnDTO): Promise<{ messages: AIMessage[]; summarizedTurns: string[] }> {
   const context = await contextFor(research, discussion, turn)
-  if (context.exceeded) throw new BadNameError(`这条分支的上下文约 ${context.estimatedTokens} 个单位，超过上限 ${context.budget}。请缩小选区、减少合并的分支，或从较短的分支继续提问。`)
-  return context.messages
+  if (context.exceeded) throw new BadNameError(`这条分支的上下文约 ${context.estimatedTokens} 个单位，超过上限 ${context.budget}。${context.summarizable.length ? `较早的 ${context.summarizable.length} 条回答还没有摘要，可以先生成摘要；` : ''}也可以缩小选区、减少合并的分支，或从较短的分支继续提问。`)
+  return { messages: context.messages, summarizedTurns: context.turns.filter(item => item.mode === 'summary').map(item => item.id) }
+}
+
+/**
+ * Writes a summary for each older answer that lacks one and would otherwise be sent in full. An explicit user action:
+ * the summaries are kept (first one wins) and shown in the context preview before any request uses them.
+ */
+export async function summarizeEarlier(research: ResearchStore, call: ModelCall, label: string, ref: { discussionId: string; turnId: string }, signal: AbortSignal = AbortSignal.timeout(180000)): Promise<ContextPreviewDTO> {
+  const discussion = await research.getDiscussion(ref?.discussionId)
+  const turn = discussion.turns.find(item => item.id === ref.turnId)
+  if (!turn) throw new MissingRecordError('找不到这个问题节点。')
+  const { summarizable } = await contextFor(research, discussion, turn)
+  for (const { turnId, answerId } of summarizable.slice(0, 20)) {
+    const item = discussion.turns.find(candidate => candidate.id === turnId)!, answer = item.answers.find(candidate => candidate.id === answerId)!
+    const user = '问题：' + item.question + '\n\n回答：\n' + answer.text
+    if (estimateTokens(SUMMARY + user) > CONTEXT_BUDGET) continue
+    const text = (await complete(call, SUMMARY, user, signal)).trim()
+    if (text && text.length < answer.text.length) await research.setSummary(answerId, { text, model: label })
+  }
+  return contextFor(research, discussion, turn)
 }
 
 export type CaptureTarget = { kind: 'append'; note: string } | { kind: 'new'; folder?: string; title?: string } | { kind: 'replace'; sourceId: string }

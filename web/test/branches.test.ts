@@ -138,3 +138,103 @@ describe('budget', () => {
     await expect(fs.readdir(path.join(store.paths.local, 'runs'))).resolves.toHaveLength(1)
   })
 })
+
+describe('summaries when the context does not fit', () => {
+  const LONG = '甲'.repeat(15000)
+  /** root (very long answer) → mid → leaf (very long answer, the branch picked directly), then a question on leaf. */
+  async function longChain() {
+    const discussion = await research.createDiscussion({ title: '长对话' })
+    const root = await research.addTurn(discussion.id, { question: '起点', requestKey: 'r' })
+    await research.addAnswer(discussion.id, root.id, { text: '起点回答。' + LONG, runId: 'r' })
+    const leaf = await research.addTurn(discussion.id, { question: '中间', parents: [root.id], requestKey: 'l' })
+    await research.addAnswer(discussion.id, leaf.id, { text: '中间回答。' + '乙'.repeat(15000), runId: 'l' })
+    const next = await research.addTurn(discussion.id, { question: '继续', parents: [leaf.id], requestKey: 'n' })
+    return { discussion, root, leaf, next }
+  }
+  const appWith = (reply: () => string) => {
+    const sent: { messages: { role: string; content: string }[] }[] = []
+    return { sent, build: async () => {
+      const ai = new AISettings(path.join(dir, 'notes'), path.join(dir, 'private'), {})
+      await ai.save({ model: 'm', baseUrl: 'https://models.example/v1', key: 'k' })
+      const app = createApp(store, new EventBus(), { aiSettings: ai, aiTransport: async (_, init) => { sent.push(JSON.parse(String(init!.body))); return new Response(JSON.stringify({ choices: [{ message: { content: reply() }, finish_reason: 'stop' }] })) } })
+      const call = async <T>(method: string, url: string, body?: unknown, expected = 200): Promise<T> => {
+        const response = await app.request(url, { method, headers: J, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
+        const text = await response.text()
+        expect(response.status, text).toBe(expected)
+        return JSON.parse(text) as T
+      }
+      return { app, call }
+    } }
+  }
+
+  it('is over budget without summaries, and offers only the earlier answer — never the branch picked directly', async () => {
+    const { discussion, root, leaf, next } = await longChain()
+    const context = await contextFor(research, await load(discussion.id), next)
+    expect(context.exceeded).toBe(true)
+    expect(context.summarizable).toEqual([{ turnId: root.id, answerId: (await load(discussion.id)).turns.find(turn => turn.id === root.id)!.answers[0]!.id }])
+    expect(context.summarizable.some(item => item.turnId === leaf.id)).toBe(false)
+    expect(context.turns.every(turn => turn.mode === 'raw')).toBe(true)
+  })
+
+  it('generates the summary on request, then sends the earlier answer as a summary and the picked branch in full, and says so', async () => {
+    const { discussion, root, next } = await longChain()
+    const { sent, build } = appWith(() => '摘要：起点说了甲。')
+    const { call } = await build()
+    const after = await call<ContextPreviewDTO>('POST', `/api/discussions/${discussion.id}/turns/${next.id}/context/summaries`, {})
+    expect(sent).toHaveLength(1)                                           // one model call, for the one earlier answer
+    expect(after.exceeded).toBe(false); expect(after.summarizable).toEqual([])
+    expect(after.turns.map(turn => [turn.id === root.id ? 'root' : 'other', turn.mode])).toEqual([['root', 'summary'], ['other', 'raw'], ['other', 'raw']])
+    const all = texts(after)
+    expect(all).toContain('以下是较早回答的摘要，不是原文'); expect(all).toContain('摘要：起点说了甲。')
+    expect(all).not.toContain('甲'.repeat(100))                              // the long original is not sent
+    expect(all).toContain('乙'.repeat(15000))                                // the direct parent is verbatim
+
+    // The request that follows is exactly the previewed one, and its answer records that a summary stood in.
+    let run = await call<RunDTO>('POST', `/api/discussions/${discussion.id}/turns/${next.id}/runs`, { requestKey: 'go' }, 202)
+    for (let i = 0; i < 200 && ['queued', 'running'].includes(run.status); i++) { await new Promise(resolve => setTimeout(resolve, 10)); run = await call<RunDTO>('GET', `/api/runs/${run.id}`) }
+    expect(run.status).toBe('completed')
+    expect(sent.at(-1)!.messages).toEqual(after.messages)
+    expect((await load(discussion.id)).turns.find(turn => turn.id === next.id)!.answers[0]!.summarizedTurns).toEqual([root.id])
+  })
+
+  it('keeps quoted passages verbatim, even in an answer that is replaced by its summary', async () => {
+    await store.create('Notes', '# 笔记\n\n这是一句必须原样保留的引文。\n')
+    const source = await research.createSource({ note: 'Notes.md', quote: '这是一句必须原样保留的引文。' })
+    const discussion = await research.createDiscussion({ title: '带引用' })
+    const root = await research.addTurn(discussion.id, { question: '起点', sourceIds: [source.id], requestKey: 'r' })
+    const rootAnswer = await research.addAnswer(discussion.id, root.id, { text: LONG, runId: 'r' })
+    const leaf = await research.addTurn(discussion.id, { question: '中间', parents: [root.id], requestKey: 'l' })
+    await research.addAnswer(discussion.id, leaf.id, { text: '乙'.repeat(15000), runId: 'l' })
+    const next = await research.addTurn(discussion.id, { question: '继续', parents: [leaf.id], requestKey: 'n' })
+    await research.setSummary(rootAnswer.id, { text: '简短摘要', model: 'm' })
+    const context = await contextFor(research, await load(discussion.id), next)
+    expect(context.turns[0]!.mode).toBe('summary')
+    expect(texts(context)).toContain('这是一句必须原样保留的引文。')
+  })
+
+  it('does not use a summary that is not needed, or one that is not shorter, and keeps the first summary of an answer', async () => {
+    const { discussion, root, next } = await tree().then(base => ({ discussion: { id: base.discussionId }, root: base.root, next: base.a }))
+    const rootAnswer = (await load(discussion.id)).turns.find(turn => turn.id === root.id)!.answers[0]!
+    await research.setSummary(rootAnswer.id, { text: '摘', model: 'm' })
+    // Fits already: the full answer is sent although a summary exists.
+    const small = await research.addTurn(discussion.id, { question: '续', parents: [next.id], requestKey: 'small' })
+    const fits = await contextFor(research, await load(discussion.id), small)
+    expect(fits.turns.every(turn => turn.mode === 'raw')).toBe(true); expect(texts(fits)).toContain('根回答：金属与木材。')
+    // First one wins.
+    expect(await research.setSummary(rootAnswer.id, { text: '另一个摘要', model: 'm' })).toBe('摘')
+    expect(await research.getSummary(rootAnswer.id)).toBe('摘')
+    // A "summary" longer than the answer is never swapped in, however large the context.
+    const long = await longChain()
+    const longAnswer = (await load(long.discussion.id)).turns.find(turn => turn.id === long.root.id)!.answers[0]!
+    await research.setSummary(longAnswer.id, { text: longAnswer.text + '多余', model: 'm' })
+    expect((await contextFor(research, await load(long.discussion.id), long.next)).exceeded).toBe(true)
+  })
+
+  it('reports an unconfigured model for summaries and leaves the discussion untouched', async () => {
+    const { discussion, next } = await longChain()
+    const app = createApp(store, new EventBus(), { aiSettings: new AISettings(path.join(dir, 'notes'), path.join(dir, 'empty'), {}) })
+    const response = await app.request(`/api/discussions/${discussion.id}/turns/${next.id}/context/summaries`, { method: 'POST', headers: J, body: '{}' })
+    expect(response.status).toBe(502)
+    expect((await contextFor(research, await load(discussion.id), next)).exceeded).toBe(true)
+  })
+})
