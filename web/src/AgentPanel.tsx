@@ -8,8 +8,10 @@ import { Accordion, Button, Dialog, Icon, Select } from './ui'
 type Conversation = {
   session?: string; messages: AiChatMessage[]; input: string; error: string; notice: string; streaming: string
   changes: ChangeSetSummary[]; proposals: ProposalSummary[]; plan: PlanStep[]; restored: boolean
+  /** Runs a restart stopped after they had changed notes; shown until the user says they have checked. */
+  recovery: AgentRunDTO[]
 }
-const blank = (): Conversation => ({ messages: [], input: '', error: '', notice: '', streaming: '', changes: [], proposals: [], plan: [], restored: false })
+const blank = (): Conversation => ({ messages: [], input: '', error: '', notice: '', streaming: '', changes: [], proposals: [], plan: [], restored: false, recovery: [] })
 const upsert = <T extends { id: string }>(list: T[], item: T) => { const index = list.findIndex(entry => entry.id === item.id); if (index < 0) list.push(item); else list[index] = item }
 const fileName = (name: string) => name.split('/').at(-1)!
 const kindLabel = { create: '新建', edit: '修改', delete: '删除' } as const
@@ -58,6 +60,7 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
       const final = await listen()
       // A stop the user asked for is a normal outcome; an interruption is not.
       if (final?.status === 'cancelled' && final.error) target.notice = final.error
+      else if (final?.status === 'recovery_required') upsert(target.recovery, final)
       else if (final?.status === 'interrupted' && final.error) target.error = final.error
     } catch (error) {
       if (!controller.signal.aborted) target.error = (error as Error).message
@@ -80,7 +83,7 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
           current.restored = true
           if (state) {
             const saved = state.activeRun ? state.messages.slice(0, state.messages.map(message => message.role).lastIndexOf('user') + 1) : state.messages
-            Object.assign(current, { session: state.id, messages: saved.map((message, id) => ({ id, ...message })), changes: state.changes, proposals: state.proposals, plan: state.plan })
+            Object.assign(current, { session: state.id, messages: saved.map((message, id) => ({ id, ...message })), changes: state.changes, proposals: state.proposals, plan: state.plan, recovery: state.recovery ?? [] })
             // A request from before the reload is still running: follow it. Its events are replayed from the start,
             // so the messages it already wrote are dropped above and come back through the stream.
             if (state.activeRun && !request.current) {
@@ -126,6 +129,7 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
     try { await action() } catch (error) { conversation.error = failure + (error as Error).message }
     finally { setActing(null); update() }
   }
+  const acknowledge = (item: AgentRunDTO) => run(item.id, async () => { await api.acknowledgeAgentRun(item.id); conversation.recovery = conversation.recovery.filter(entry => entry.id !== item.id) }, '无法确认：')
   const undo = (change: ChangeSetSummary) => run(change.id, async () => {
     if (!await beforeSend.current()) throw new Error('请先保存当前草稿。')
     upsert(conversation.changes, await api.undoChangeSet(change.id))
@@ -163,6 +167,13 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
       {busy && <p className="muted agent-background-note" role="status">任务在后台运行：关闭面板、切换页面或刷新都不会中断它，需要时点“停止”。已完成的修改会保留，可以撤销。</p>}
       {conversation.notice && <p className="muted agent-background-note" role="status">{conversation.notice}</p>}
       {conversation.error && <p className="ai-error" role="alert">{conversation.error}</p>}
+      {conversation.recovery.map(item => <section className="agent-recovery" role="alert" aria-label="需要检查的中断任务" key={item.id}>
+        <strong>上次的任务被中断，需要你检查</strong>
+        <p>{item.error}</p>
+        <div className="agent-change-actions">
+          {(item.changes ?? []).map(id => conversation.changes.find(change => change.id === id)).filter((change): change is ChangeSetSummary => !!change).map(change => <Button key={change.id} variant="ghost" size="sm" isDisabled={working} onPress={() => void viewChange(change)}>查看：{describe(change)}</Button>)}
+          <Button size="sm" isDisabled={working} onPress={() => void acknowledge(item)}>{acting === item.id ? '确认中…' : '我已检查'}</Button></div>
+      </section>)}
       {!!pending.length && <section className="agent-proposals" aria-label="待确认的提案">
         <h3 className="agent-section-title">待你确认 · {pending.length}</h3>
         {pending.map(proposal => <div className="agent-change" key={proposal.id}>

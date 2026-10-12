@@ -58,7 +58,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     return semantic
   }
   const agent = new NoteAgent({ store, index, files, changes, proposals, git, models, conversations, bus, semantic: semanticIndex })
-  const agentRuns = new AgentRunService(store, agent, { track: task => track(task), shutdown: opts.shutdown, guard: () => { if (syncing) throw new ConflictError('正在同步笔记和对话记忆，请完成后再发送。') } })
+  const agentRuns = new AgentRunService(store, agent, { track: task => track(task), shutdown: opts.shutdown, pendingProposals: async ids => { const pending: string[] = []; for (const id of ids) if ((await proposals.get(id).catch(() => null))?.status === 'pending') pending.push(id); return pending }, guard: () => { if (syncing) throw new ConflictError('正在同步笔记和对话记忆，请完成后再发送。') } })
   const pusher = new PushService({ store, files, git, models, conversations, index, bus })
   let syncing = false
   const slotOf = (value: string | undefined): ModelSlot => { if (value === undefined) return 'main'; if (!MODEL_SLOTS.includes(value as ModelSlot)) throw new BadNameError('模型槽位无效。'); return value as ModelSlot }
@@ -267,6 +267,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
   })
   app.get('/api/agent-runs/:id', async (c) => c.json(await agentRuns.get(c.req.param('id'))))
   app.post('/api/agent-runs/:id/stop', async (c) => c.json(await agentRuns.stop(c.req.param('id'))))
+  app.post('/api/agent-runs/:id/acknowledge', async (c) => c.json(await agentRuns.acknowledge(c.req.param('id'))))
   app.get('/api/agent-runs/:id/events', async (c) => {
     const run = await agentRuns.get(c.req.param('id'))
     const after = Number(c.req.header('last-event-id') ?? c.req.query('after') ?? 0) || 0
@@ -297,8 +298,9 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
   }
   app.get('/api/ai/conversation', async c => {
     const state = await agent.state(parseScope(c.req.query('scope')))
-    const activeRun = state ? agentRuns.runForSession(state.id) : null
-    return c.json(state && activeRun ? { ...state, activeRun } : state)
+    if (!state) return c.json(state)
+    const activeRun = agentRuns.runForSession(state.id), recovery = await agentRuns.recoveryForSession(state.id)
+    return c.json({ ...state, ...(activeRun ? { activeRun } : {}), ...(recovery.length ? { recovery } : {}) })
   })
   app.get('/api/ai/changes', async c => c.json(await changes.list({ folder: c.req.query('folder') || undefined, name: c.req.query('name') || undefined, conversation: c.req.query('conversation') || undefined })))
   app.get('/api/ai/changes/:id', async c => {

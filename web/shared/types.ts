@@ -116,6 +116,8 @@ export interface ConversationState {
   plan: PlanStep[]
   /** Set when the conversation has a request still running on the server. */
   activeRun?: AgentRunDTO
+  /** Runs a restart stopped after they had changed notes, not yet acknowledged by the user. */
+  recovery?: AgentRunDTO[]
 }
 export type MemoryTargetKind = 'note' | 'folder' | 'library'
 export interface MemoryFileDTO { target: MemoryTargetKind; name: string; file: string; content: string; exists: boolean }
@@ -264,13 +266,22 @@ export interface ContextPreviewDTO {
 }
 
 /** One Note Agent request running on the server. Its history lives in the conversation; this tracks the run itself. */
+/**
+ * An Agent run is `queued`/`running` while the model loop works. It then ends as `completed`, or: `waiting_confirmation`
+ * (finished, but proposals it queued still await the user), `recovery_required` (stopped by a restart after it had
+ * already changed notes, so it may have done only part of its work), `interrupted`, `cancelled` or `failed`.
+ */
+export type AgentRunStatus = RunStatus | 'waiting_confirmation' | 'recovery_required'
 export interface AgentRunDTO {
   id: string
   scope: AgentScope
   /** Conversation this run writes to, once known. */
   session?: string
   requestKey: string
-  status: RunStatus
+  status: AgentRunStatus
+  /** Change sets and proposals this run produced, recorded as they happen so a restart can tell what it already did. */
+  changes?: string[]
+  proposals?: string[]
   /** Sequence number of the latest event; events are numbered from 1. */
   seq: number
   error?: string

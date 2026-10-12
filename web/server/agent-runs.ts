@@ -10,6 +10,7 @@ import { readRecord, StorageError, writeRecord } from './persistence'
 import { BadNameError, ConflictError, contentVersion, type NoteStore } from './store'
 
 const finished = (status: AgentRunDTO['status']) => !['queued', 'running'].includes(status)
+const RECOVERY = (count: number, why: string) => `${why}它已经修改了 ${count} 处笔记，但没有完成，可能只做了一部分。已完成的修改保留在修改记录中，不会自动重新执行或回滚；请检查修改记录，必要时撤销，再决定是否重新发起。`
 type Listener = (entry: { seq: number; event: AgentEvent }) => void
 type Active = { controller: AbortController; run: AgentRunDTO; events: { seq: number; event: AgentEvent }[]; listeners: Set<Listener>; stopped: boolean; writing: Promise<unknown> }
 
@@ -24,7 +25,7 @@ export class AgentRunService {
   private active = new Map<string, Active>()
   private recovered = false
 
-  constructor(private store: NoteStore, private agent: NoteAgent, private options: { track?: <T>(task: Promise<T>) => Promise<T>; shutdown?: AbortSignal; guard?: () => void } = {}) {
+  constructor(private store: NoteStore, private agent: NoteAgent, private options: { track?: <T>(task: Promise<T>) => Promise<T>; shutdown?: AbortSignal; guard?: () => void; /** Which of these proposals still await the user. */ pendingProposals?: (ids: string[]) => Promise<string[]> } = {}) {
     this.directory = path.join(store.paths.local, 'agent-runs')
   }
 
@@ -39,15 +40,47 @@ export class AgentRunService {
   /** True while any run is executing; used to hold back a sync. */
   get busy() { return [...this.active.values()].some(item => !finished(item.run.status)) }
 
+  /** A run that finished while proposals were queued becomes completed once the user has decided all of them. */
+  private async settle(run: AgentRunDTO): Promise<AgentRunDTO> {
+    if (run.status !== 'waiting_confirmation') return run
+    if ((await this.options.pendingProposals?.(run.proposals ?? []) ?? ['pending']).length) return run
+    const done: AgentRunDTO = { ...run, status: 'completed', updatedAt: Date.now() }
+    const live = this.active.get(run.id)
+    if (live) live.run.status = 'completed'
+    await writeRecord(this.file(run.id), { version: 1, ...done })
+    return done
+  }
+
   async get(id: string): Promise<AgentRunDTO> {
     const live = this.active.get(id)
-    if (live) return { ...live.run }
+    if (live) return this.settle({ ...live.run })
     if (!/^[a-f0-9]{32}$/.test(id)) throw new BadNameError('运行编号无效。')
     const record = await readRecord<AgentRunDTO & { version: 1 }>(this.file(id))
     if (!record) throw new MissingRecordError('找不到这次运行。')
     if (record.version !== 1 || record.id !== id) throw new StorageError('运行记录格式无效，请保留文件并检查备份。')
     const { version, ...run } = record
-    return run
+    return this.settle(run)
+  }
+
+  /** Runs for this conversation that a restart stopped part-way through writing, until the user has looked at them. */
+  async recoveryForSession(session: string): Promise<AgentRunDTO[]> {
+    let names: string[]
+    try { names = (await fs.readdir(this.directory)).filter(name => /^[a-f0-9]{32}\.json$/.test(name)) }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw error }
+    const found: AgentRunDTO[] = []
+    for (const name of names) { const run = await this.get(name.slice(0, -5)); if (run.status === 'recovery_required' && run.session === session) found.push(run) }
+    return found.sort((a, b) => a.createdAt - b.createdAt)
+  }
+
+  /** The user has checked the changes a stopped run left behind. */
+  async acknowledge(id: string): Promise<AgentRunDTO> {
+    return this.store.writer.run(async () => {
+      const run = await this.get(id)
+      if (run.status !== 'recovery_required') throw new ConflictError('这次任务不需要确认。')
+      const next: AgentRunDTO = { ...run, status: 'interrupted', error: '你已确认检查过中断前的修改。', updatedAt: Date.now() }
+      await writeRecord(this.file(id), { version: 1, ...next })
+      return next
+    })
   }
 
   async recover(): Promise<void> {
@@ -58,7 +91,11 @@ export class AgentRunService {
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
     for (const name of names) {
       const run = await this.get(name.slice(0, -5))
-      if (!finished(run.status) && !this.active.has(run.id)) await writeRecord(this.file(run.id), { version: 1, ...run, status: 'interrupted', error: '服务重启时这次任务尚未完成。已完成的修改保留在修改记录中，不会自动重新执行；请检查后再继续。', updatedAt: Date.now() })
+      if (finished(run.status) || this.active.has(run.id)) continue
+      const changed = run.changes?.length ?? 0
+      await writeRecord(this.file(run.id), { version: 1, ...run, ...(changed
+        ? { status: 'recovery_required', error: RECOVERY(changed, '服务重启时这次任务尚未完成。') }
+        : { status: 'interrupted', error: '服务重启时这次任务尚未完成，还没有修改任何笔记。不会自动重新执行；请重新发起。' }), updatedAt: Date.now() })
     }
   }
 
@@ -92,7 +129,12 @@ export class AgentRunService {
   private emit(state: Active, event: AgentEvent) {
     const entry = { seq: ++state.run.seq, event }
     state.run.updatedAt = Date.now()
-    if (event.type === 'session') state.run.session = event.id
+    let durable = false
+    if (event.type === 'session') { state.run.session = event.id; durable = true }
+    // Written down as it happens: after a crash this is the only record of what the run had already done.
+    if (event.type === 'changeset' && !state.run.changes?.includes(event.change.id)) { state.run.changes = [...(state.run.changes ?? []), event.change.id]; durable = true }
+    if (event.type === 'proposal' && !state.run.proposals?.includes(event.proposal.id)) { state.run.proposals = [...(state.run.proposals ?? []), event.proposal.id]; durable = true }
+    if (durable) void this.save(state).catch(() => undefined)
     state.events.push(entry)
     for (const listener of state.listeners) listener(entry)
   }
@@ -108,8 +150,9 @@ export class AgentRunService {
       const known = failure instanceof BadNameError || failure instanceof ConflictError || failure instanceof ChatGPTError || failure instanceof AISettingsError || failure instanceof AIRequestError
       if (signal.aborted) {
         const shutdown = !state.stopped && !!this.options.shutdown?.aborted
-        status = shutdown ? 'interrupted' : state.stopped ? 'cancelled' : 'failed'
-        error = shutdown ? '服务正在停止，任务被中断。已完成的修改保留在修改记录中。' : state.stopped ? '已停止。已完成的修改保留在修改记录中，可以撤销。' : '任务超时。已完成的修改保留在修改记录中。'
+        const changed = run.changes?.length ?? 0
+        status = shutdown ? (changed ? 'recovery_required' : 'interrupted') : state.stopped ? 'cancelled' : 'failed'
+        error = shutdown ? (changed ? RECOVERY(changed, '服务正在停止，任务被中断。') : '服务正在停止，任务被中断，还没有修改任何笔记。') : state.stopped ? '已停止。已完成的修改保留在修改记录中，可以撤销。' : '任务超时。已完成的修改保留在修改记录中。'
       } else {
         status = 'failed'
         error = known ? (failure as Error).message : '模型连接中断。已经完成的修改保留在记录中，请检查后再继续。'
@@ -117,6 +160,7 @@ export class AgentRunService {
         this.emit(state, { type: 'error', text: error })
       }
     } finally {
+      if (status === 'completed' && run.proposals?.length && (await this.options.pendingProposals?.(run.proposals).catch(() => run.proposals!) ?? []).length) status = 'waiting_confirmation'
       run.status = status
       if (error) run.error = error
       this.emit(state, { type: 'done' })

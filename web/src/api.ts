@@ -105,6 +105,7 @@ export const api = {
   },
   /** Attach to a run that is already going, for example after the page was reloaded. */
   followAgent: (runId: string, onEvent: (event: AgentEvent) => void, signal: AbortSignal) => followAgentRun(runId, onEvent, signal),
+  acknowledgeAgentRun: (id: string) => request<AgentRunDTO>(`/api/agent-runs/${enc(id)}/acknowledge`, { method: 'POST', body: '{}' }),
   stopAgentRun: (id: string) => request<AgentRunDTO>(`/api/agent-runs/${enc(id)}/stop`, { method: 'POST', body: '{}' }),
   agentRun: (id: string) => request<AgentRunDTO>(`/api/agent-runs/${enc(id)}`),
   conversation: (scope: AgentScope) => request<ConversationState | null>(`/api/ai/conversation?scope=${enc(JSON.stringify(scope))}`),

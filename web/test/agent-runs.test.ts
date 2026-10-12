@@ -137,26 +137,97 @@ describe('Note Agent on the run layer', () => {
     expect(state!.changes).toHaveLength(1)
   })
 
-  it('after a restart an unfinished run is interrupted, nothing is replayed, and the conversation is intact', async () => {
+  /** Runs a script until the model is mid-reply, then simulates a crash: the record on disk still says "running". */
+  async function crashMidRun(requestKey: string, steps: Step[], message: string) {
     const release = gate()
-    script = [{ calls: [{ name: 'create_note', args: { title: '重启前', content: '# 重启前\n' } }] }, { text: '还在写', hold: release.hold }]
+    script = steps.map((step, index) => index === steps.length - 1 ? { ...step, hold: release.hold } : step)
     const first = build()
-    const run = await call<AgentRunDTO>(first, 'POST', '/api/agent-runs', { requestKey: 'k5', scope, message: '创建并继续' }, 202)
-    await until(() => transports === 2)
+    const run = await call<AgentRunDTO>(first, 'POST', '/api/agent-runs', { requestKey, scope, message }, 202)
+    await until(() => transports === steps.length)
     const file = path.join(store.paths.local, 'agent-runs', run.id + '.json')
     const crashed = { ...JSON.parse(await fs.readFile(file, 'utf8')), status: 'running' }
     shutdown.abort(); release.open()
     await Promise.allSettled([...running])
     await fs.writeFile(file, JSON.stringify(crashed))
     transports = 0; script = []
-    const second = build()
-    const seen = await call<AgentRunDTO>(second, 'GET', `/api/agent-runs/${run.id}`)
-    expect(seen.status).toBe('interrupted')
-    expect(seen.error).toContain('不会自动重新执行')
+    return { run, restarted: build() }
+  }
+
+  it('after a restart a run that had already changed notes needs recovery: nothing is replayed, the changes are listed, and it is not reported as a plain interruption', async () => {
+    const { run, restarted } = await crashMidRun('k5', [{ calls: [{ name: 'create_note', args: { title: '重启前', content: '# 重启前\n' } }] }, { text: '还在写' }], '创建并继续')
+    const seen = await call<AgentRunDTO>(restarted, 'GET', `/api/agent-runs/${run.id}`)
+    expect(seen.status).toBe('recovery_required')
+    expect(seen.error).toContain('已经修改了 1 处笔记'); expect(seen.error).toContain('不会自动重新执行或回滚')
+    expect(seen.changes).toHaveLength(1)
     expect(transports).toBe(0)
     expect((await store.names()).filter(name => name === '重启前.md')).toHaveLength(1)
-    const state = await call<{ messages: { text: string }[] } | null>(second, 'GET', `/api/ai/conversation?scope=${encodeURIComponent(JSON.stringify(scope))}`)
-    expect(state!.messages[0]!.text).toBe('创建并继续')
+    const state = await call<{ messages: { text: string }[]; changes: { id: string }[]; recovery?: AgentRunDTO[] }>(restarted, 'GET', `/api/ai/conversation?scope=${encodeURIComponent(JSON.stringify(scope))}`)
+    expect(state.messages[0]!.text).toBe('创建并继续')
+    expect(state.recovery?.map(item => item.id)).toEqual([run.id])
+    expect(state.changes.map(change => change.id)).toEqual(seen.changes)
+  })
+
+  it('stays flagged across further restarts until the user acknowledges it, and only a run that needs it can be acknowledged', async () => {
+    const { run, restarted } = await crashMidRun('k5b', [{ calls: [{ name: 'create_note', args: { title: '待确认', content: '# 待确认\n' } }] }, { text: '还在写' }], '创建并继续')
+    await call(restarted, 'GET', `/api/agent-runs/${run.id}`)
+    const again = build()
+    expect((await call<AgentRunDTO>(again, 'GET', `/api/agent-runs/${run.id}`)).status).toBe('recovery_required')
+    const acknowledged = await call<AgentRunDTO>(again, 'POST', `/api/agent-runs/${run.id}/acknowledge`, {})
+    expect(acknowledged.status).toBe('interrupted'); expect(acknowledged.error).toContain('确认检查过')
+    expect(acknowledged.changes).toHaveLength(1)
+    const state = await call<{ recovery?: unknown }>(again, 'GET', `/api/ai/conversation?scope=${encodeURIComponent(JSON.stringify(scope))}`)
+    expect(state.recovery).toBeUndefined()
+    await call(again, 'POST', `/api/agent-runs/${run.id}/acknowledge`, {}, 409)
+  })
+
+  it('after a restart a run that had not changed anything is a plain interruption', async () => {
+    const { run, restarted } = await crashMidRun('k5c', [{ text: '只是在想' }], '随便聊聊')
+    const seen = await call<AgentRunDTO>(restarted, 'GET', `/api/agent-runs/${run.id}`)
+    expect(seen.status).toBe('interrupted')
+    expect(seen.error).toContain('还没有修改任何笔记')
+    expect(seen.changes).toBeUndefined()
+    await call(restarted, 'POST', `/api/agent-runs/${run.id}/acknowledge`, {}, 409)
+  })
+
+  it('a graceful shutdown during a write run also needs recovery, with the same wording', async () => {
+    const release = gate()
+    script = [{ calls: [{ name: 'create_note', args: { title: '关机前', content: '# 关机前\n' } }] }, { text: '还在写', hold: release.hold }]
+    const app = build()
+    const run = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'k5d', scope, message: '创建' }, 202)
+    await until(() => transports === 2)
+    shutdown.abort(); release.open()
+    await Promise.allSettled([...running])
+    const seen = await call<AgentRunDTO>(build(), 'GET', `/api/agent-runs/${run.id}`)
+    expect(seen).toMatchObject({ status: 'recovery_required', changes: [expect.any(String)] })
+    expect(seen.error).toContain('服务正在停止')
+  })
+
+  it('finishes as waiting_confirmation while a queued proposal awaits the user, and becomes completed once it is decided', async () => {
+    script = [{ calls: [{ name: 'propose_changes', args: { reason: '整理一下', operations: [{ tool: 'create_note', arguments: { title: '提案笔记', content: '# 提案笔记\n' } }] } }] }, { text: '我提了一个建议。' }]
+    const app = build()
+    const run = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'k7', scope, message: '有什么建议' }, 202)
+    await until(async () => !['queued', 'running'].includes(await status(app, run.id)))
+    const waiting = await call<AgentRunDTO>(app, 'GET', `/api/agent-runs/${run.id}`)
+    expect(waiting.status).toBe('waiting_confirmation')
+    expect(waiting.proposals).toHaveLength(1)
+    expect(await store.names()).not.toContain('提案笔记.md')
+    // Not "busy": a sync may proceed while the user decides.
+    const push = await app.request('/api/repo/push', { method: 'POST', headers: J, body: '{}' })
+    expect(await push.text()).not.toContain('助手任务或同步仍在进行')
+    await call(app, 'POST', `/api/ai/proposals/${waiting.proposals![0]}/accept`, {})
+    expect(await status(app, run.id)).toBe('completed')
+    expect(await status(build(), run.id)).toBe('completed')
+  })
+
+  it('a rejected proposal also completes the run', async () => {
+    script = [{ calls: [{ name: 'propose_changes', args: { reason: '另一个建议', operations: [{ tool: 'create_note', arguments: { title: '不要的笔记', content: '# 不要\n' } }] } }] }, { text: '建议如上。' }]
+    const app = build()
+    const run = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'k8', scope, message: '再提一个' }, 202)
+    await until(async () => (await status(app, run.id)) === 'waiting_confirmation')
+    const { proposals } = await call<AgentRunDTO>(app, 'GET', `/api/agent-runs/${run.id}`)
+    await call(app, 'POST', `/api/ai/proposals/${proposals![0]}/reject`, {})
+    expect(await status(app, run.id)).toBe('completed')
+    expect(await store.names()).not.toContain('不要的笔记.md')
   })
 
   it('holds back a sync while a run is active and refuses a run during a sync', async () => {

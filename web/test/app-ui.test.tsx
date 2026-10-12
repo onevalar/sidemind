@@ -1,12 +1,12 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { App } from '../src/App'
 import { api } from '../src/api'
 import type { AgentRunDTO } from '../shared/types'
 
 vi.mock('../src/api', () => ({
-  api: { listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), search: vi.fn(), openWorkspaceFolder: vi.fn(), conversation: vi.fn(), changeSets: vi.fn(), agent: vi.fn(), stopAgentRun: vi.fn(), followAgent: vi.fn(), agentRun: vi.fn(), undoChangeSet: vi.fn(), repoStatus: vi.fn(), push: vi.fn() },
+  api: { listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), search: vi.fn(), openWorkspaceFolder: vi.fn(), conversation: vi.fn(), changeSets: vi.fn(), agent: vi.fn(), stopAgentRun: vi.fn(), followAgent: vi.fn(), agentRun: vi.fn(), undoChangeSet: vi.fn(), acknowledgeAgentRun: vi.fn(), repoStatus: vi.fn(), push: vi.fn() },
   subscribeEvents: () => () => {},
 }))
 vi.mock('../src/LibraryCanvas', () => ({ LibraryCanvas: () => <div>文章画布</div> }))
@@ -288,4 +288,19 @@ it('does not stop a running request when the panel is closed or the page goes aw
   // Leaving only detaches this page from the run; nothing asks the server to stop it.
   expect(signal!.aborted).toBe(true)
   expect(api.stopAgentRun).not.toHaveBeenCalled()
+})
+
+it('shows a run a restart stopped after it changed notes as needing a check, with the changes it made, until the user acknowledges it', async () => {
+  configured()
+  const change = { id: 'cs-1', request: '创建两篇', createdAt: 1, files: [{ name: '重启前.md', kind: 'create' as const }], layouts: [], undone: false, undoable: true, origin: 'agent' as const }
+  const stopped = { ...running, status: 'recovery_required' as const, changes: ['cs-1'], error: '服务重启时这次任务尚未完成。它已经修改了 1 处笔记，但没有完成，可能只做了一部分。' }
+  vi.mocked(api.conversation).mockResolvedValue({ id: 'c1', scope: running.scope, updatedAt: 1, messages: [{ role: 'user' as const, text: '创建两篇' }], changes: [change as never], proposals: [], plan: [], recovery: [stopped] })
+  vi.mocked(api.acknowledgeAgentRun).mockResolvedValue({ ...stopped, status: 'interrupted' })
+  render(<App/>)
+  const warning = await screen.findByRole('alert', { name: '需要检查的中断任务' })
+  expect(warning.textContent).toContain('已经修改了 1 处笔记')
+  expect(within(warning).getByRole('button', { name: /查看：1 篇文章/ })).toBeTruthy()
+  fireEvent.click(within(warning).getByRole('button', { name: '我已检查' }))
+  await waitFor(() => expect(api.acknowledgeAgentRun).toHaveBeenCalledWith('run-9'))
+  await waitFor(() => expect(screen.queryByRole('alert', { name: '需要检查的中断任务' })).toBe(null))
 })
