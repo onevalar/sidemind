@@ -7,6 +7,7 @@ import { AnimatePresence, motion, useReducedMotion } from "motion/react";
 import { Check, MoreHorizontal } from "lucide-react";
 import { motionTokens } from "../lib/motion-tokens";
 import styles from "./context-menu.module.css";
+import { composing } from '../../../ime'
 
 export interface ContextMenuItem {
   id: string;
@@ -97,7 +98,7 @@ export function ContextMenu({ children, items, label = "对象操作", heading }
   }
 
   function onTargetKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.defaultPrevented || event.nativeEvent.isComposing) return;
+    if (event.defaultPrevented || composing(event)) return;
     if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
       event.preventDefault();
       event.stopPropagation();

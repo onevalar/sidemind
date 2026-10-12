@@ -3,6 +3,7 @@ import type { ChangeSetDetail, DraftDTO, SourceRefDTO } from '../shared/types'
 import { api, subscribeEvents, type NoteResearch } from './api'
 import { DiscussionDialogs, DiscussionThread, clip, folderOf, message, useDiscussionKit } from './discussion'
 import { Button, TextArea } from './ui'
+import { composing } from './ime'
 
 /** Explore a note: ask about selected passages, compare answers, write one back, and trace it to its basis. */
 export function ExplorePanel({ name, model, active, beforeSend, selection, reveal, onConfigure, onOpenNote }: {
@@ -70,9 +71,9 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
     <section className="explore-composer" aria-label="围绕选中文字提问">
       <h3 className="agent-section-title">围绕选中文字提问</h3>
       {quote ? <blockquote className="explore-quote">{clip(quote, 240)}</blockquote> : <p className="muted explore-hint">在笔记中选中一段文字。</p>}
-      <TextArea aria-label="你的问题" value={question} rows={3} placeholder="想问什么？可先收集多个问题，再一起发送。" disabled={!!busy || !view}
+      <TextArea aria-label="你的问题" value={question} rows={3} placeholder="想问什么？可先收集多个问题，再一起发送。" readOnly={!!busy} disabled={!view}
         onChange={event => setQuestion(event.target.value)}
-        onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); if (!noModel) void guard('ask', () => collect(true)) } }}/>
+        onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !composing(event)) { event.preventDefault(); if (!noModel) void guard('ask', () => collect(true)) } }}/>
       <div className="explore-actions">
         <Button variant="ghost" size="sm" isDisabled={!!busy || !quote || !question.trim()} onPress={() => void guard('collect', () => collect(false))}>先收集</Button>
         <Button size="sm" isDisabled={!!busy || noModel || !quote || !question.trim()} onPress={() => void guard('ask', () => collect(true))}>{busy === 'ask' ? '发送中…' : '提问'}</Button>

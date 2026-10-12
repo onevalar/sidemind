@@ -4,6 +4,7 @@ import { api, subscribeRun, type CaptureTarget } from './api'
 import { NoteMarkdown } from './NoteMarkdown'
 import { WriteBackDialog, type WriteBackSubject } from './WriteBackDialog'
 import { Button, Dialog, TextArea } from './ui'
+import { composing } from './ime'
 
 export const title = (path: string) => path.split('/').at(-1)!.replace(/\.md$/, '')
 export const folderOf = (name: string) => name.includes('/') ? name.slice(0, name.lastIndexOf('/')) : ''
@@ -204,7 +205,7 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
         {followUp?.turn === turn.id && <div className="explore-follow">
           <TextArea aria-label="追问" rows={2} autoFocus value={followUp.text} placeholder="基于这条回答继续问"
             onChange={event => setFollowUp({ turn: turn.id, text: event.target.value })}
-            onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !event.nativeEvent.isComposing) { event.preventDefault(); void kit.askFollowUp(discussion, turn) } }}/>
+            onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !composing(event)) { event.preventDefault(); void kit.askFollowUp(discussion, turn) } }}/>
           <div className="explore-actions"><Button variant="ghost" size="sm" onPress={() => setFollowUp(null)}>取消</Button><Button size="sm" isDisabled={!!busy || !followUp.text.trim()} onPress={() => void kit.askFollowUp(discussion, turn)}>发送追问</Button></div></div>}
       </article>
     })}

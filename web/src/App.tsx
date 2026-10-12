@@ -16,6 +16,7 @@ import { ExplorePanel } from './ExplorePanel'
 import { ChatWorkspace } from './ChatWorkspace'
 import { PushControl, RepoSettings } from './PushControl'
 import { MemoryDialog } from './MemoryDialog'
+import { composing } from './ime'
 
 const loadNoteWorkspace = () => import('./NoteWorkspace')
 
@@ -100,7 +101,7 @@ export function App() {
   useEffect(() => { localStorage.setItem('canvas.sidebar-collapsed', String(sidebarCollapsed)) }, [sidebarCollapsed])
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.isComposing || event.repeat || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return
+      if (event.defaultPrevented || composing(event) || event.repeat || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return
       if (event.key.toLowerCase() === 'k') { event.preventDefault(); setSearchOpen(value => !value) }
       if (event.key.toLowerCase() === 'n' && !document.querySelector('[role="dialog"]')) { event.preventDefault(); newAction.current() }
     }
@@ -215,7 +216,7 @@ export function App() {
     {searchOpen && <QuickSearch notes={notes} spaces={folders} onClose={() => setSearchOpen(false)} onNote={openNote} onSpace={folder => void navigate(null, folder)} onNew={openCreate}/>}
     {referenceOpen && <QuickSearch reference notes={notes} spaces={folders} onClose={() => setReferenceOpen(false)} onNote={name => { const note = notes.find(note => note.name === name); if (note) setReferences(current => [...current.filter(item => item.name !== name), note]); setReferenceOpen(false) }} onSpace={() => {}} onNew={() => {}}/>}
     <Dialog title="新建文章" open={createOpen} onClose={() => { if (!busy) setCreateOpen(false) }} footer={<><Button variant="ghost" isDisabled={busy} onPress={() => setCreateOpen(false)}>取消</Button><Button type="submit" form="new-note-form" isDisabled={busy}>{busy ? '正在创建…' : '创建并编辑'}</Button></>}>
-      <form id="new-note-form" aria-label="新建文章" aria-busy={busy} aria-describedby={formError ? 'new-note-error' : undefined} onSubmit={event => { event.preventDefault(); void create() }} onKeyDown={event => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault() }}>
+      <form id="new-note-form" aria-label="新建文章" aria-busy={busy} aria-describedby={formError ? 'new-note-error' : undefined} onSubmit={event => { event.preventDefault(); void create() }} onKeyDown={event => { if (event.key === 'Enter' && composing(event)) event.preventDefault() }}>
       <div className="new-note-fields"><label htmlFor="new-note-title">标题 <span className="muted">（可留空）</span></label><Input id="new-note-title" value={newTitle} onChange={event => setNewTitle(event.target.value)} placeholder="给这篇文章起个名字" aria-describedby="new-note-title-hint" maxLength={120} fullWidth disabled={busy} autoFocus/><p id="new-note-title-hint" className="field-hint muted">留空时自动命名，可稍后在正文中修改标题。</p><Select id="new-note-folder" label="文件夹" value={destination || '/'} disabled={busy} onValueChange={value => setDestination(value === '/' ? '' : value)} options={folders.map(folder => ({ value: folder || '/', label: folderLabel(folder) }))}/><label htmlFor="new-note-body">正文 <span className="muted">（可留空）</span></label><TextArea id="new-note-body" value={capture} disabled={busy} onChange={event => setCapture(event.target.value)} placeholder="快速记下一点什么，稍后继续编辑…" rows={4}/></div>
       <Button type="button" size="sm" variant="ghost" isDisabled={busy} onPress={() => setReferenceOpen(true)}>引用已有文章</Button>{!!references.length && <div className="capture-references">{references.map(note => <span className="capture-reference" key={note.name}><span>{note.title}</span><IconButton icon="close" label={'移除引用：' + note.title} isDisabled={busy} onPress={() => setReferences(current => current.filter(item => item.name !== note.name))}/></span>)}</div>}{formError && <p id="new-note-error" role="alert" className="error-text">创建失败：{formError}<br/>输入已保留，可重试。</p>}
       </form>
@@ -238,7 +239,7 @@ export function App() {
     </Dialog>
     <MemoryDialog target="folder" name={space} title={'文件夹记忆 · ' + folderLabel(space)} open={folderMemoryOpen} onClose={() => setFolderMemoryOpen(false)}/>
     <Dialog title="新建文件夹" open={newFolderOpen} onClose={() => { if (!busy) setNewFolderOpen(false) }} footer={<><Button variant="ghost" isDisabled={busy} onPress={() => setNewFolderOpen(false)}>取消</Button><Button type="submit" form="new-folder-form" isDisabled={busy || !folderName.trim()}>{busy ? '正在创建…' : '创建文件夹'}</Button></>}>
-      <form id="new-folder-form" aria-label="新建文件夹" aria-busy={busy} aria-describedby={formError ? 'new-folder-error' : undefined} onSubmit={event => { event.preventDefault(); void addFolder() }} onKeyDown={event => { if (event.key === 'Enter' && event.nativeEvent.isComposing) event.preventDefault() }}>
+      <form id="new-folder-form" aria-label="新建文件夹" aria-busy={busy} aria-describedby={formError ? 'new-folder-error' : undefined} onSubmit={event => { event.preventDefault(); void addFolder() }} onKeyDown={event => { if (event.key === 'Enter' && composing(event)) event.preventDefault() }}>
         <p id="new-folder-hint" className="muted">将在「{folderLabel(space)}」中创建真实文件夹。</p>
         <div className="new-note-fields"><label htmlFor="new-folder-name">文件夹名称</label><Input id="new-folder-name" aria-describedby="new-folder-hint" placeholder="例如：阅读与思考" value={folderName} maxLength={120} required disabled={busy} onChange={event => setFolderName(event.target.value)} fullWidth autoFocus/></div>
         {formError && <p id="new-folder-error" role="alert" className="error-text">创建失败：{formError}<br/>名称已保留，可修改后重试。</p>}

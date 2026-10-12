@@ -4,6 +4,7 @@ import { Input as ArcInput } from './components/arc/input/input'
 import { Tooltip } from './components/arc/tooltip/tooltip'
 import { Dialog as ArcDialog, DialogContent } from './components/arc/dialog/dialog'
 import { FileText, Search, Plus, Minus, Maximize, LayoutGrid, Folder, Sparkles, PanelLeft, Settings, X, ArrowUp, ChevronRight, Check, Undo2, Clock, Ellipsis, Frame, Sun, RefreshCw, MessageSquare } from 'lucide-react'
+import { composing } from './ime'
 
 export { Textarea as TextArea } from './components/arc/textarea/textarea'
 export { Select } from './components/arc/select/select'
@@ -44,7 +45,7 @@ export function Dialog({ title, open, onClose, children, footer, className, bare
     <DialogContent title={title} bare={bare} aria-describedby={undefined} className={['app-dialog', className].filter(Boolean).join(' ')}
       onOpenAutoFocus={onOpenAutoFocus}
       onCloseAutoFocus={event => { event.preventDefault(); if (returnFocus.current?.isConnected) returnFocus.current.focus({ preventScroll: true }) }}
-      onEscapeKeyDown={event => { if (event.isComposing) event.preventDefault() }}>
+      onEscapeKeyDown={event => { if (composing(event)) event.preventDefault() }}>
       {children}{footer && <div className="dialog-footer">{footer}</div>}
     </DialogContent>
   </ArcDialog>

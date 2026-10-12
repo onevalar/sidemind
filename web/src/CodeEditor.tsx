@@ -1,5 +1,6 @@
 import MDEditor from '@uiw/react-md-editor/nohighlight'
 import '@uiw/react-md-editor/markdown-editor.css'
+import { composing } from './ime'
 
 /** A secondary, lossless source view for Markdown extensions and exact syntax edits. */
 export function CodeEditor({ value, onChange, onSelection, onSave, theme }: {
@@ -20,7 +21,7 @@ export function CodeEditor({ value, onChange, onSelection, onSave, theme }: {
           onSelection?.(sourceOffset(event.currentTarget.selectionStart), sourceOffset(event.currentTarget.selectionEnd))
         },
         onKeyDown: event => {
-          if (!event.nativeEvent.isComposing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); event.stopPropagation(); onSave?.() }
+          if (!composing(event) && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); event.stopPropagation(); onSave?.() }
         },
       }}/>
   </div>

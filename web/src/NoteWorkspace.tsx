@@ -6,6 +6,7 @@ import { RichEditor, type RichEditorHandle, type RichSelection } from './RichEdi
 import { Button, Icon, IconButton, SegmentedControl } from './ui'
 import { MemoryDialog } from './MemoryDialog'
 import { findTextRange } from './reveal'
+import { composing } from './ime'
 
 // Measure wrapped source text, both for directory jumps and changing column widths.
 function editorOffsetTop(editor: HTMLTextAreaElement, offset: number) {
@@ -59,8 +60,8 @@ export function NoteWorkspace({ name, beforeLeave, agentSelection, reveal, aiOpe
   }, [outlineOpen])
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (!event.isComposing && event.key === 'Escape' && outlineOpen) { event.preventDefault(); setOutlineOpen(false); outlineToggle.current?.focus() }
-      if (!event.defaultPrevented && !event.isComposing && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void save() }
+      if (!composing(event) && event.key === 'Escape' && outlineOpen) { event.preventDefault(); setOutlineOpen(false); outlineToggle.current?.focus() }
+      if (!event.defaultPrevented && !composing(event) && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void save() }
     }
     window.addEventListener('keydown', key)
     return () => window.removeEventListener('keydown', key)

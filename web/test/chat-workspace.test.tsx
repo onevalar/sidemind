@@ -199,3 +199,56 @@ describe('context over budget', () => {
     expect(within(dialog).getByText(/直接选中的分支不会被摘要/)).toBeTruthy()
   })
 })
+
+describe('input method composition', () => {
+  const started = discussion(hex(1), '铝为什么轻？')
+  async function ready() {
+    vi.mocked(api.discussions).mockResolvedValue([])
+    vi.mocked(api.createDraft).mockImplementation(async input => ({ id: hex(4), title: '', discussionId: null, parentIds: [], origin: { kind: 'chat' }, items: input.items, revision: 1, createdAt: 1, updatedAt: 1 }))
+    vi.mocked(api.sendDraft).mockResolvedValue({ discussion: started, turns: started.turns, draft: { id: hex(4), title: '', discussionId: started.id, parentIds: [], origin: { kind: 'chat' }, items: [], revision: 2, createdAt: 1, updatedAt: 2 } })
+    vi.mocked(api.discussionView).mockResolvedValue({ discussion: started, captures: [], sources: {}, runs: [] })
+    vi.mocked(api.startRun).mockResolvedValue({ id: hex(5), discussionId: started.id, turnId: hex(9), requestKey: 'k', status: 'running', text: '', seq: 0, createdAt: 1, updatedAt: 1 })
+    mount()
+    const box = await screen.findByRole('textbox', { name: '你的问题' }) as HTMLTextAreaElement
+    fireEvent.change(box, { target: { value: 'tie' } })
+    return box
+  }
+
+  it.each([['Chrome/Firefox', { isComposing: true }], ['Safari', { keyCode: 229 }]])('does not send when Enter confirms a candidate (%s)', async (_, init) => {
+    const box = await ready()
+    fireEvent.keyDown(box, { key: 'Enter', ...init })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(api.createDraft).not.toHaveBeenCalled()
+    expect(box.value).toBe('tie')
+    fireEvent.keyDown(box, { key: 'Enter', keyCode: 13 })       // the user's next, real Enter sends
+    await waitFor(() => expect(api.createDraft).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not send on Shift+Enter, which is a newline', async () => {
+    const box = await ready()
+    fireEvent.keyDown(box, { key: 'Enter', shiftKey: true, keyCode: 13 })
+    await new Promise(resolve => setTimeout(resolve, 30))
+    expect(api.createDraft).not.toHaveBeenCalled()
+  })
+})
+
+describe('keyboard focus', () => {
+  it('keeps the composer enabled (read-only, never disabled) while a question is being sent, so focus is not dropped', async () => {
+    vi.mocked(api.discussions).mockResolvedValue([])
+    vi.mocked(api.createDraft).mockImplementation(async input => ({ id: hex(4), title: '', discussionId: null, parentIds: [], origin: { kind: 'chat' }, items: input.items, revision: 1, createdAt: 1, updatedAt: 1 }))
+    let release!: () => void
+    vi.mocked(api.sendDraft).mockImplementation(() => new Promise((_, reject) => { release = () => reject(new Error('网络中断')) }))
+    mount()
+    const box = await screen.findByRole('textbox', { name: '你的问题' }) as HTMLTextAreaElement
+    box.focus()
+    fireEvent.change(box, { target: { value: '第一个问题' } })
+    fireEvent.keyDown(box, { key: 'Enter', keyCode: 13 })
+    await waitFor(() => expect(box.readOnly).toBe(true))
+    expect(box.disabled).toBe(false)
+    expect(document.activeElement).toBe(box)
+    release()
+    await waitFor(() => expect(box.readOnly).toBe(false))
+    expect(document.activeElement).toBe(box)
+    expect(box.value).toBe('第一个问题')
+  })
+})

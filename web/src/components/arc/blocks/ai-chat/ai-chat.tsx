@@ -13,6 +13,7 @@ import { CopyButton } from "../../copy-button/copy-button";
 import { TextShimmer } from "../../text-shimmer/text-shimmer";
 import { NoteMarkdown } from "../../../../NoteMarkdown";
 import styles from "./ai-chat.module.css";
+import { composing } from '../../../../ime'
 
 export type AiChatMessage = { id: number; role: "user" | "assistant"; text: string };
 
@@ -85,7 +86,7 @@ export function AiChat({ title, model, onConfigure, onNew, onClose, context, mes
     onSend();
   }
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
-    if (event.nativeEvent.isComposing) return;
+    if (composing(event)) return;
     if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); send(); }
     if (event.key === "Escape" && busy) { event.preventDefault(); onStop(); }
   }

@@ -7,6 +7,7 @@ import type { Transition, ValueAnimationTransition, Variants } from "motion/reac
 import { Command as CommandIcon, Search, X } from "lucide-react";
 import { motionTokens } from "../lib/motion-tokens";
 import styles from "./command-palette.module.css";
+import { composing } from '../../../ime'
 
 export interface CommandItem { id: string; label: string; description?: string; group?: string; keywords?: string[]; icon?: ReactNode; shortcut?: string; }
 export interface CommandPaletteProps {
@@ -73,7 +74,7 @@ export function CommandPalette({ items, className, toolbar, placeholder = "æœç´
 
   useEffect(() => {
     const focusShortcut = (event: KeyboardEvent) => {
-      if (!event.isComposing && !event.defaultPrevented && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+      if (!composing(event) && !event.defaultPrevented && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         inputRef.current?.focus();
       }
@@ -121,7 +122,7 @@ export function CommandPalette({ items, className, toolbar, placeholder = "æœç´
     inputRef.current?.focus();
   }
   function handleKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
-    if (event.nativeEvent.isComposing) return;
+    if (composing(event)) return;
     pointer.current = false;
     if (event.key === "ArrowDown") { event.preventDefault(); setActiveIndex(index => Math.min((index ?? -1) + 1, Math.max(filtered.length - 1, 0))); }
     if (event.key === "ArrowUp") { event.preventDefault(); setActiveIndex(index => Math.max((index ?? filtered.length) - 1, 0)); }

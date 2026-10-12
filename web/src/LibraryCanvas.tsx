@@ -3,6 +3,7 @@ import { applyNodeChanges, NodeResizeControl, ReactFlow, type Node, type NodePro
 import type { CanvasFrame, CanvasLayout, NotePosition, NoteSummary } from '../shared/types'
 import { api, subscribeEvents } from './api'
 import { Button, Card, ContextMenu, Dialog, EmptyState, Icon, IconButton, Input } from './ui'
+import { composing } from './ime'
 
 type ArticleNode = Node<{ note: NoteSummary; frameTitle?: string; chosen: boolean; selectionCount: number; choose: (extend?: boolean, preserve?: boolean) => void; open: () => void; preview: () => void; group: () => void }, 'article'>
 type FrameNode = Node<{ frame: CanvasFrame; chosen: boolean; minimum: { width: number; height: number }; choose: () => void; edit: () => void; resize: (width: number, height: number) => void }, 'frame'>
@@ -219,7 +220,7 @@ export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOp
   const selectedFrame = layout.frames.find(frame => frameNodeId(frame.id) === active)
 
   return <div className="canvas-wrap" onKeyDownCapture={event => {
-    if (event.defaultPrevented || event.nativeEvent.isComposing || event.repeat || event.ctrlKey || event.metaKey || event.altKey || !active || !(event.target as HTMLElement).closest('.article-card,.frame-handle')) return
+    if (event.defaultPrevented || composing(event) || event.repeat || event.ctrlKey || event.metaKey || event.altKey || !active || !(event.target as HTMLElement).closest('.article-card,.frame-handle')) return
     if (!selectedFrame && (event.key === ' ' || event.key === 'Enter')) {
       event.preventDefault(); event.stopPropagation()
       if (event.key === ' ') onPreview(active); else onOpen(active)

@@ -3,6 +3,7 @@ import type { ChangeSetDetail, DiscussionSummaryDTO } from '../shared/types'
 import { api, subscribeEvents, type DiscussionView } from './api'
 import { DiscussionDialogs, DiscussionThread, clip, message, title, useDiscussionKit } from './discussion'
 import { Button, Select, TextArea } from './ui'
+import { composing } from './ime'
 
 const NONE = '__none__'
 const ago = (time: number) => new Date(time).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
@@ -127,9 +128,10 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
         {selected && !view && !error && <p className="muted chat-empty">正在读取对话…</p>}
       </div>
       <div className="chat-composer">
-        <TextArea aria-label={selected ? '继续提问' : '你的问题'} value={question} rows={3} placeholder={hint} disabled={!!busy || (!!selected && (!view || !leaf))}
+        {/* readOnly, not disabled: a disabled field drops keyboard focus, and the next question would need a click first. */}
+        <TextArea aria-label={selected ? '继续提问' : '你的问题'} value={question} rows={3} placeholder={hint} aria-busy={!!busy} readOnly={!!busy || (!!selected && (!view || !leaf))}
           onChange={event => setQuestion(event.target.value)}
-          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); submit() } }}/>
+          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !composing(event)) { event.preventDefault(); submit() } }}/>
         <div className="explore-actions">
           {noModel && <span className="muted explore-hint">尚未连接模型。<Button variant="ghost" size="sm" onPress={onConfigure}>去设置</Button></span>}
           <Button size="sm" isDisabled={!!busy || noModel || !question.trim() || (!!selected && !leaf)} onPress={submit}>{busy === 'send' ? '发送中…' : selected ? '继续提问' : '开始对话'}</Button></div>
