@@ -356,6 +356,43 @@ describe('organized and replace write-back', () => {
     expect(await call<CaptureDTO[]>('GET', '/api/captures')).toHaveLength(0)
   })
 
+  it('organizes several compared answers together, writes them as one capture citing every answer and source, and refuses the combinations that make no sense', async () => {
+    const first = await ask('铝很轻，密度约 2.7。', '为什么铝轻？')
+    replies.push('钛合金更强但更贵。')
+    const second = await ask('只属于另一支的事实：钛很贵。', '钛怎么样？', { discussionId: first.discussionId, parentIds: [] })
+    const refs = [first, second].map(item => ({ discussionId: item.discussionId, turnId: item.turnId, answerId: item.answer.id }))
+    const asked = requests.length
+    replies.push('共识：都与材料有关。分歧：钛更贵。')
+    const { text } = await call<{ text: string }>('POST', '/api/captures/organize', { answers: refs })
+    expect(requests).toHaveLength(asked + 1)
+    const prompt = JSON.stringify(requests.at(-1))
+    expect(prompt).toContain('共识'); expect(prompt).toContain('分歧'); expect(prompt).toContain('成立条件'); expect(prompt).toContain('待验证')
+    expect(prompt).toContain('分支 1'); expect(prompt).toContain('分支 2')
+    expect(prompt).toContain('铝很轻，密度约 2.7。'); expect(prompt).toContain('钛很贵')   // both bases are given
+    expect((await store.load('Materials.md')).content).toBe(note)
+
+    const target = { kind: 'append', note: 'Materials.md' }
+    const shown = await call<Preview>('POST', '/api/captures/preview', { answers: refs, mode: 'organized', text, target })
+    expect(shown.after).toContain('### 比较：为什么铝轻？ 等 2 条回答'); expect(shown.after).toContain(text)
+    const { capture, change } = await call<Saved>('POST', '/api/captures', { requestKey: 'many-1', answers: refs, mode: 'organized', text, target, expectedVersion: shown.expectedVersion }, 201)
+    expect(capture).toMatchObject({ mode: 'organized', writtenText: text })
+    expect(capture.answers.map(item => item.answerId)).toEqual(refs.map(item => item.answerId))
+    expect(capture.sourceIds.sort()).toEqual([first.source.id, second.source.id].sort())
+    expect(requests).toHaveLength(asked + 1)                                   // saving never calls the model
+    const written = (await store.load('Materials.md')).content
+    expect(written).toContain(text); expect(written).not.toContain(first.answer.text)
+    expect((written.match(/> 依据：/g) ?? [])).toHaveLength(2)
+    await call('POST', `/api/ai/changes/${change.id}/undo`, {})
+    expect((await store.load('Materials.md')).content).toBe(note)
+
+    // Verbatim of several, replacing with several, a repeated answer, and too many are all refused.
+    await call('POST', '/api/captures', { requestKey: 'many-2', answers: refs, target }, 400)
+    await call('POST', '/api/captures', { requestKey: 'many-3', answers: refs, mode: 'organized', text, target: { kind: 'replace', sourceId: first.source.id } }, 400)
+    await call('POST', '/api/captures/organize', { answers: [refs[0], refs[0]] }, 400)
+    await call('POST', '/api/captures/organize', { answers: Array.from({ length: 9 }, (_, index) => ({ ...refs[0]!, answerId: 'a'.repeat(31) + index })) }, 400)
+    expect(await call<CaptureDTO[]>('GET', '/api/captures')).toHaveLength(1)
+  })
+
   it('refuses to organize an answer too long to send, and reports an unconfigured model', async () => {
     const base = await ask(QUOTE, '为什么铝轻？')
     const research = new ResearchStore(store)

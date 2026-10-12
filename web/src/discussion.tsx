@@ -212,7 +212,12 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
     {choosing.length >= 2 && <div className="explore-compare" role="group" aria-label="比较所选回答">
       <p className="muted">已选 {choosing.length} 条回答。比较会保留各分支，不会把它们合并掉。</p>
       <TextArea aria-label="比较的问题" rows={2} value={compareText} onChange={event => setCompareText(event.target.value)}/>
-      <div className="explore-actions"><Button variant="ghost" size="sm" onPress={() => kit.setPicked({ discussion: '', turns: [] })}>取消</Button><Button size="sm" isDisabled={!!busy || noModel || !compareText.trim()} onPress={() => void kit.compare(discussion)}>发送比较</Button></div></div>}
+      <div className="explore-actions"><Button variant="ghost" size="sm" onPress={() => kit.setPicked({ discussion: '', turns: [] })}>取消</Button>
+        <Button variant="ghost" size="sm" isDisabled={!!busy || noModel} title={noModel ? undefined : '把所选回答一起整理后写入笔记，不再向模型提新问题'} onPress={() => {
+          const chosen = choosing.map(id => byId.get(id)!).filter(item => item?.answers.length).map(item => ({ discussion, turn: item, answer: item.answers[Math.min(version[item.id] ?? item.answers.length - 1, item.answers.length - 1)]! }))
+          if (chosen.length >= 2) kit.setWriting({ discussion, turn: chosen[0]!.turn, answer: chosen[0]!.answer, extra: chosen.slice(1), sources, notes: notes ?? (appendTo ? [{ name: appendTo, title: appendLabel ?? title(appendTo) }] : []), defaultNote: appendTo, newFolder })
+        }}>整理所选并写入…</Button>
+        <Button size="sm" isDisabled={!!busy || noModel || !compareText.trim()} onPress={() => void kit.compare(discussion)}>发送比较</Button></div></div>}
   </section>
 }
 

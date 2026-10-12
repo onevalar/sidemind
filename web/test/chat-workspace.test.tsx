@@ -252,3 +252,36 @@ describe('keyboard focus', () => {
     expect(box.value).toBe('第一个问题')
   })
 })
+
+describe('organizing several compared answers', () => {
+  const two: DiscussionDTO = {
+    id: hex(1), title: '两个分支', origin: { kind: 'chat' }, revision: 3, archived: false, createdAt: 1, updatedAt: 3,
+    turns: [
+      { id: hex(11), parents: [], question: '铝怎么样？', sourceIds: [], requestKey: 'a', answers: [{ id: hex(21), text: '铝很轻。', createdAt: 2 }], createdAt: 1 },
+      { id: hex(12), parents: [], question: '钛怎么样？', sourceIds: [], requestKey: 'b', answers: [{ id: hex(22), text: '钛更强但更贵。', createdAt: 3 }], createdAt: 2 },
+    ],
+  }
+  it('opens one organized write for the picked answers, with no verbatim option and no replace', async () => {
+    vi.mocked(api.discussions).mockResolvedValue([summary(two)])
+    vi.mocked(api.discussionView).mockResolvedValue({ discussion: two, captures: [], sources: {}, runs: [] })
+    vi.mocked(api.organize).mockResolvedValue({ text: '共识：都是金属。分歧：钛更贵。' })
+    vi.mocked(api.capturePreview).mockResolvedValue({ kind: 'append', noteName: 'Materials.md', before: '# 材料\n', after: '# 材料\n\n共识…\n', expectedVersion: 'c'.repeat(64), content: '共识…' })
+    vi.mocked(api.capture).mockResolvedValue({ capture: { id: hex(7), requestKey: 'r', mode: 'organized', target: { kind: 'append', noteId: hex(6), notePath: 'Materials.md', beforeVersion: 'a'.repeat(64), afterVersion: 'b'.repeat(64) }, answers: [], sourceIds: [], createdAt: 3 }, change: {} as never })
+    mount()
+    fireEvent.click(await screen.findByRole('button', { name: /两个分支/ }))
+    for (const button of await screen.findAllByRole('button', { name: '选择比较' })) fireEvent.click(button)
+    fireEvent.click(await screen.findByRole('button', { name: '整理所选并写入…' }))
+    const dialog = await screen.findByRole('dialog', { name: '写入笔记' })
+    expect(within(dialog).queryByRole('button', { name: '原样' })).toBe(null)
+    expect(within(dialog).getByText(/一起整理成共识、分歧/)).toBeTruthy()
+    fireEvent.click(within(dialog).getByRole('combobox', { name: '方式' }))
+    expect(await screen.findByRole('option', { name: '存为新笔记' })).toBeTruthy()
+    expect(screen.queryByRole('option', { name: /替换/ })).toBe(null)
+    fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' })
+    fireEvent.click(within(dialog).getByRole('button', { name: '生成整理结果' }))
+    await waitFor(() => expect(api.organize).toHaveBeenCalledWith({ answers: [{ discussionId: two.id, turnId: hex(11), answerId: hex(21) }, { discussionId: two.id, turnId: hex(12), answerId: hex(22) }] }))
+    fireEvent.click(await within(dialog).findByRole('button', { name: '预览差异' }))
+    fireEvent.click(await within(dialog).findByRole('button', { name: '确认写入' }))
+    await waitFor(() => expect(api.capture).toHaveBeenCalledWith(expect.objectContaining({ mode: 'organized', text: '共识：都是金属。分歧：钛更贵。', answers: expect.arrayContaining([expect.objectContaining({ answerId: hex(21) }), expect.objectContaining({ answerId: hex(22) })]) })))
+  })
+})

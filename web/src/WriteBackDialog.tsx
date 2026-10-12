@@ -6,6 +6,8 @@ import { Button, Dialog, SegmentedControl, Select, TextArea } from './ui'
 
 export interface WriteBackSubject {
   discussion: DiscussionDTO; turn: TurnDTO; answer: AnswerVersionDTO
+  /** More answers compared with this one; present means one organized write for all of them. */
+  extra?: { discussion: DiscussionDTO; turn: TurnDTO; answer: AnswerVersionDTO }[]
   sources: Record<string, SourceRefDTO>
   /** Notes an answer can be appended to; the first is preselected. */
   notes: { name: string; title: string }[]
@@ -22,8 +24,10 @@ const clip = (text: string, max: number) => { const flat = text.replace(/\s+/g, 
  */
 export function WriteBackDialog({ subject, onClose, onSaved }: { subject: WriteBackSubject; onClose: () => void; onSaved: (target: { kind: 'new' | 'append' | 'replace'; notePath: string }) => void }) {
   const { discussion, turn, answer, sources } = subject
-  const cited = turn.sourceIds.filter(id => sources[id])
-  const [mode, setMode] = useState<'verbatim' | 'organized'>('verbatim')
+  const many = !!subject.extra?.length
+  const refs = [{ discussion, turn, answer }, ...(subject.extra ?? [])].map(entry => ({ discussionId: entry.discussion.id, turnId: entry.turn.id, answerId: entry.answer.id }))
+  const cited = many ? [] : turn.sourceIds.filter(id => sources[id])
+  const [mode, setMode] = useState<'verbatim' | 'organized'>(many ? 'organized' : 'verbatim')
   const [organized, setOrganized] = useState('')
   const [kind, setKind] = useState<CaptureTarget['kind']>('append')
   const [note, setNote] = useState(subject.defaultNote ?? subject.notes[0]?.name ?? '')
@@ -40,7 +44,8 @@ export function WriteBackDialog({ subject, onClose, onSaved }: { subject: WriteB
   const request = (): CaptureRequest | null => {
     const chosen = target()
     if (!chosen) return null
-    return { discussionId: discussion.id, turnId: turn.id, answerId: answer.id, target: chosen, mode, ...(mode === 'organized' ? { text: organized } : {}) }
+    const text = mode === 'organized' ? { text: organized } : {}
+    return many ? { answers: refs, target: chosen, mode, ...text } : { discussionId: discussion.id, turnId: turn.id, answerId: answer.id, target: chosen, mode, ...text }
   }
   /** Any change to what would be written invalidates the shown difference. */
   const change = <T,>(set: (value: T) => void) => (value: T) => { set(value); setPreview(null); setError('') }
@@ -49,7 +54,7 @@ export function WriteBackDialog({ subject, onClose, onSaved }: { subject: WriteB
     setBusy(what); setError('')
     try { await action() } catch (failure) { setError(message(failure)) } finally { setBusy(null) }
   }
-  const organize = () => run('organize', async () => { setOrganized((await api.organize({ discussionId: discussion.id, turnId: turn.id, answerId: answer.id })).text); setPreview(null) })
+  const organize = () => run('organize', async () => { setOrganized((await api.organize(many ? { answers: refs } : { discussionId: discussion.id, turnId: turn.id, answerId: answer.id })).text); setPreview(null) })
   const show = () => run('preview', async () => { const input = request(); if (!input) throw new Error('请先选择写入的位置。'); setPreview(await api.capturePreview(input)) })
   const confirm = () => run('save', async () => {
     const input = request()
@@ -80,9 +85,9 @@ export function WriteBackDialog({ subject, onClose, onSaved }: { subject: WriteB
     <div className="write-body">
       <section className="write-field" aria-label="写入的内容">
         <h4>写入的内容</h4>
-        <SegmentedControl label="写入的内容" value={mode} onValueChange={value => change(setMode)(value as typeof mode)} options={[{ value: 'verbatim', label: '原样' }, { value: 'organized', label: '整理后' }]}/>
+        {many ? <p className="muted">将把所选的 {refs.length} 条回答一起整理成共识、分歧、成立条件和待验证问题；各分支保持各自的结论，不会被混成一个观点。</p> : <SegmentedControl label="写入的内容" value={mode} onValueChange={value => change(setMode)(value as typeof mode)} options={[{ value: 'verbatim', label: '原样' }, { value: 'organized', label: '整理后' }]}/>}
         {mode === 'verbatim' ? <p className="muted">回答原文，不经过模型改写：<br/>{clip(answer.text, 140)}</p> : <>
-          <p className="muted">让模型把这条回答（连同它的依据）整理成适合放进笔记的文字。整理结果不会自动写入，你可以先修改。</p>
+          <p className="muted">{many ? '整理结果不会自动写入，你可以先修改。' : '让模型把这条回答（连同它的依据）整理成适合放进笔记的文字。整理结果不会自动写入，你可以先修改。'}</p>
           <TextArea aria-label="整理后的文字" rows={7} value={organized} placeholder="点击“生成整理结果”" disabled={busy === 'organize'} onChange={event => change(setOrganized)(event.target.value)}/>
           <div className="explore-actions"><Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void organize()}>{busy === 'organize' ? '正在整理…' : organized ? '重新整理' : '生成整理结果'}</Button></div></>}
       </section>

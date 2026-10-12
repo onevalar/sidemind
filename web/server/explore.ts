@@ -111,8 +111,11 @@ export async function summarizeEarlier(research: ResearchStore, call: ModelCall,
 }
 
 export type CaptureTarget = { kind: 'append'; note: string } | { kind: 'new'; folder?: string; title?: string } | { kind: 'replace'; sourceId: string }
+export type AnswerRef = { discussionId: string; turnId: string; answerId: string }
 export type CaptureInput = {
-  requestKey: string; discussionId: string; turnId: string; answerId: string; target: CaptureTarget
+  requestKey: string; target: CaptureTarget
+  /** One answer, or several compared answers (then only organized text can be written, and only to append or a new note). */
+  answers?: AnswerRef[]; discussionId?: string; turnId?: string; answerId?: string
   /** `verbatim` copies the answer; `organized` writes `text`, the wording the user saw in the preview and confirmed. */
   mode?: 'verbatim' | 'organized'; text?: string
   /** Version of the note the preview was computed against; a different current version refuses the write. */
@@ -127,47 +130,72 @@ const ORGANIZE = `你把一次问答整理成可以直接放进用户笔记的�
 - 只使用问答和所附原文片段里的信息，不新增事实；原回答里的不确定和限定语要保留。
 - 用用户的语言，简洁、有结构，必要时用 Markdown；不要寒暄，不要复述问题，不要提到“上面的回答”。
 - 直接输出整理后的正文，不要加标题行，也不要加说明。`
+const ORGANIZE_MANY = `你把几条分支各自的问答整理成一段可以直接放进用户笔记的文字。按以下结构：
+1. 共识：各分支都支持的内容。
+2. 分歧：各分支不一致的地方，标明各自出自哪条分支（用该分支问题的原话指代）。
+3. 成立条件：每个结论在什么前提下成立。
+4. 待验证：证据不足、需要进一步核实的问题。
+只使用所给问答和原文片段里的信息，不新增事实；不把各分支混成一个观点；不确定的明确写出。用用户的语言，Markdown，不要寒暄，直接输出正文，不要加标题行或说明。`
+const MAX_ANSWERS = 8
 
-/** Rewrites one answer into note-ready text. Nothing is written: the user reviews (and may edit) it before saving. */
-export async function organizeAnswer(research: ResearchStore, call: ModelCall, ref: { discussionId: string; turnId: string; answerId: string }, signal: AbortSignal = AbortSignal.timeout(120000)): Promise<string> {
-  const discussion = await research.getDiscussion(ref?.discussionId)
-  const turn = discussion.turns.find(item => item.id === ref.turnId), answer = turn?.answers.find(item => item.id === ref.answerId)
-  if (!turn || !answer) throw new MissingRecordError('找不到要整理的回答版本。')
-  const sources = await Promise.all(turn.sourceIds.map(id => research.getSource(id)))
-  const user = [...sources.map(sourceText), '问题：' + turn.question, '回答：\n' + answer.text].join('\n\n')
-  const estimated = estimateTokens(ORGANIZE + user)
-  if (estimated > CONTEXT_BUDGET) throw new BadNameError(`这条回答和依据约 ${estimated} 个单位，超过整理的上限 ${CONTEXT_BUDGET}。请改用原样保存。`)
-  const text = (await complete(call, ORGANIZE, user, signal)).trim()
+/** The answers a request names, each checked to exist; one answer by the single-answer fields, or several by `answers`. */
+async function resolveAnswers(research: ResearchStore, input: { answers?: AnswerRef[]; discussionId?: string; turnId?: string; answerId?: string }) {
+  const refs: AnswerRef[] = input?.answers?.length ? input.answers : [{ discussionId: input?.discussionId as string, turnId: input?.turnId as string, answerId: input?.answerId as string }]
+  if (!Array.isArray(refs) || refs.length > MAX_ANSWERS || new Set(refs.map(ref => ref?.answerId)).size !== refs.length) throw new BadNameError(`请选择 1 到 ${MAX_ANSWERS} 条不同的回答。`)
+  const entries: { discussion: DiscussionDTO; turn: TurnDTO; answer: AnswerVersionDTO }[] = []
+  for (const ref of refs) {
+    const discussion = await research.getDiscussion(ref?.discussionId)
+    const turn = discussion.turns.find(item => item.id === ref.turnId), answer = turn?.answers.find(item => item.id === ref.answerId)
+    if (!turn || !answer) throw new MissingRecordError('找不到要保存的回答版本。')
+    entries.push({ discussion, turn, answer })
+  }
+  return entries
+}
+
+/** Rewrites one answer, or several compared answers, into note-ready text. Nothing is written: the user reviews (and may edit) it first. */
+export async function organizeAnswers(research: ResearchStore, call: ModelCall, input: { answers?: AnswerRef[]; discussionId?: string; turnId?: string; answerId?: string }, signal: AbortSignal = AbortSignal.timeout(120000)): Promise<string> {
+  const entries = await resolveAnswers(research, input)
+  const parts: string[] = []
+  for (const [index, { turn, answer }] of entries.entries()) {
+    const sources = await Promise.all(turn.sourceIds.map(id => research.getSource(id)))
+    parts.push([entries.length > 1 ? `【分支 ${index + 1}】` : '', ...sources.map(sourceText), '问题：' + turn.question, '回答：\n' + answer.text].filter(Boolean).join('\n\n'))
+  }
+  const system = entries.length > 1 ? ORGANIZE_MANY : ORGANIZE, user = parts.join('\n\n————\n\n')
+  const estimated = estimateTokens(system + user)
+  if (estimated > CONTEXT_BUDGET) throw new BadNameError(`所选回答和依据约 ${estimated} 个单位，超过整理的上限 ${CONTEXT_BUDGET}。请少选几条，或改用原样保存。`)
+  const text = (await complete(call, system, user, signal)).trim()
   if (!text) throw new AIRequestError('模型没有返回整理结果，请重试。')
   return text.slice(0, MAX_WRITTEN)
 }
 
 type Plan = CapturePreview & {
-  discussion: DiscussionDTO; turn: TurnDTO; answer: AnswerVersionDTO; mode: 'verbatim' | 'organized'; folder: string; title: string
+  discussion: DiscussionDTO; turn: TurnDTO; answer: AnswerVersionDTO; answers: AnswerRef[]; mode: 'verbatim' | 'organized'; folder: string; title: string
   sourceIds: string[]
 }
 
 /** Works out exactly what would be written, without writing. Preview and save share this, so they cannot disagree. */
 async function plan(store: NoteStore, research: ResearchStore, input: CaptureInput): Promise<Plan> {
-  const discussion = await research.getDiscussion(input?.discussionId)
-  const turn = discussion.turns.find(item => item.id === input.turnId)
-  const answer = turn?.answers.find(item => item.id === input.answerId)
-  if (!turn || !answer) throw new MissingRecordError('找不到要保存的回答版本。')
+  const entries = await resolveAnswers(research, input)
+  const { discussion, turn, answer } = entries[0]!, many = entries.length > 1
   const mode = input.mode ?? 'verbatim'
+  if (many && mode !== 'organized') throw new BadNameError('同时写入多条回答时需要先整理。')
+  if (many && input.target?.kind === 'replace') throw new BadNameError('多条回答只能追加或存为新笔记，不能替换原文片段。')
   if (mode !== 'verbatim' && mode !== 'organized') throw new BadNameError('保存方式无效。')
   if (mode === 'verbatim' && input.text !== undefined) throw new BadNameError('原样保存不接受改写后的文字。')
   if (mode === 'organized' && (typeof input.text !== 'string' || !input.text.trim() || input.text.length > MAX_WRITTEN)) throw new BadNameError('请先生成并确认整理后的文字。')
   const content = mode === 'organized' ? input.text!.trim() : answer.text
   const target = input.target
   if (target?.kind !== 'append' && target?.kind !== 'new' && target?.kind !== 'replace') throw new BadNameError('保存目标无效。')
-  const sources = await Promise.all(turn.sourceIds.map(id => research.getSource(id)))
+  const sourceIds = [...new Set(entries.flatMap(entry => entry.turn.sourceIds))]
+  const sources = await Promise.all(sourceIds.map(id => research.getSource(id)))
   const basis = sources.map(source => `> 依据：《${source.notePath.replace(/\.md$/, '')}》${source.section ? ' · ' + source.section : ''}：“${snippet(source.quote, 80)}”`)
-  const base = { discussion, turn, answer, mode, content, sourceIds: turn.sourceIds, folder: '', title: '' }
+  const heading = many ? `### 比较：${snippet(turn.question, 50)} 等 ${entries.length} 条回答` : `### 探索：${snippet(turn.question, 80)}`
+  const base = { discussion, turn, answer, answers: entries.map(entry => ({ discussionId: entry.discussion.id, turnId: entry.turn.id, answerId: entry.answer.id })), mode, content, sourceIds, folder: '', title: '' }
   const stale = () => new ConflictError('笔记在预览之后被修改，请重新预览后再写入。')
   if (target.kind === 'append') {
     const before = (await store.load(target.note)).content
     if (input.expectedVersion !== undefined && input.expectedVersion !== contentVersion(before)) throw stale()
-    const block = [`### 探索：${snippet(turn.question, 80)}`, content, ...basis].join('\n\n') + '\n'
+    const block = [heading, content, ...basis].join('\n\n') + '\n'
     return { ...base, kind: 'append', noteName: target.note, before, after: before + (before.endsWith('\n\n') || !before ? '' : before.endsWith('\n') ? '\n' : '\n\n') + block, expectedVersion: contentVersion(before) }
   }
   if (target.kind === 'replace') {
@@ -184,7 +212,7 @@ async function plan(store: NoteStore, research: ResearchStore, input: CaptureInp
   }
   const folder = target.folder ?? ''
   await store.folderPath(folder)
-  const title = snippet(target.title?.trim() || turn.question, 40).replace(/[\\/\0]/g, '-').replace(/^\.+/, '').trim() || '探索记录'
+  const title = snippet(target.title?.trim() || (many ? '比较：' + turn.question : turn.question), 40).replace(/[\\/\0]/g, '-').replace(/^\.+/, '').trim() || '探索记录'
   const taken = new Set((await store.names()).map(name => name.toLocaleLowerCase()))
   let noteName = ''
   for (let index = 0; ; index++) {
@@ -238,7 +266,7 @@ export async function captureAnswer(store: NoteStore, research: ResearchStore, c
       requestKey: input.requestKey, mode: info.mode, changeSetId: changeId, sourceIds: info.sourceIds,
       ...(info.mode === 'organized' ? { writtenText: info.content } : {}),
       target: { kind, noteId: identity.id, notePath: noteName, beforeVersion: before === null ? null : contentVersion(before), afterVersion: contentVersion(after) },
-      answers: [{ discussionId: info.discussion.id, turnId: info.turn.id, answerId: info.answer.id }],
+      answers: info.answers,
     })
     const set = await changes.get(changeId)
     return { capture, change: summarize(set, await changes.undoable(set)) }
@@ -247,9 +275,12 @@ export async function captureAnswer(store: NoteStore, research: ResearchStore, c
 
 /** The parts of a request that do not depend on the note's current content (needed to finish an interrupted write). */
 async function planBasics(research: ResearchStore, input: CaptureInput) {
-  const discussion = await research.getDiscussion(input.discussionId)
-  const turn = discussion.turns.find(item => item.id === input.turnId), answer = turn?.answers.find(item => item.id === input.answerId)
-  if (!turn || !answer) throw new MissingRecordError('找不到要保存的回答版本。')
+  const entries = await resolveAnswers(research, input)
+  const { discussion, turn, answer } = entries[0]!
   const mode = input.mode ?? 'verbatim'
-  return { discussion, turn, answer, mode, content: mode === 'organized' ? String(input.text ?? '').trim() : answer.text, sourceIds: turn.sourceIds }
+  return {
+    discussion, turn, answer, mode, content: mode === 'organized' ? String(input.text ?? '').trim() : answer.text,
+    sourceIds: [...new Set(entries.flatMap(entry => entry.turn.sourceIds))],
+    answers: entries.map(entry => ({ discussionId: entry.discussion.id, turnId: entry.turn.id, answerId: entry.answer.id })),
+  }
 }

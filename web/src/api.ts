@@ -42,7 +42,8 @@ async function ndjson<T extends { type: string }>(response: Response, onEvent: (
 export type NoteResearch = { noteId: string; discussions: DiscussionDTO[]; drafts: DraftDTO[]; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO>; runs: RunDTO[] }
 export type DiscussionView = { discussion: DiscussionDTO; captures: CaptureDTO[]; sources: Record<string, SourceRefDTO>; runs: RunDTO[] }
 export type CaptureTarget = { kind: 'append'; note: string } | { kind: 'new'; folder: string } | { kind: 'replace'; sourceId: string }
-export type CaptureRequest = { discussionId: string; turnId: string; answerId: string; target: CaptureTarget; mode?: 'verbatim' | 'organized'; text?: string }
+export type AnswerRef = { discussionId: string; turnId: string; answerId: string }
+export type CaptureRequest = { discussionId?: string; turnId?: string; answerId?: string; /** Several compared answers: organized text only. */ answers?: AnswerRef[]; target: CaptureTarget; mode?: 'verbatim' | 'organized'; text?: string }
 export type CapturePreview = { kind: 'append' | 'new' | 'replace'; noteName: string; before: string | null; after: string; expectedVersion: string | null; content: string }
 
 /**
@@ -92,7 +93,7 @@ export const api = {
   summarizeEarlier: (discussionId: string, turnId: string) => request<ContextPreviewDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/context/summaries`, { method: 'POST', body: '{}' }),
   startRun: (discussionId: string, turnId: string, requestKey: string) => request<RunDTO>(`/api/discussions/${enc(discussionId)}/turns/${enc(turnId)}/runs`, { method: 'POST', body: JSON.stringify({ requestKey }) }),
   stopRun: (id: string) => request<RunDTO>(`/api/runs/${enc(id)}/stop`, { method: 'POST', body: '{}' }),
-  organize: (input: Pick<CaptureRequest, 'discussionId' | 'turnId' | 'answerId'>) => request<{ text: string }>('/api/captures/organize', { method: 'POST', body: JSON.stringify(input) }),
+  organize: (input: Pick<CaptureRequest, 'discussionId' | 'turnId' | 'answerId' | 'answers'>) => request<{ text: string }>('/api/captures/organize', { method: 'POST', body: JSON.stringify(input) }),
   capturePreview: (input: CaptureRequest) => request<CapturePreview>('/api/captures/preview', { method: 'POST', body: JSON.stringify(input) }),
   capture: (input: CaptureRequest & { requestKey: string; expectedVersion?: string | null }) => request<{ capture: CaptureDTO; change: ChangeSetSummary }>('/api/captures', { method: 'POST', body: JSON.stringify(input) }),
   /**
