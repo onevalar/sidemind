@@ -164,10 +164,10 @@ function plan(read: ReadExport): { planned: Planned[]; issues: Issue[]; counts: 
       if (node.status === 'streaming') add('warning', 'node-streaming', node.id, '源系统里这条回答仍在生成；导入为已中断，已有的部分文字保留，不会调用模型。')
       else if (node.status === 'error' || node.status === 'stopped') add('info', 'node-unfinished', node.id, `状态“${node.status}”：导入为未完成的回答（保留已有文字），可以重新回答。`)
       if (!node.question.trim() && !node.items.length) add('warning', 'empty-question', node.id, '节点没有问题文字；以“（导入的空问题）”导入。')
-      if (node.files.length) add('warning', 'attachments-not-migrated', node.id, `有 ${node.files.length} 个附件（${node.files.map(file => file.filename ?? file.file_id ?? '未命名').join('、')}）。Canvas Note 没有附件库：只在导入记录里保留名称，文件和文本未迁入。`)
+      if (node.files.length) add('warning', 'attachments-not-migrated', node.id, `有 ${node.files.length} 个附件（${node.files.map(file => file.filename ?? file.file_id ?? '未命名').join('、')}）。Sidemind 没有附件库：只在导入记录里保留名称，文件和文本未迁入。`)
     }
     if (nodes.some(node => node.suggestions.length)) add('info', 'suggestions-dropped', canvas.id, '“可能的下一个问题”建议不迁入。')
-    if (canvas.endpoint || canvas.model || nodes.some(node => node.endpoint || node.model)) add('info', 'model-settings-not-migrated', canvas.id, `源画布使用的端点/模型（${canvas.endpoint || '—'} / ${canvas.model || '—'}）不迁入；不迁移任何密钥，请在 Canvas Note 中重新配置连接。`)
+    if (canvas.endpoint || canvas.model || nodes.some(node => node.endpoint || node.model)) add('info', 'model-settings-not-migrated', canvas.id, `源画布使用的端点/模型（${canvas.endpoint || '—'} / ${canvas.model || '—'}）不迁入；不迁移任何密钥，请在 Sidemind 中重新配置连接。`)
     for (const draft of canvas.drafts) for (const item of draft.items) if (item.source && !ids.has(item.source)) add('warning', 'draft-source-missing', `${canvas.id}/${draft.id}`, `草稿里的引用来源节点 ${item.source} 不存在；问题保留，但不关联到父节点。`)
     if (!nodes.length && !canvas.drafts.some(draft => draft.items.length)) add('info', 'empty-canvas', canvas.id, '画布里没有问题也没有草稿；仍会创建一个空讨论。')
     planned.push({ canvas, discussionId: derive('chatgit-discussion', canvas.id), nodes, skip, issues: local })

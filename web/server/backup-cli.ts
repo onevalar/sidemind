@@ -1,7 +1,7 @@
 import { backupRepository, restoreRepository } from './backup'
 import { acquireWorkspace } from './workspace-lock'
 
-const usage = `Offline Canvas Note backup/restore — the server MUST be stopped first.
+const usage = `Offline Sidemind backup/restore — the server MUST be stopped first.
 The CLI acquires exclusive workspace ownership; pause external editors too.
 Usage:
   tsx server/backup-cli.ts backup <source> <new-backup>

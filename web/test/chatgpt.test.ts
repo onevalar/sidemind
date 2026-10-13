@@ -132,7 +132,7 @@ describe('official ChatGPT connection', () => {
     const first = await fake.start()
     expect(first.origin + first.pathname).toBe(ISSUER + '/api/accounts/authorize')
     expect(first.searchParams.get('client_id')).toBe('dynamic_agent_client')
-    expect(first.searchParams.get('agent_name_hint')).toBe('Canvas Note')
+    expect(first.searchParams.get('agent_name_hint')).toBe('Sidemind')
     expect(first.searchParams.get('scope')).toBe(SCOPES)
     expect(first.searchParams.get('resource')).toBe(API)
     expect(first.searchParams.get('code_challenge_method')).toBe('S256')

@@ -241,7 +241,7 @@ export class ChatGPTConnection {
         client_id: account?.clientId ?? 'dynamic_agent_client', ext_agent_host_id: saved.hostId,
         response_type: 'code', redirect_uri: redirectUri, scope: SCOPE, resource: RESOURCE, state, nonce,
         code_challenge_method: 'S256', code_challenge: createHash('sha256').update(verifier).digest('base64url'),
-        ...(!account ? { agent_name_hint: 'Canvas Note' } : {}),
+        ...(!account ? { agent_name_hint: 'Sidemind' } : {}),
         ...(account?.tokens ? { id_token_hint: account.tokens.idToken } : {}),
         ...(account?.email ? { login_hint: account.email } : {}),
         ...(account && !hasPlan(account.tokens) ? { prompt: 'consent' } : {}),
@@ -338,7 +338,7 @@ export class ChatGPTConnection {
       if (!catalog.length) throw new ChatGPTError('当前 ChatGPT 账号没有可用模型，请检查方案及工作区设置。')
       if (this.pending !== attempt) return
       this.loginStatus = 'success'; this.error = undefined
-      response.end('ChatGPT 已连接，可以关闭此页面并返回 Canvas Note。')
+      response.end('ChatGPT 已连接，可以关闭此页面并返回 Sidemind。')
     } catch (error) {
       if (this.pending !== attempt) return
       this.loginStatus = 'error'

@@ -61,7 +61,7 @@ export class Git {
   async identityArgs(): Promise<string[]> {
     const name = (await this.run(['config', 'user.name'], { allowFailure: true })).stdout.trim()
     const email = (await this.run(['config', 'user.email'], { allowFailure: true })).stdout.trim()
-    return [...(name ? [] : ['-c', 'user.name=Canvas Note']), ...(email ? [] : ['-c', 'user.email=canvas-note@localhost'])]
+    return [...(name ? [] : ['-c', 'user.name=Sidemind']), ...(email ? [] : ['-c', 'user.email=sidemind@localhost'])]
   }
 
   /** Staged changes against HEAD with rename detection. Paths are repository-relative. */

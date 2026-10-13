@@ -18,7 +18,7 @@ import { BadNameError, ConflictError, NotFoundError, type NoteStore } from './st
 const MAX_ROUNDS = 60
 const COMPACT_AT = 240000, KEEP_TAIL = 80000
 
-const INSTRUCTIONS = `你是 Canvas Note 的笔记 Agent，用用户的语言自然交流。用户的数据是一个 Git 仓库：notes/ 里的 Markdown 笔记是唯一真相源；memory/ 是你对每篇文章、每个文件夹和整个笔记库的记忆；canvas/ 是每个文件夹画布的布局。你可以用工具阅读、搜索、修改、批量处理笔记，整理画布，维护记忆。
+const INSTRUCTIONS = `你是 Sidemind 的笔记 Agent，用用户的语言自然交流。用户的数据是一个 Git 仓库：notes/ 里的 Markdown 笔记是唯一真相源；memory/ 是你对每篇文章、每个文件夹和整个笔记库的记忆；canvas/ 是每个文件夹画布的布局。你可以用工具阅读、搜索、修改、批量处理笔记，整理画布，维护记忆。
 
 工作方式
 - 先理解再行动：用目录、记忆、搜索找到相关文章，按需读取原文（read_section 只读需要的章节）。回答和修改以实际读过的内容为依据；摘要和记忆不能代替原文核实，不能声称读过没读的内容。

@@ -20,7 +20,7 @@ export function summaryText(node: Nodes): string {
   return text + (node.type === 'paragraph' || node.type === 'tableCell' ? ' ' : '')
 }
 
-const WELCOME = `# 欢迎使用画布笔记
+const WELCOME = `# 欢迎使用 Sidemind
 
 画布上的每张卡片都是一篇完整文章。拖动文章，按自己的习惯安排位置；修改标题或正文，不会改变它的位置。
 

@@ -29,7 +29,7 @@ const shutdown = new AbortController(), tasks = new Set<Promise<unknown>>()
 const app = createApp(store, bus, { staticDir: path.resolve(here, '../dist'), git, shutdown: shutdown.signal, tasks })
 // Bind to loopback only: this server edits local files and has no authentication.
 const server = serve({ fetch: app.fetch, port, hostname: '127.0.0.1' }, () => {
-  console.log(`画布笔记 API  http://127.0.0.1:${port}`)
+  console.log(`Sidemind API  http://127.0.0.1:${port}`)
   console.log(`数据仓库      ${paths.root}${git ? '' : '（未找到 git，推送不可用）'}`)
   if (migrated) console.log('已将旧版工作区迁移为数据仓库结构：笔记位于 notes/，布局位于 canvas/。迁移不会自动提交。')
 })

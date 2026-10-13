@@ -67,7 +67,7 @@ describe('portable note references', () => {
       await store.createFolder('Work')
       await store.createFolder('Work/Research')
       const references = [
-        { name: 'Welcome.md', title: '欢迎使用画布笔记' },
+        { name: 'Welcome.md', title: '欢迎使用 Sidemind' },
         { name: await store.create('同伴 (#1)', '# 同伴', 'Work'), title: '同伴' },
         { name: await store.create('Topic', '# Topic', 'Work/Research'), title: 'Topic' },
       ]

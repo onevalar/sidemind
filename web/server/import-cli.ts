@@ -8,7 +8,7 @@ import { openDataRepo, repoPaths } from './repo'
 import { NoteStore } from './store'
 import { acquireWorkspace } from './workspace-lock'
 
-const usage = `Import ChatGit canvases into a Canvas Note data directory — offline: the server MUST be stopped.
+const usage = `Import ChatGit canvases into a Sidemind data directory — offline: the server MUST be stopped.
 Reads a mongoexport copy (chatgit_canvases.json + chatgit_nodes.json). Never reads credentials and never calls a model.
 
   tsx server/import-cli.ts preflight <export-dir>
