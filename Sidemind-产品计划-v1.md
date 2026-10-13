@@ -50,7 +50,7 @@ Sidemind 由 **side**（旁边）与 **mind**（头脑、思考）合成，构�
 - 已改：界面品牌、页面标题、欢迎笔记、Agent 自我介绍、提示与命令行说明、自动提交的作者名、文档标题。
 - 已按“全新软件”完成：数据版本标记 `sidemind.json`（`sidemind-repo` v1）、备份格式 `sidemind-backup`、环境变量 `SIDEMIND_*`、模型连接目录（`…/sidemind/connections`）、浏览器偏好键 `sidemind.*`、npm 包名、内部临时目录前缀。
 - 旧名称只作为旧数据的识别来源，读取后即升级：旧环境变量 `CANVAS_*` / `NOTES_DIR` 仍可用；旧连接目录首次启动时复制（不改动原目录）；旧 `canvasnote.json`（v1/v2）原地升级为新标记；旧备份格式 `canvas-note-backup` 仍可恢复；旧浏览器偏好 `canvas.*` 在新值写入前继续读取。旧文件名 `canvasnote.json` 写成版本 99 的拒绝标记，让旧版 Canvas Note 拒绝打开 Sidemind 目录；旧 v0.2 的 `.canvasnote/` 目录与 ChatGit 仅作为导入来源保留其名。
-- 文档与原生原型已改名；GitHub 仓库 `onevalar/canvas-note` 需要你在仓库 Settings → General → Repository name 里改成 `sidemind`（本环境的令牌没有改名权限，改后旧地址自动跳转，本机执行 `git remote set-url origin https://github.com/onevalar/sidemind` 即可）：GitHub 仓库待在网页上改名（见下）、文档 `Sidemind-*.md`、原生原型 `SidemindApp`（其本机目录 `~/Documents/SidemindWorkspace`，首次启动时把旧的 `CanvasNoteWorkspace` 移过来；这部分改动没有在 Swift 环境中编译验证）。`PRD-v0.1.md`、`技术架构设计-v0.1.md`、`技术路线-v0.2/v0.3` 是合并前的历史设计记录，保留原文和原名。
+- 文档、原生原型和 GitHub 仓库（`onevalar/sidemind`，旧地址 `onevalar/canvas-note` 自动跳转）都已改名。原生原型 `SidemindApp` 的本机目录是 `~/Documents/SidemindWorkspace`，首次启动时把旧的 `CanvasNoteWorkspace` 移过来；这部分改动没有在 Swift 环境中编译验证。`PRD-v0.1.md`、`技术架构设计-v0.1.md`、`技术路线-v0.2/v0.3` 是合并前的历史设计记录，保留原文和原名。
 - 尚未核查：商标、域名、应用商店与开源平台上的同名项目；正式发布前必须完成。英文语感已按常用构词规则判断，最好再请英语母语者确认。
 
 ## 1. 产品要解决什么
