@@ -1,14 +1,17 @@
 services:
-  chatgit:
-    # The Amp-authenticated owner enters the same account-free workspace via Web Portal.
-    # Isolate preview data; never adopt an existing account-mode database.
-    command: CHATGIT_LOCAL_MODE=true CHATGIT_STATE_DIR="$PWD/.chatgit/local-preview" npm run dev -- --port "$PORT"
-    port: 32251
-    health: /health
+  sidemind-api:
+    cwd: web
+    command: npm run dev:server
+    port: 3001
+    health: /api/notes
     env:
-      CHATGIT_PORTAL_MODE: "true"
-      CSP_FRAME_ANCESTORS: "'self' https://ampcode.com"
+      SIDEMIND_DATA_DIR: ../.amp/preview-data
+      SIDEMIND_CONFIG_DIR: ../.amp/preview-config
+  sidemind-web:
+    cwd: web
+    command: npm run dev:web -- --host 127.0.0.1 --port "$PORT" --strictPort
+    port: 5173
+    health: /api/notes
     portal:
-      url: /api/local/portal
-      title: ChatGit
-      description: Direct web preview. Your Amp identity opens your private workspace; no ChatGit signup required.
+      title: Sidemind
+      description: 独立的示例笔记工作区，不读取你电脑上的文件。ChatGPT 登录请在本机运行应用后使用。

@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Prepare an orb for ChatGit: pinned Node 24.16.0, pinned mongod, app deps.
+# Idempotent and non-interactive. Does NOT build, start services, create
+# secrets, or touch .chatgit/ (runtime state is created by `npm run dev`).
+set -euo pipefail
+
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+step() {
+  local label="$1"
+  shift
+  local started=$SECONDS
+  echo "[setup] ${label}..."
+  "$@"
+  echo "[setup] ${label} done in $((SECONDS - started))s"
+}
+
+command -v python3 >/dev/null || { echo "[setup] python3 is required" >&2; exit 1; }
+
+# Downloads are pinned by version + SHA-256 and skipped when already present:
+#   Node -> ${XDG_DATA_HOME:-~/.local/share}/chatgit/node/
+#   mongod -> ~/.cache/mongodb-binaries/
+step "toolchain" python3 scripts/chatgit_toolchain.py ensure
+
+# npm ci under the process-group supervisor; skipped when app/package-lock.json
+# and the Node version match the last successful install.
+step "app dependencies" python3 scripts/next_safe.py install
+
+step "safety check" python3 scripts/next_safe.py --check
