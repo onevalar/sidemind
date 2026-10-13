@@ -17,7 +17,8 @@ const root = process.env.CANVAS_DATA_DIR ?? process.env.NOTES_DIR ?? path.resolv
 const port = Number(process.env.PORT ?? 3001)
 
 await fs.mkdir(root, { recursive: true })
-const release = await acquireWorkspace(root)
+// After a crash the old lease can outlive the process by up to a minute: wait for it instead of exiting into a restart loop.
+const release = await acquireWorkspace(root, { wait: 75000 })
 const { paths, git, migrated } = await openDataRepo(root)
 const store = new NoteStore(paths)
 const bus = new EventBus()
