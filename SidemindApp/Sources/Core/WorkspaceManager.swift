@@ -8,7 +8,7 @@ class WorkspaceManager {
     
     var rootDir: URL {
         fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("CanvasNoteWorkspace")
+            .appendingPathComponent("SidemindWorkspace")
     }
     
     var notesDir: URL {
@@ -16,11 +16,25 @@ class WorkspaceManager {
     }
     
     var canvasDataDir: URL {
-        rootDir.appendingPathComponent(".canvasnote")
+        rootDir.appendingPathComponent(".sidemind")
     }
     
     init() {
+        adoptCanvasNoteWorkspace()
         setupDirectoryStructure()
+    }
+
+    /// Moves a workspace left by the app's former name (Canvas Note) to its new place once, never overwriting anything.
+    private func adoptCanvasNoteWorkspace() {
+        let documents = fm.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let old = documents.appendingPathComponent("CanvasNoteWorkspace")
+        if fm.fileExists(atPath: old.path) && !fm.fileExists(atPath: rootDir.path) {
+            try? fm.moveItem(at: old, to: rootDir)
+            let oldData = rootDir.appendingPathComponent(".canvasnote")
+            if fm.fileExists(atPath: oldData.path) && !fm.fileExists(atPath: canvasDataDir.path) {
+                try? fm.moveItem(at: oldData, to: canvasDataDir)
+            }
+        }
     }
     
     private func setupDirectoryStructure() {
@@ -30,7 +44,7 @@ class WorkspaceManager {
         let demoFile = notesDir.appendingPathComponent("Welcome.md")
         if !fm.fileExists(atPath: demoFile.path) {
             let demoText = """
-            # Welcome to the *Real* CanvasNote
+            # Welcome to Sidemind
             
             This application uses `swift-markdown` to parse the Abstract Syntax Tree (AST).
             

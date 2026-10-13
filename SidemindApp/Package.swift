@@ -2,7 +2,7 @@
 import PackageDescription
 
 let package = Package(
-    name: "CanvasNoteApp",
+    name: "SidemindApp",
     platforms: [
         .macOS(.v14)
     ],
@@ -11,7 +11,7 @@ let package = Package(
     ],
     targets: [
         .executableTarget(
-            name: "CanvasNoteApp",
+            name: "SidemindApp",
             dependencies: [
                 .product(name: "Markdown", package: "swift-markdown")
             ],
@@ -19,8 +19,8 @@ let package = Package(
             exclude: ["Tests"]
         ),
         .testTarget(
-            name: "CanvasNoteAppTests",
-            dependencies: ["CanvasNoteApp"],
+            name: "SidemindAppTests",
+            dependencies: ["SidemindApp"],
             path: "Sources/Tests"
         )
     ]

@@ -36,7 +36,7 @@ describe.skipIf(!available)('ChatGit branch context (1d2e9bf)', () => {
     expect(messages.some((message: { role: string; content: string }) => message.role === 'system' && /combining 2 branches/.test(message.content))).toBe(true)
   })
 
-  // ---- known gaps (documented in 统一工作台-M0-兼容与基线.md); these assert today's behaviour, not a guarantee ----
+  // ---- known gaps (documented in Sidemind-M0-兼容与基线.md); these assert today's behaviour, not a guarantee ----
   it('GAP: order follows createdAt, not the graph — a child stamped earlier than its parent is sent first', () => {
     const parent = node('p', [], { createdAt: new Date(5000) }), child = node('c', ['p'], { createdAt: new Date(1000) })
     const { messages } = ctx.buildMessages(graph(parent, child), { parentIds: ['c'], question: 'next' })

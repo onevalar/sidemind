@@ -1,5 +1,5 @@
 import XCTest
-@testable import CanvasNoteApp
+@testable import SidemindApp
 
 final class MarkdownEngineTests: XCTestCase {
     
