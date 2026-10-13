@@ -1,0 +1,111 @@
+# Sidemind：M0 兼容与验证基线
+
+日期：2026-10-12。状态：**兼容盘点已完成；M0 待验收，不是全部通过。**
+
+依据：[产品计划 v1](Sidemind-产品计划-v1.md)、[开发计划 v1](Sidemind-开发计划-v1.md)。基线调查阶段只新增本文，未修改产品或测试，未迁移真实数据、提交或推送。M1 存储恢复在主线程另行开发，本文记录迁移前基线，不替 M1 作验收结论；后续集成见文末，本次按用户要求随阶段成果一起提交、推送。
+
+## 1. 版本、环境与证据边界
+
+| 项目 | 调查版本 / 环境 |
+| --- | --- |
+| Canvas Note | HEAD `6f4b51d95d5bedaa2ecf30c50cb71bfef66badba`；分支 `unified-workspace`；本轮 Canvas 命令使用 Node `v26.10.0`、npm `10.9.9` |
+| ChatGit | HEAD `1d2e9bfbf7bf9de176d55738da5e3ece0c7993fa`；分支 `main`；测试使用固定 Node `24.16.0`，不使用系统 Node 26 执行应用 |
+| 工作区 | Linux orb；Git `2.55.0`。开始时 Canvas 两份计划未跟踪；复核时父线程已新增未跟踪的 `web/server/backup.ts`、`backup-cli.ts`。未改动或验收这些并行成果；HEAD 不代表整个进行中的工作区 |
+| 已读 guidance | [Canvas web/AGENTS.md](web/AGENTS.md)、[ChatGit 根 AGENTS.md](../chat-git/AGENTS.md)、[LibreChat app/AGENTS.md](../chat-git/app/AGENTS.md)；未使用 legacy 实现作为当前产品依据 |
+
+源码链接均相对本文。以后源码变化时，应以上述 HEAD 对照；特别是 `repo.ts`、`changes.ts`、备份能力会随 M1 改变。没有读取 `.chatgit/`、连接凭据文件或环境密钥，没有调用真实提供商，没有安装、构建、启动或停止 ChatGit 应用。
+
+**产品假设：单用户、单工作区、单写入服务进程。** 本地文件接口的 Host/JSON 检查不是登录或租户隔离；orb 门户访问控制也不替代产品鉴权。不能据此将 Canvas API 无保护公开托管。ChatGPT 回调要求在运行服务的设备上完成，不能承诺远程门户可授权。
+
+## 2. 首版功能迁移矩阵
+
+“保留”指保留现有行为和实现基础，不代表已迁入统一产品；“替换”必须在首版发布前完成；“延期”必须告知用户，保留旧应用及原数据，不能静默删除或降级。
+
+| 能力 | 实际源码确认的现状 | 首版处理与必须告知 |
+| --- | --- | --- |
+| 模型 API 连接与提供商 | Canvas 通过 OpenAI-compatible `/chat/completions`、`/embeddings` 调用，主模型/总结/Embedding 各一连接；启用的 ChatGPT 连接优先于主 API 槽，总结未配置时回退主模型。[ai.ts](web/server/ai.ts)、[models.ts](web/server/models.ts)、[ai-settings.ts](web/server/ai-settings.ts)。ChatGit 图 UI 只列 `type === "custom"` 且排除 `agents` 的端点，通过 LibreChat 配置/用户 key 查询后直接调用模型，不进入 Agent loop。[store.ts:74–107](../chat-git/app/web/src/store.ts#L74-L107)、[canvasLLM.js](../chat-git/app/api/server/services/ChatGit/canvasLLM.js) | **保留 Canvas 连接，替换 ChatGit 配置层。** 保留端点/模型元信息并要求重新配置，不搬 key。每图模型选择需要映射，不能假装 Canvas 单槽等于原来的多端点目录。原生 Anthropic/Gemini/Azure 等 LibreChat 全站适配不承诺迁移；是否能经兼容接口使用逐项实测。Canvas 远端要求 HTTPS、本机可 HTTP，且当前要求非空 key；不能承诺任意无 key 本地服务即插即用 |
+| ChatGPT 授权 vs 应用登录 | 两者是独立问题。ChatGit 设置有 API URL/key 与 ChatGPT 授权入口；本地启动仍建立应用认证会话。[Settings.tsx](../chat-git/app/web/src/Settings.tsx)、[local/router.ts](../chat-git/app/packages/api/src/auth/local/router.ts)。Canvas 模型授权另有本机回调限制。[app.ts:115–120](web/server/app.ts#L115-L120)、[chatgpt.ts](web/server/chatgpt.ts) | **保留 Canvas ChatGPT 连接基础，替换登录状态映射。** 不迁 JWT、OAuth token、设备凭据，不把模型授权当产品登录。真实账号同意→换 token→推理本轮未测；订阅资格、可用模型和远程回调仍待验证，不承诺自动沿用旧登录 |
+| 附件 | **当前 ChatGit `/canvas/` 图 UI 没有可用的上传附件发送链路。** 详见第 3 节。Canvas 当前 Agent 输入也是文字/笔记选区，不是通用文件上传。[AgentPanel.tsx](web/src/AgentPanel.tsx)、[AIMessage](web/server/ai.ts#L6-L8) | **通用附件上传、解析、图像/音视频首版延期。** 对导入数据中已有文件元信息/外链保留来源，缺失实体或不支持类型逐项报告。Markdown 图片链接不等于文件已备份，更不等于模型看到了图片 |
+| 分支、引用、合并、上下文预览 | ChatGit 祖先并集去重、排除未选兄弟分支；引用必须在选中路径；直接合并源保留原文。合并是创建多父节点的新问答，原分支保留。[canvasContext.js](../chat-git/app/api/server/services/ChatGit/canvasContext.js)、[model.ts](../chat-git/app/web/src/model.ts)、[Chat.tsx](../chat-git/app/web/src/Chat.tsx) | **保留算法与交互，替换存储/运行接口。** 当前按 `createdAt` 再 ID 排序，不是拓扑排序；`seen` 防止无限遍历却不拒绝环。12,000 字符压缩阈值不是 token 预算。拓扑校验、回答版本、冻结来源和预算属于 M3 必补，不是已有保证 |
+| 多问、命名引用草稿 | 多问队列 `S.queue` 只在前端内存；命名草稿含 quote/q/source，经 400ms debounce PATCH 保存。`sendQuestions` 先清队列，`sendPending` 先清 items 并安排保存，再异步请求；失败只通知，无恢复。[store.ts:262–385](../chat-git/app/web/src/store.ts#L262-L385) | **保留能力，必须替换发送与持久化协议。** 草稿修订、接收确认、幂等与新输入隔离不可延期。当前不能向用户承诺“点发送即已保存”；浏览器失败复现本轮未做，M0 仍待验收 |
+| 编辑、保存、写回与撤销 | Canvas 保留 Milkdown/源码编辑、900ms 自动保存、导航/交给 Agent 前 flush、冲突保留草稿、版本条件撤销。[NoteWorkspace.tsx](web/src/NoteWorkspace.tsx)、[useNote.ts](web/src/useNote.ts)。现有变更先写文件后写布局，布局失败不在文件回滚范围，布局撤销错误可被忽略。[changes.ts:46–82](web/server/changes.ts#L46-L82)、[changes.ts:123–136](web/server/changes.ts#L123-L136) | **保留编辑器与防覆盖；替换跨资源恢复路径。** ChatGit 当前图保存的是问答/草稿，不具备笔记编辑写回引擎。选定答案原样/整理 × 新建/追加/替换是 M6 新能力；不能把模型能写文件当作六种流程已实现 |
+| Agent 工具与权限范围 | Canvas 有检索、读笔记/章节、精确编辑、批改、改名/移动/拆分/删除、布局、提案、撤销、委托分析等；纯聊天 `toolsFor` 返回空。[agent-tools.ts:54–104](web/server/agent-tools.ts#L54-L104)。**当前 note/folder 是焦点，不是严格目录权限：工具可访问整个笔记库**；纯聊天不带笔记/工具。[agent.ts:114–137](web/server/agent.ts#L114-L137)。ChatGit 图只是 `stream`/`invoke`，没有 LibreChat Agent/MCP 工具循环 | **保留 Canvas loop/工具，替换分支历史输入与授权契约。** 不得照搬“笔记焦点＝全库可访问”作为新讨论的默认授权；Chat 要能显式获得工具范围。LibreChat 插件/MCP、任意执行、联网服务不迁作首版承诺 |
+| 记忆 | Canvas 有 note/folder/library 记忆、来源标记与 remember/revise_memory，推送时还会提炼对话。ChatGit 图节点 summary/suggestions 是上下文压缩/推荐问题，不是上游用户长期记忆。[memory.ts](web/server/memory.ts)、[push.ts](web/server/push.ts)、[chatgitCanvas.js:216–241](../chat-git/app/api/server/routes/chatgitCanvas.js#L216-L241) | **保留已有记忆与原推送行为，替换为有来源/范围的讨论接入。** 分支假设不得自动升级全库共识。记忆维护内部与 Git 解耦；主动知识状态治理/自动维护延期到后续阶段，不宣称首版已完成 |
+| Git | Canvas 手动“推送”会更新记忆、提交，再尝试同步；无 remote 只本地提交。`notes/`、`memory/`、`canvas/` 随 Git，`cache/` 忽略。[repo.ts](web/server/repo.ts)、[push.ts:39–122](web/server/push.ts#L39-L122)。ChatGit 当前图路径无 Git 操作入口；名字中的 Git 不是备份功能 | **保留手动入口，不增加自动推送。** 原始对话不自动进入 Git；新来源快照与本地讨论须分别说明同步边界。现有 memory/canvas 合并策略不能直接用于新的来源身份数据 |
+| 备份、导入导出 | Canvas 基线原会话/变更/提案在 cache；ChatGit 当前图在独立 `chatgit_canvases` / `chatgit_nodes` Mongo 集合，不是 LibreChat messages。[conversations.ts](web/server/conversations.ts)、[canvasModels.js](../chat-git/app/api/server/services/ChatGit/canvasModels.js)。当前图 API/UI 未发现完整备份恢复/导出流程 | **替换存储并新增完整备份恢复，迁移前必须具备（M1/M7），不可延期。** 易用备份界面/更多导出格式可延期到 M8。只拉 Git 不能恢复全部对话、草稿、撤销；导入仅做授权副本，带清单/校验/缺失报告，排除凭据。父线程新增备份文件不代表已验收 |
+| 认证与数据隔离 | ChatGit 图 router 要求 JWT，读图/节点按 `req.user.id` 过滤；本地模式也不是关闭认证。[api.ts:1–55](../chat-git/app/web/src/api.ts#L1-L55)、[chatgitCanvas.js:17–51](../chat-git/app/api/server/routes/chatgitCanvas.js#L17-L51)。Canvas 无账号，Host/JSON 检查保护单目录本机接口；连接配置按目录路径存于仓库外、权限 0600，不等同于 ChatGit 加密用户 key 库。[app.ts:28–65](web/server/app.ts#L28-L65)、[ai-settings.ts](web/server/ai-settings.ts) | **保留旧应用鉴权，替换新产品部署边界。** 单用户本地首版明确标注；托管多用户、账号迁移、租户隔离延期。若需要公开托管，必须先重新设计认证/密钥管理并做跨用户拒绝测试，不能通过放宽 Host 或关闭认证“完成迁移” |
+| Arc 与画布 | Canvas：Arc adapters、受控 AI Chat、React Flow、Milkdown/uiw。ChatGit：Arc ChatComposer + DOM/SVG 图布局。[ui.tsx](web/src/ui.tsx)、[AiChat](web/src/components/arc/blocks/ai-chat/ai-chat.tsx)、[Composer.tsx](../chat-git/app/web/src/Composer.tsx)、[Canvas.tsx](../chat-git/app/web/src/Canvas.tsx) | **保留 Arc（不是 Ark）与两套专业画布引擎，逐组件适配。** 不复制整个目录覆盖本地改动；首版不统一画布引擎。Arc Pro 保持私有，不按免费 MIT UI kit 分发。具体适配门槛见第 4 节 |
+
+运行寿命也必须替换：Canvas 面板卸载会 abort，服务端订阅中止也取消；ChatGit 图断开后继续生成，进程重启后将遗留 streaming 标记 `error/interrupted`，不是自动续跑。[AgentPanel.tsx:39](web/src/AgentPanel.tsx#L39)、[app.ts:229–230](web/server/app.ts#L229-L230)、[chatgitCanvas.js](../chat-git/app/api/server/routes/chatgitCanvas.js)。统一为显式停止、持久任务与重连是 M2 工作，不可由页面生命周期决定是否执行写入。
+
+## 3. 附件核实：不能将上游全站支持算到当前图 UI
+
+当前 `/canvas/` 的实际链路有四道证据：
+
+1. [Composer.tsx:30–34、79](../chat-git/app/web/src/Composer.tsx#L30-L79)：`onSend` 只取 `{ text }`，`allowAttachments={false}`；Arc 源组件虽有附件实现，这个产品入口明确关闭。
+2. [api.ts:125–128](../chat-git/app/web/src/api.ts#L125-L128)：`askNode` 输入只有 parents/items/question/endpoint/model，没有上传文件或 file IDs。
+3. [canvasContext.js:161–203](../chat-git/app/api/server/services/ChatGit/canvasContext.js#L161-L203)：`normalizeRequest` 仅返回 `{ parentIds, items, question }`；[startNode](../chat-git/app/api/server/routes/chatgitCanvas.js#L244-L280) 按此创建节点，没有文件解析链路。
+4. [canvasModels.js](../chat-git/app/api/server/services/ChatGit/canvasModels.js) 虽留有 `files(file_id, filename, text)`，`toNode` 只输出 ID/名称、不输出 text；[questionText](../chat-git/app/api/server/services/ChatGit/canvasContext.js#L35-L52) 的 file.text 分支本身不能证明上传可达。
+
+另外，[e2e/chatgit/canvas.spec.ts](../chat-git/app/e2e/chatgit/canvas.spec.ts) 虽含“上传原文到模型”测试，却进入 `/c/new`、调用 `/api/messages`、检查 React Flow 消息图，**不是当前 `app/web` 的 `/canvas/` 独立问答图**。README 的全站附件描述或这个历史测试通过，都不能代替当前图的附件验收。
+
+## 4. Arc 本地适配应保留的差异
+
+- [Canvas ContextMenu](web/src/components/arc/context-menu/context-menu.tsx)：仅右键/键盘菜单手势打开，保留关闭后的焦点返回；不得恢复模板普通点击打开行为。
+- [CommandPalette](web/src/components/arc/command-palette/command-palette.tsx) 保留受控 query、服务端过滤与 IME guard；[ui.tsx](web/src/ui.tsx) 的 bare Dialog/返回焦点、Button 默认 `type="button"` 不能丢。
+- Canvas [AiChat](web/src/components/arc/blocks/ai-chat/ai-chat.tsx) 是真实受控输入、流式/停止，建议只填草稿。ChatGit [ChatComposer:314–329](../chat-git/app/web/src/components/arc/chat-thread/chat-thread.tsx#L314-L329) 是内部 text 状态，调用 `onSend` 后立即清空，不等待服务端确认；迁入前改契约，不能只更换外观。
+- 逐项核对 Input/Textarea 标签、中文输入法回车、菜单焦点、窄窗口；[CopyButton](web/src/components/arc/copy-button/copy-button.tsx) 当前仍有 `Copied`/`Failed`/`Could not copy` 英文反馈，不能记录成“翻译已齐全”。本轮只审源码，未做浏览器/可访问性验收。
+
+## 5. 实跑命令与结果
+
+以下测试仅使用既有测试/临时测试目录和假 transport，不访问真实笔记、账号或模型。没有新增测试文件，也没有用直接安装/构建/启动 app 绕开 ChatGit 根保护。
+
+| 执行位置 / 命令 | 实际结果与可证明的范围 |
+| --- | --- |
+| 两仓库 `git rev-parse HEAD`、`git branch --show-current`、`git status --short` | HEAD/分支见第 1 节；只读检查，无提交/推送 |
+| **父线程本轮实跑**，`canvas-note/web`：`npm run typecheck && npm test` | typecheck 成功，**15 test files / 147 tests passed**；日志只有两条 `Window scrollTo` 未实现提示，本次未重现早先被捕获的断言错误。此结果由父线程提供，不冒充本文执行者重新全量跑过；也不能据此称历史问题已经修复 |
+| **本文执行者实跑**，`canvas-note/web`：`npm test -- test/useNote.test.ts test/agent-tools.test.ts test/ai.test.ts` | 退出 0；**3 files / 32 tests passed**，2.69s；无捕获断言/scrollTo 错误输出。覆盖假模型工具流、纯聊不带笔记/工具、先读后改、外部编辑不覆盖、提案与撤销，以及 hook 草稿冲突；不是浏览器 E2E |
+| `chat-git` 根：`npm run check:safety` | 退出 0；识别 Node **24.16.0**、依赖/构建产物存在；限制 32 进程、6 GiB RSS、单 Node 2 GiB 堆、最低 10 GiB 空闲；本次空闲 54.2 GiB。检查产物存在不等于此次构建通过或服务可用 |
+| `chat-git` 根：下方 Jest 命令 | 退出 0；**1 suite / 14 tests passed**，0.263s。纯模块无 I/O，无 Mongo/应用启动，未装依赖 |
+
+```sh
+# 在 chat-git 根执行；使用已安装的固定工具链，独立配置绕开应用测试启动依赖。
+NODE_OPTIONS=--max-old-space-size=2048 \
+  /home/user/.local/share/chatgit/node/node-v24.16.0-linux-x64/bin/node \
+  app/node_modules/jest/bin/jest.js --runInBand --no-cache \
+  --config '{"rootDir":"./app","testEnvironment":"node","transform":{}}' \
+  --runTestsByPath app/api/server/services/ChatGit/canvasContext.spec.js
+```
+
+**分支的具体观测：**[原测试](../chat-git/app/api/server/services/ChatGit/canvasContext.spec.js) 构造 R→A→A2 与 R→B，只选 A2 时 user 历史为 `Q-r,Q-a,Q-a2,next`，不存在 `A-b`；合并 A 与 B→C 时为 `Q-r,Q-a,Q-b,Q-c,compare`，`A-r` 恰一次。另测选中路径的引用校验、直接合并源原文、长路径摘要和预览。它证明实际 `buildMessages` 输出的隔离/去重，**不证明 HTTP 模型调用、认证、Mongo 持久化或 UI 已通过**。
+
+外部编辑的具体观测：[useNote.test.ts](web/test/useNote.test.ts) 在本地未保存草稿后改变模拟外部文件并发重连事件，要求 status=conflict、save=false、两份内容各自保留；[ai.test.ts](web/test/ai.test.ts) 另测模型读后外部修改时拒绝覆盖。这些是自动化层基线，真实浏览器配合外部编辑器的复现仍未进行。
+
+## 6. 待验证、阻塞与交接
+
+| 未完成项 | 当前判断 / 下一次必须补的证据 |
+| --- | --- |
+| **草稿发送失败复现** | **已在整机复现（2026-10-12，见下方“整机核对”）。** 前端状态层的复现（[chatgit-draft-loss.test.ts](web/test/baseline/chatgit-draft-loss.test.ts)）与整机一致，并得到更精确的结论：**请求在服务端接受之前失败**（网络中断、被拒绝、会话过期）时，界面提示“问题没有发出去”，但服务端没有新节点、草稿已被清空，问题从界面和服务端同时消失，无法重发；而**服务端已接受后模型出错**时，服务端已先创建错误节点（“Interrupted”），问题保存在节点里并有 Retry，只是草稿被清空，问题不丢 |
+| 当前图到假模型的实际请求 | **已在整机核对。** 用 ChatGit 自带的假模型夹具记录模型实际收到的内容：只从 B 继续时只含根与 B（A 独有事实未发送）；合并 A 与 B→C 时共同根只发一次，顺序为 根、A、B、C、新问题；与应用自己的上下文预览接口列出的节点一致。三处已知缺口（按时间排序、环不拒绝、按字符阈值）仍由算法层断言记录（[chatgit-branch-context.test.ts](web/test/baseline/chatgit-branch-context.test.ts)） |
+| UI、运行与认证回归 | 未验证两旧应用当前仍能浏览器正常运行，未测关闭/重连/重启、跨用户越权、真实授权、中文输入法/焦点与分组遮挡；不能用 safety check 或算法测试替代 |
+| M1 数据与恢复 | 文件成功后布局失败、撤销失败、cache 删除、完整备份空目录恢复、重复请求去重、外部写入与补偿、格式保护均需父线程新证据。新增备份源码不是完成证明；在通过前不迁移真实数据、不开放跨资源批量写入试用 |
+| 导入规模与附件清单 | 未读真实数据，故对象数量、坏图、失联来源、文件实体是否存在未知；M7 只读预检授权副本后逐条报告。不把空测试图作为真实数据兼容认证 |
+| 提供商与高级能力 | 本轮只证明接口形状和假模型行为，未验证真实提供商兼容/质量、完整 LibreChat 功能迁移。首版不支持项须在设置、导入报告或发布说明明确告知并保留旧入口 |
+
+**交接结论：**可据此固定“以 Canvas 为主体、迁入 ChatGit 当前分支能力”的兼容边界，继续在副本开发 M1；不可把 M0 标成“全部已验收”，也不可将 M1 并行开发当成 M0 的缺项已消失。
+
+**后续集成记录（2026-10-12）：**父线程已实现并验证 M1 的旧 Note 历史迁移、稳定身份、写入恢复和离线备份基础，最新为 17 文件 / 208 测试通过，另有真实服务启动、占用拒绝与备份恢复检查。详见 [开发计划第 13 节](Sidemind-开发计划-v1.md#13-首批开发记录基础存储已验证合并产品尚未完成)。这些证据取代上表 M1 中已经覆盖的待测项，不取代 ChatGit 浏览器基线；M0 仍待验收，统一讨论/草稿/来源存储也尚未实现。
+
+
+**基线测试的运行方式（2026-10-12）：**两个文件位于 `web/test/baseline/`，需要 `CHATGIT_DIR` 指向 onevalar/chat-git 的 1d2e9bf 检出，否则自动跳过，不影响常规 `npm test`。例：`CHATGIT_DIR=/path/to/chat-git npx vitest run test/baseline`（8 项通过）。它们断言的是**当前已知的错误行为**；Canvas 的替代保证见 `test/chat-workspace.test.tsx`（发送失败保留输入并用同一草稿重试）与 `test/branches.test.ts`。这不是整机复现，因此 M0 仍不能标为全部验收。
+
+
+## 整机核对（2026-10-12）
+
+**环境：**本 orb（4 核、约 7 GiB 内存、60 GB 磁盘）。按 ChatGit 自己的规则，只用根目录的受保护入口：固定版本 Node 24.16.0 与 mongod 8.2.1（官方包、SHA-256 校验，`scripts/chatgit_toolchain.py ensure`）→ `next_safe.py install`（2893 个包）→ `next_safe.py build`（6 步，全部通过）→ 账号模式隔离状态目录（`.chatgit/canvas-acct`）加它自带的假模型夹具（`app/e2e/chatgit/canvas.yaml` + `fake-openai.js`）。全程一次只跑一个任务，应用运行时进程不超过 6 个、内存约 1.4 GiB（保护上限 32 个进程 / 6 GiB），没有触发保护。本地模式的一次性启动链接在没有图形浏览器的设备上被启动器有意拒绝显示，因此改用其 README 描述的账号模式隔离夹具：注册一个测试用户并通过登录页进入 `/canvas/`。没有调用任何真实模型，没有使用真实数据。
+
+**走通的流程（真实界面 + 真实 MongoDB）：**新建画布 → 提问并得到回答 → 在回答里划词 → 弹出“Ask about this passage”（留空即让 AI 解释这段，与 Canvas 本批新增的“解释这段”一致）→ 加入草稿 A，再加第二条 → 草稿节点显示“2 items · sends as one branch” → 夹具置为失败后发送 → 服务端已创建“Interrupted”错误节点，问题保留，有 Retry，草稿清空。再用浏览器里的网络失败模拟“请求没到服务端”，复现真正的丢失（见上表）。
+
+**没有覆盖（如实）：**ChatGPT 授权与真实提供商、附件（当前 `/canvas/` 无上传链路）、生成中重启的中断标记、跨用户越权、ChatGit 界面上的中文输入法与焦点、窄窗口（ChatGit 本身不以窄屏为验收目标）。老版 Canvas Note 的原有交互没有单独的“旧应用”可运行：它就是当前宿主，由现有 330 项测试和各批次的真实浏览器检查覆盖。因此 M0 现在可以按“固定了基线并复现了已知缺陷”验收，但上述未覆盖项不能算已验证。
+
+**登录限流提示：**重复用脚本登录会触发 ChatGit 的“5 分钟内登录次数过多”保护，属其正常行为，等待窗口过去后复用同一令牌，没有绕过。

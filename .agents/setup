@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+cd -- "$repo_root/web"
+
+# Node.js and npm are provided by the orb; reject incompatible versions rather
+# than silently installing dependencies that cannot build or run the tests.
+printf 'Preparing Canvas Note Web with Node %s and npm %s\n' "$(node --version)" "$(npm --version)"
+started=$SECONDS
+npm ci --include=dev --engine-strict --no-audit --no-fund
+printf 'Web dependencies ready in %ss. Preview services are declared in .amp/services.yaml.\n' "$((SECONDS - started))"

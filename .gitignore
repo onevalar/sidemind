@@ -1,0 +1,8 @@
+.DS_Store
+.vscode/
+
+# Local orb preview data and generated portal metadata.
+.amp/preview-notes/
+.amp/preview-data/
+.amp/preview-config/
+**/.amp/portals/
