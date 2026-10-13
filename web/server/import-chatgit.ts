@@ -14,7 +14,7 @@ import { BadNameError, contentVersion, type NoteStore } from './store'
  * - Ids are derived from the source ids, so importing the same export twice cannot create a second copy.
  * - A node that was still generating, failed or was stopped is imported as an unfinished run (partial text kept),
  *   never as an answer, and nothing is regenerated.
- * - What has no home in Canvas Note (attachment files, suggested follow-ups, model/endpoint choice, UI state) is
+ * - What has no home in Sidemind (attachment files, suggested follow-ups, model/endpoint choice, UI state) is
  *   counted and reported, not silently dropped and not pretended to be migrated.
  */
 
@@ -185,7 +185,7 @@ export async function preflight(dir: string): Promise<Preflight> {
   }
 }
 
-// ---- building the Canvas Note records ----
+// ---- building the Sidemind records ----
 
 interface Built { discussion: DiscussionDTO; drafts: DraftDTO[]; runs: RunDTO[]; summaries: { answerId: string; text: string }[]; answers: number }
 

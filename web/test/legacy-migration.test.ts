@@ -41,7 +41,9 @@ describe('v0.2 notes folder (Markdown in the root + .canvasnote/)', () => {
     expect(JSON.parse(await fs.readFile(path.join(paths.canvas, 'Work', '_canvas.json'), 'utf8'))).toMatchObject({ notes: { 'B.md': { x: 30, y: 40 } }, frames: [{ id: 'f1', title: '分组', members: ['B.md'] }] })
     expect(await fs.readFile(path.join(paths.cache, 'legacy-agent-changes', 'x.json'), 'utf8')).toBe('{"old":"v0.2 change record"}')
     expect((await fs.stat(path.join(paths.legacy, 'library.json'))).isFile()).toBe(true)      // the original library file is kept
-    expect(JSON.parse(await fs.readFile(path.join(root, 'canvasnote.json'), 'utf8'))).toEqual({ format: 'canvas-note-repo', version: 2 })
+    expect(JSON.parse(await fs.readFile(path.join(root, 'sidemind.json'), 'utf8'))).toEqual({ format: 'sidemind-repo', version: 1 })
+    // The old file name stays, as a refusal marker no Canvas Note release understands.
+    expect(JSON.parse(await fs.readFile(path.join(root, 'canvasnote.json'), 'utf8')).version).toBe(99)
   })
 
   it('opens compatibly afterwards: notes listed over HTTP with their positions, stable ids that survive a restart, and no second migration', async () => {
@@ -90,13 +92,13 @@ describe('a new-format directory is never taken for an old notes folder', () => 
     const { paths } = await openDataRepo(root, { git: false })
     await fs.writeFile(path.join(paths.notes, 'Keep.md'), '# keep\n')
     await fs.mkdir(path.join(paths.local, 'discussions'), { recursive: true })
-    await fs.rm(path.join(root, 'canvasnote.json'))
+    await fs.rm(path.join(root, 'sidemind.json'))
     const before = await tree(root)
     await expect(openDataRepo(root, { git: false })).rejects.toThrow('缺少版本标记')
     expect(await tree(root)).toEqual(before)
     expect((await bytes(path.join(paths.notes, 'Keep.md'))).toString()).toBe('# keep\n')
     // ...and putting the marker back is all it takes.
-    await fs.writeFile(path.join(root, 'canvasnote.json'), JSON.stringify({ format: 'canvas-note-repo', version: 2 }))
+    await fs.writeFile(path.join(root, 'sidemind.json'), JSON.stringify({ format: 'sidemind-repo', version: 1 }))
     expect((await openDataRepo(root, { git: false })).migrated).toBe(false)
   })
 
@@ -105,7 +107,7 @@ describe('a new-format directory is never taken for an old notes folder', () => 
     for (const name of ['notes', 'memory', 'canvas', 'cache']) await fs.mkdir(path.join(root, name), { recursive: true })
     const { migrated } = await openDataRepo(root, { git: false })
     expect(migrated).toBe(false)
-    expect(JSON.parse(await fs.readFile(path.join(root, 'canvasnote.json'), 'utf8')).version).toBe(2)
+    expect(JSON.parse(await fs.readFile(path.join(root, 'sidemind.json'), 'utf8')).version).toBe(1)
     expect((await fs.readdir(path.join(root, 'notes')))).toEqual([])
   })
 
@@ -119,9 +121,31 @@ describe('a new-format directory is never taken for an old notes folder', () => 
 
   it('refuses a directory written by a newer version rather than rewriting it', async () => {
     const root = path.join(dir, 'future'); await fs.mkdir(root, { recursive: true })
-    await fs.writeFile(path.join(root, 'canvasnote.json'), JSON.stringify({ format: 'canvas-note-repo', version: 99 }))
+    await fs.writeFile(path.join(root, 'sidemind.json'), JSON.stringify({ format: 'sidemind-repo', version: 99 }))
     await expect(openDataRepo(root, { git: false })).rejects.toThrow('不支持这个数据仓库版本')
+    expect(JSON.parse(await fs.readFile(path.join(root, 'sidemind.json'), 'utf8')).version).toBe(99)
+  })
+})
+
+describe('the old Canvas Note marker', () => {
+  it('upgrades a Canvas Note v2 repository in place: Sidemind marker added, nothing else touched, old name becomes a guard', async () => {
+    const root = path.join(dir, 'v2'); await makeV1(root)
+    const first = await openDataRepo(root, { git: false })
+    await fs.rm(path.join(root, 'sidemind.json'))
+    await fs.writeFile(path.join(root, 'canvasnote.json'), JSON.stringify({ format: 'canvas-note-repo', version: 2 }))
+    const notes = await tree(path.join(root, 'notes'))
+    const again = await openDataRepo(root, { git: false })
+    expect(again.migrated).toBe(false)
+    expect(JSON.parse(await fs.readFile(path.join(root, 'sidemind.json'), 'utf8'))).toEqual({ format: 'sidemind-repo', version: 1 })
     expect(JSON.parse(await fs.readFile(path.join(root, 'canvasnote.json'), 'utf8')).version).toBe(99)
+    expect(await tree(path.join(root, 'notes'))).toEqual(notes)
+    expect(first.paths.root).toBe(again.paths.root)
+  })
+
+  it('is a refusal marker: only the guard left without a Sidemind marker is reported as damage, never reinterpreted', async () => {
+    const root = path.join(dir, 'guard'); await fs.mkdir(root, { recursive: true })
+    await fs.writeFile(path.join(root, 'canvasnote.json'), JSON.stringify({ format: 'canvas-note-repo', version: 99 }))
+    await expect(openDataRepo(root, { git: false })).rejects.toThrow('缺少版本标记')
   })
 })
 
@@ -130,7 +154,7 @@ describe('v1 repository: history in cache/', () => {
     const root = path.join(dir, 'v1'); await makeV1(root)
     const before = await Promise.all((await fs.readdir(path.join(root, 'cache', 'conversations'))).map(async name => [name, (await bytes(path.join(root, 'cache', 'conversations', name))).toString()]))
     const { paths } = await openDataRepo(root, { git: false })
-    expect(JSON.parse(await fs.readFile(path.join(root, 'canvasnote.json'), 'utf8')).version).toBe(2)
+    expect(JSON.parse(await fs.readFile(path.join(root, 'sidemind.json'), 'utf8')).version).toBe(1)
     for (const [name, text] of before) {
       expect((await bytes(path.join(paths.local, 'conversations', name!))).toString()).toBe(text)       // copied byte for byte, damaged ones too
       expect((await bytes(path.join(paths.cache, 'conversations', name!))).toString()).toBe(text)       // the original is untouched

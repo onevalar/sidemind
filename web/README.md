@@ -1,7 +1,7 @@
 # Sidemind（Web 版）
 
 > **Sidemind = side + mind，“在你旁边的另一颗头脑”。** 正在读或写的时候，随时在旁边岔出一条线去研究；想清楚了，再有选择地收回到正文里。
-> 本应用原名 Canvas Note，与 ChatGit 合并后改为此名。命名原因、含义与改名范围（数据格式标识等有意保持不变）见根目录 `统一工作台-产品计划-v1.md` 第 0 节。
+> 本应用原名 Canvas Note，与 ChatGit 合并后改为此名。命名原因、含义与改名范围见根目录 `统一工作台-产品计划-v1.md` 第 0 节。
 
 一个在浏览器里使用的 Markdown 笔记应用：**画布上的一张卡片是一篇完整文章，不是文章中的段落。**
 每个真实文件夹对应一个画布；文章正文是普通 `.md` 文件，位置独立保存。
@@ -16,9 +16,9 @@ npm run dev        # 同时启动笔记服务（3001）和网页（5173）
 
 打开 http://localhost:5173 。
 
-- 数据目录默认是 `web/workspace`，可用环境变量 `CANVAS_DATA_DIR=/你的/数据目录` 指定（旧名称 `NOTES_DIR` 仍可用）。数据目录是一个 Git 仓库：`notes/` 是 Markdown 笔记，`memory/` 是助手的记忆，`canvas/` 是每个文件夹的画布布局，`cache/` 是不提交的本机缓存。设计见根目录 `技术路线-v0.3-AI-Agent.md`。
+- 数据目录默认是 `web/workspace`，可用环境变量 `SIDEMIND_DATA_DIR=/你的/数据目录` 指定（旧名称 `CANVAS_DATA_DIR`、`NOTES_DIR` 仍可用）。数据目录是一个 Git 仓库：`notes/` 是 Markdown 笔记，`memory/` 是助手的记忆，`canvas/` 是每个文件夹的画布布局，`cache/` 是不提交的本机缓存。设计见根目录 `技术路线-v0.3-AI-Agent.md`。
 - 统一工作台开发分支使用数据格式 v2：`research/` 保存笔记的稳定身份；`local/` 保存不可随意删除的对话、提案、撤销和恢复记录。`local/` 不进 Git，但必须包含在完整数据备份里。旧 `cache/` 中的这三类历史首次打开时复制到 `local/`，保留旧副本，不反复覆盖新记录。请只用测试副本试用本分支，不让旧程序再次打开升级后的目录。
-- 旧版工作区（Markdown 直接放在根目录、带 `.canvasnote/`）在首次启动时原地迁移：正文字节和卡片位置不变，迁移本身不自动提交。
+- 数据目录的版本标记是 `sidemind.json`。旧版 Canvas Note 的 v1/v2 目录首次启动时原地升级（加上新标记；旧文件名 `canvasnote.json` 保留为版本 99 的“拒绝标记”，防止旧版 Canvas Note 误打开并改动新数据）。旧版 v0.2 工作区（Markdown 直接放在根目录、带 `.canvasnote/`）同样在首次启动时原地迁移：正文字节和卡片位置不变，迁移本身不自动提交。
 - 右键侧栏中的文件夹，选择“在文件管理器中打开”，在运行服务的电脑上打开所选文件夹，不切换当前画布；顶部不设独立按钮。在远程 orb 中不会打开你电脑上的文件夹。
 - 文章位置和文档区按文件夹保存在 `canvas/<文件夹>/_canvas.json`（随同步提交），不会改动 `.md` 正文或文件修改时间。
 - **同步**：正文实时自动保存；侧栏「同步」一次完成：读取本机改动 → 按章节分级（措辞 / 新增 / 关键表述）→ 总结模型增量更新记忆 → 撰写提交说明 → 提交 → 拉取并合并远端更新 → 上传本机提交（设置中填写远端，使用本机 Git 已有的登录方式）。即使本机没有新改动，也会检查并接收远端更新。未配置远端时只在本机提交；措辞改动不调用模型。记忆和布局冲突以本机为准，笔记正文冲突时保留本地提交并提示手动处理，不强制覆盖远端。
@@ -110,14 +110,15 @@ API 固定使用本机端口 3001，网页使用 5173 并代理 API；健康检�
 切换服务地址必须重新填写密钥，不会把旧密钥发给新地址。测试只发送简短测试消息，不读取笔记，不自动保存设置。
 
 连接按工作区路径分开保存在本机配置目录，位于笔记文件夹之外：macOS 使用
-`~/Library/Application Support/CanvasNote/connections`，Windows 使用 `%APPDATA%/CanvasNote/connections`，
-Linux 使用 `$XDG_CONFIG_HOME/canvas-note/connections`（默认 `~/.config/canvas-note/connections`）。
-可用 `CANVAS_CONFIG_DIR` 指定独立配置目录。目录和文件在支持 POSIX 权限的平台分别使用 0700、0600；
+`~/Library/Application Support/Sidemind/connections`，Windows 使用 `%APPDATA%/Sidemind/connections`，
+Linux 使用 `$XDG_CONFIG_HOME/sidemind/connections`（默认 `~/.config/sidemind/connections`）。
+首次启动时，如果旧的 Canvas Note 连接目录（`CanvasNote`、`canvas-note`）存在，会把其中的文件复制过来，旧目录不会被改动或删除；
+显式指定配置目录时不做复制。可用 `SIDEMIND_CONFIG_DIR`（旧名称 `CANVAS_CONFIG_DIR`）指定独立配置目录。目录和文件在支持 POSIX 权限的平台分别使用 0700、0600；
 密钥是本机的私有配置，不是系统钥匙串加密存储。已保存的密钥不会返回网页或写入浏览器存储。
 移除连接会清除该文件里的密钥，并保留断开状态，避免重启后回退到旧环境变量中的密钥。
 
-仍兼容启动时提供 `CANVAS_AI_API_KEY`（或旧名称 `CANVAS_AI_KEY`）、`CANVAS_AI_MODEL` 和可选的
-`CANVAS_AI_BASE_URL`。界面保存的设置优先；远程地址需要 HTTPS，本机服务可使用 HTTP。
+仍兼容启动时提供 `SIDEMIND_AI_API_KEY`、`SIDEMIND_AI_MODEL` 和可选的
+`SIDEMIND_AI_BASE_URL`（旧名称 `CANVAS_AI_API_KEY`、`CANVAS_AI_KEY`、`CANVAS_AI_MODEL`、`CANVAS_AI_BASE_URL` 仍可用）。界面保存的设置优先；远程地址需要 HTTPS，本机服务可使用 HTTP。
 ### 三个模型槽位
 
 设置「API 与模型」中分别配置：**主对话**（ChatGPT 或 OpenAI 兼容 API）、**总结与校验模型**（推送时更新记忆和写提交说明、压缩长对话、并行分析，建议用便宜模型；未配置时使用主对话模型）、**Embedding 服务**（OpenAI 兼容 `/embeddings`，用于语义搜索和相关文章；未配置时不影响其他功能，向量按内容哈希缓存在 `cache/embeddings.json`，换模型自动重建）。三者的密钥都保存在笔记仓库之外的本机配置目录。

@@ -1,3 +1,4 @@
+import { setting } from './sidemind'
 import { execFile } from 'node:child_process'
 
 export class GitError extends Error {
@@ -9,7 +10,7 @@ export class GitError extends Error {
  * git already uses (SSH keys, credential helpers); the app never stores git passwords.
  */
 export class Git {
-  constructor(readonly root: string, private binary = process.env.CANVAS_GIT_BINARY || 'git') {}
+  constructor(readonly root: string, private binary = setting('GIT_BINARY') || 'git') {}
 
   run(args: string[], options: { input?: string; timeout?: number; allowFailure?: boolean } = {}): Promise<{ stdout: string; stderr: string; code: number }> {
     return new Promise((resolve, reject) => {

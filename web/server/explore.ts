@@ -4,6 +4,7 @@ import { summarize, type ChangeEngine } from './changes'
 import { MissingRecordError, ancestry, type ResearchStore } from './discussions'
 import { extent } from './layout'
 import { complete, type ModelCall } from './models'
+import { setting } from './sidemind'
 import { BadNameError, ConflictError, NotFoundError, contentVersion, type NoteStore } from './store'
 
 const INSTRUCTIONS = `你是用户的研究写作助手。用户正在阅读自己的笔记，围绕其中选中的一段文字提问。
@@ -25,7 +26,7 @@ const COMPARE = `这次要比较多条分支各自的回答。按以下结构回
 4. 待验证：证据不足、需要进一步核实的问题。
 只依据各分支的问答和其中的原文片段；不确定的明确写出，不要编造。`
 
-export const CONTEXT_BUDGET = Number(process.env.CANVAS_CONTEXT_BUDGET) || 24000
+export const CONTEXT_BUDGET = Number(setting('CONTEXT_BUDGET')) || 24000
 /** Rough input-size estimate: CJK characters count about one token each, other text about one per three characters. */
 export function estimateTokens(text: string): number {
   const cjk = (text.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu) ?? []).length

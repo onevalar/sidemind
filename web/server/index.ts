@@ -8,12 +8,13 @@ import { NoteStore } from './store'
 import { watchNotes } from './watcher'
 import { openDataRepo } from './repo'
 import { acquireWorkspace } from './workspace-lock'
+import { setting } from './sidemind'
 import { ChangeEngine } from './changes'
 import { MemoryFiles } from './memory-files'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
-// One Git repository holds all app data (notes/, memory/, canvas/). NOTES_DIR is the v0.2 name and is migrated in place.
-const root = process.env.CANVAS_DATA_DIR ?? process.env.NOTES_DIR ?? path.resolve(here, '../workspace')
+// One Git repository holds all app data (notes/, memory/, canvas/). SIDEMIND_DATA_DIR sets it; CANVAS_DATA_DIR and NOTES_DIR are the names Canvas Note used and still work.
+const root = setting('DATA_DIR') ?? process.env.NOTES_DIR ?? path.resolve(here, '../workspace')
 const port = Number(process.env.PORT ?? 3001)
 
 await fs.mkdir(root, { recursive: true })

@@ -98,6 +98,7 @@ it('does not send on Enter while an input method is composing, and falls back wh
   mount()
   const box = await screen.findByRole('textbox', { name: '你的问题' })
   expect(localStorage.getItem('canvas.chat-selected')).toBe(null)
+  expect(localStorage.getItem('sidemind.chat-selected')).toBe(null)
   fireEvent.change(box, { target: { value: '你好' } })
   fireEvent.keyDown(box, { key: 'Enter', isComposing: true })
   expect(api.createDraft).not.toHaveBeenCalled()
@@ -156,7 +157,7 @@ describe('write dialog', () => {
 
 it('keeps the open conversation when it is chosen again instead of blanking it', async () => {
   const first = discussion(hex(1), '什么是弹性模量？', '它衡量材料抵抗形变的能力。')
-  localStorage.setItem('canvas.chat-selected', first.id)
+  localStorage.setItem('sidemind.chat-selected', first.id)
   vi.mocked(api.discussions).mockResolvedValue([summary(first)])
   vi.mocked(api.discussionView).mockResolvedValue({ discussion: first, captures: [], sources: {}, runs: [] })
   mount()

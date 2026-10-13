@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { prefs } from './prefs'
 import type { Viewport } from '@xyflow/react'
 import type { NoteSummary } from '../shared/types'
 import { api, subscribeEvents } from './api'
@@ -49,22 +50,22 @@ export function App() {
   const [settings, setSettings] = useState<Awaited<ReturnType<typeof api.settings>> | null>(null)
   const [newFolderOpen, setNewFolderOpen] = useState(false)
   const [folderName, setFolderName] = useState('')
-  const [theme, setTheme] = useState<Theme>(() => (localStorage.getItem('canvas.theme') as Theme) || 'system')
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('canvas.sidebar-collapsed') === 'true')
-  const [views] = useState(() => { try { return new Map<string, Viewport>(JSON.parse(localStorage.getItem('canvas.views') || '[]')) } catch { return new Map<string, Viewport>() } })
+  const [theme, setTheme] = useState<Theme>(() => (prefs.get('theme') as Theme) || 'system')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => prefs.get('sidebar-collapsed') === 'true')
+  const [views] = useState(() => { try { return new Map<string, Viewport>(JSON.parse(prefs.get('views') || '[]')) } catch { return new Map<string, Viewport>() } })
   const systemDark = useSyncExternalStore(subscribeAppearance, () => darkPreference().matches, () => false)
   const resolvedTheme = theme === 'system' ? systemDark ? 'dark' : 'light' : theme
   const beforeLeave = useRef<() => Promise<boolean>>(async () => true)
   const agentSelection = useRef<() => string | undefined>(() => undefined)
   const reveal = useRef<(quote: string, start: number | null) => boolean>(() => false)
-  const [aiOpen, setAiOpen] = useState(() => localStorage.getItem('canvas.ai-open') !== 'false')
-  const [mode, setMode] = useState<'note' | 'chat'>(() => localStorage.getItem('canvas.mode') === 'chat' ? 'chat' : 'note')
+  const [aiOpen, setAiOpen] = useState(() => prefs.get('ai-open') !== 'false')
+  const [mode, setMode] = useState<'note' | 'chat'>(() => prefs.get('mode') === 'chat' ? 'chat' : 'note')
   const [aiTab, setAiTab] = useState<'agent' | 'explore'>('agent')
   const [focus, setFocus] = useState<{ names: string[]; key: number } | null>(null)
   const [folderMemoryOpen, setFolderMemoryOpen] = useState(false)
-  const [aiShare] = useState(() => Math.min(65, Math.max(15, Number(localStorage.getItem('canvas.ai-width')) || 30)))
-  useEffect(() => { localStorage.setItem('canvas.ai-open', String(aiOpen)) }, [aiOpen])
-  useEffect(() => { localStorage.setItem('canvas.mode', mode) }, [mode])
+  const [aiShare] = useState(() => Math.min(65, Math.max(15, Number(prefs.get('ai-width')) || 30)))
+  useEffect(() => { prefs.set('ai-open', String(aiOpen)) }, [aiOpen])
+  useEffect(() => { prefs.set('mode', mode) }, [mode])
   const closeAI = () => { setAiOpen(false); requestAnimationFrame(() => document.querySelector<HTMLButtonElement>('[aria-controls="ai-assistant-pane"]')?.focus()) }
   const creating = useRef(false)
   const requestVersion = useRef(0)
@@ -96,9 +97,9 @@ export function App() {
   }, [loaded])
   useEffect(() => {
     document.documentElement.dataset.theme = resolvedTheme
-    localStorage.setItem('canvas.theme', theme)
+    prefs.set('theme', theme)
   }, [theme, resolvedTheme])
-  useEffect(() => { localStorage.setItem('canvas.sidebar-collapsed', String(sidebarCollapsed)) }, [sidebarCollapsed])
+  useEffect(() => { prefs.set('sidebar-collapsed', String(sidebarCollapsed)) }, [sidebarCollapsed])
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (event.defaultPrevented || composing(event) || event.repeat || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return
@@ -172,6 +173,7 @@ export function App() {
   const visible = useMemo(() => notes.filter(note => note.space === space), [notes, space])
   const aiModel = settings?.chatgpt.unavailable ? null : settings?.chatgpt.activeAccountId ? settings.chatgpt.configured ? 'ChatGPT · ' + settings.chatgpt.model : null : settings?.ai.configured ? settings.ai.model : null
   return <div className={'app' + (sidebarCollapsed ? ' sidebar-collapsed' : '')}>
+    <div className="narrow-guard" role="status"><strong>Sidemind</strong><p>这是桌面软件，需要更宽的窗口。请把浏览器窗口拉宽（至少 1000 像素）后继续使用。</p></div>
     <aside className="sidebar" aria-label="笔记导航">
       <div className="brand"><span className="brand-mark"><Icon name="note" size={19}/></span><strong>Sidemind</strong><Button variant="ghost" size="sm" isIconOnly aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} aria-expanded={!sidebarCollapsed} aria-controls="sidebar-navigation" onPress={() => setSidebarCollapsed(value => !value)}><Icon name="panel"/></Button></div>
       <Button variant="ghost" size="sm" aria-label="搜索笔记" className="search-trigger nav-item" onPress={() => setSearchOpen(true)}><Icon name="search" size={16}/><span>搜索文章</span></Button>
@@ -192,11 +194,11 @@ export function App() {
     <main className="stage">
       {error && <div className="global-error" role="alert"><span>{error}</span><Button size="sm" variant="ghost" onPress={() => void refreshList()}>重试</Button><IconButton icon="close" label="关闭提示" onPress={() => setError('')}/></div>}
       <ChatWorkspace notes={notes.map(note => ({ name: note.name, title: note.title }))} model={aiModel} active={mode === 'chat'} beforeSend={beforeLeave} onConfigure={() => setSettingsOpen(true)} onOpenNote={openNote}/>
-      <div className="agent-workspace" hidden={mode === 'chat'}><ResizablePanels label="笔记与 AI 助手" onLayoutChange={sizes => { if (aiOpen && sizes[1]) localStorage.setItem('canvas.ai-width', String(sizes[1])) }}>
+      <div className="agent-workspace" hidden={mode === 'chat'}><ResizablePanels label="笔记与 AI 助手" onLayoutChange={sizes => { if (aiOpen && sizes[1]) prefs.set('ai-width', String(sizes[1])) }}>
       <ResizablePanel id="article-pane" label="笔记与 AI 助手分栏宽度" defaultSize={100 - aiShare} minSize={360}>
       {selected && NoteWorkspace ? <NoteWorkspace key={selected} name={selected} theme={resolvedTheme} beforeLeave={beforeLeave} agentSelection={agentSelection} reveal={reveal} aiOpen={aiOpen} onToggleAI={() => setAiOpen(value => !value)} onOpenNote={openNote} onBack={() => void navigate(null)}/> : <>
         <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span className="library-folder" title={folderLabel(space)}>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="ghost" onPress={() => setFolderMemoryOpen(true)}>文件夹记忆</Button><Button size="sm" variant="secondary" className="ai-toggle" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" title={aiOpen ? '关闭 AI 助手' : '打开 AI 助手'} onPress={() => setAiOpen(value => !value)}><Icon name="spark" size={16}/>AI 助手</Button><Button size="sm" onPress={openCreate}><Icon name="plus" size={16}/>新建文章</Button></div></header>
-        {!loaded ? <div className="empty">{error ? '笔记尚未载入，请重试。' : '正在载入画布…'}</div> : <LibraryCanvas key={space} folder={space} notes={visible} theme={resolvedTheme} viewport={views.get(space) ?? { x: 0, y: 0, zoom: 1 }} onViewport={viewport => { views.set(space, viewport); localStorage.setItem('canvas.views', JSON.stringify([...views])) }} beforeLeave={beforeLeave} onOpen={openNote} onPreview={setPreview} onCreate={openCreate} focus={focus}/>}
+        {!loaded ? <div className="empty">{error ? '笔记尚未载入，请重试。' : '正在载入画布…'}</div> : <LibraryCanvas key={space} folder={space} notes={visible} theme={resolvedTheme} viewport={views.get(space) ?? { x: 0, y: 0, zoom: 1 }} onViewport={viewport => { views.set(space, viewport); prefs.set('views', JSON.stringify([...views])) }} beforeLeave={beforeLeave} onOpen={openNote} onPreview={setPreview} onCreate={openCreate} focus={focus}/>}
       </>}
       </ResizablePanel>
       <ResizablePanel id="ai-assistant-pane" label="AI 助手" defaultSize={aiShare} minSize={320} maxSize={720} hidden={!aiOpen}>

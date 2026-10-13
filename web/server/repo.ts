@@ -1,11 +1,11 @@
+import { GUARD_VERSION, LEGACY_FORMAT, LEGACY_MARKER, REPO_FORMAT, REPO_MARKER, REPO_VERSION, guardMarker } from './sidemind'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { Git } from './git'
 import { readRecord, StorageError, writeData, writeRecord } from './persistence'
 
-export const REPO_MARKER = 'canvasnote.json'
 const MIGRATION = '.canvasnote-migration.json'
-const GITIGNORE = '# Canvas Note: cache is rebuildable; local contains durable history included in full backups, not Git.\n/cache/\n/local/\n.DS_Store\n'
+const GITIGNORE = '# Sidemind: cache is rebuildable; local contains durable history included in full backups, not Git.\n/cache/\n/local/\n.DS_Store\n'
 
 /** Where each kind of data lives. Standalone mode (tests) keeps metadata beside the notes. */
 export type DataPaths = {
@@ -45,11 +45,17 @@ type LegacyLibrary = { version: 1; notes?: Record<string, { position: { x: numbe
  */
 export async function openDataRepo(root: string, options: { git?: boolean } = {}): Promise<{ paths: DataPaths; git: Git | null; migrated: boolean }> {
   const paths = repoPaths(root)
-  const marker = await readRecord<{ format: string; version: number }>(path.join(paths.root, REPO_MARKER))
-  if (marker && (marker.format !== 'canvas-note-repo' || ![1, 2].includes(marker.version))) throw new StorageError('不支持这个数据仓库版本，未修改任何内容。请使用兼容版本打开。')
+  const read = (name: string) => readRecord<{ format: string; version: number }>(path.join(paths.root, name))
+  const modern = await read(REPO_MARKER), legacy = await read(LEGACY_MARKER)
+  // Sidemind's own marker is authoritative. Canvas Note's marker (v1, or v2 from the build before the rename) is an older
+  // directory to carry over; the version the guard writes means "belongs to Sidemind" and is not data of its own.
+  if (modern && (modern.format !== REPO_FORMAT || modern.version !== REPO_VERSION)) throw new StorageError('不支持这个数据仓库版本，未修改任何内容。请使用兼容版本打开。')
+  if (!modern && legacy?.format === LEGACY_FORMAT && legacy.version === GUARD_VERSION) throw new StorageError(`这个目录属于 Sidemind，但缺少版本标记 ${REPO_MARKER}，没有修改任何内容。请从备份恢复该文件，或确认目录无误后手动创建内容为 {"format":"${REPO_FORMAT}","version":${REPO_VERSION}} 的 ${REPO_MARKER}。`)
+  if (!modern && legacy && (legacy.format !== LEGACY_FORMAT || ![1, 2].includes(legacy.version))) throw new StorageError('不支持这个数据仓库版本，未修改任何内容。请使用兼容版本打开。')
+  const marker = modern ?? legacy
   await fs.mkdir(paths.root, { recursive: true })
   let migrated = false
-  if (!await exists(path.join(paths.root, REPO_MARKER))) {
+  if (!marker) {
     const entries = (await fs.readdir(paths.root)).filter(name => name !== '.git')
     const pending = entries.includes(MIGRATION)
     // A directory that already has the repository's own layout but lost its version marker (an interrupted first start,
@@ -60,7 +66,7 @@ export async function openDataRepo(root: string, options: { git?: boolean } = {}
     // Only empty directories: a first start that stopped before writing the marker. Nothing to protect, finish it below.
     const interruptedInit = layout.length > 0 && entries.every(name => layout.includes(name) || name.startsWith('.')) && !(await Promise.all(layout.map(hasData))).some(Boolean)
     if (!interruptedInit && !pending && !entries.includes('.canvasnote') && ((entries.includes('notes') && layout.length >= 3) || entries.includes('local') || entries.includes('research'))) {
-      throw new StorageError(`这个目录已经是新版数据仓库的结构（${layout.join('、')}），但缺少版本标记 ${REPO_MARKER}。为避免把它当作旧版笔记文件夹再次搬动，没有修改任何内容。请从备份恢复该文件，或确认目录无误后手动创建内容为 {"format":"canvas-note-repo","version":2} 的 ${REPO_MARKER}。`)
+      throw new StorageError(`这个目录已经是新版数据仓库的结构（${layout.join('、')}），但缺少版本标记 ${REPO_MARKER}。为避免把它当作旧版笔记文件夹再次搬动，没有修改任何内容。请从备份恢复该文件，或确认目录无误后手动创建内容为 {"format":"${REPO_FORMAT}","version":${REPO_VERSION}} 的 ${REPO_MARKER}。`)
     }
     if (!interruptedInit && entries.length && (pending || entries.some(name => !name.startsWith('.')) || entries.includes('.canvasnote'))) {
       await migrateLegacy(paths)
@@ -68,13 +74,14 @@ export async function openDataRepo(root: string, options: { git?: boolean } = {}
     }
     for (const directory of [paths.notes, paths.memory, paths.canvas, paths.cache]) await fs.mkdir(directory, { recursive: true })
     if (!await exists(path.join(paths.root, '.gitignore'))) await fs.writeFile(path.join(paths.root, '.gitignore'), GITIGNORE)
-    await fs.writeFile(path.join(paths.root, REPO_MARKER), JSON.stringify({ format: 'canvas-note-repo', version: 1 }, null, 2) + '\n')
   }
   await preparePersistentData(paths)
   const ignore = path.join(paths.root, '.gitignore')
   const previous = await fs.readFile(ignore, 'utf8').catch(error => { if (error.code === 'ENOENT') return ''; throw error })
   if (!previous.split('\n').some(line => line === 'local/' || line === '/local/')) await fs.writeFile(ignore, previous + '\n# Durable device history: use full backup, not Git.\n/local/\n')
-  if (marker?.version !== 2) await writeRecord(path.join(paths.root, REPO_MARKER), { format: 'canvas-note-repo', version: 2 })
+  // Written last, once everything above has succeeded; then the refusal marker under the old name (see sidemind.ts).
+  if (!modern) await writeRecord(path.join(paths.root, REPO_MARKER), { format: REPO_FORMAT, version: REPO_VERSION })
+  if (!legacy || legacy.version !== GUARD_VERSION) await writeRecord(path.join(paths.root, LEGACY_MARKER), guardMarker())
   let git: Git | null = null
   if (options.git !== false) {
     const candidate = new Git(paths.root)

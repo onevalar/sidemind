@@ -59,7 +59,7 @@ async function noTemporaryDirectories() {
 beforeEach(async () => {
   directory = await fs.mkdtemp(path.join(os.tmpdir(), 'canvas-backup-test-'))
   source = path.join(directory, 'source'); backup = path.join(directory, 'backup'); restored = path.join(directory, 'restored')
-  vi.stubEnv('CANVAS_CONFIG_DIR', path.join(directory, 'private-config'))
+  vi.stubEnv('SIDEMIND_CONFIG_DIR', path.join(directory, 'private-config'))
 })
 afterEach(async () => {
   vi.restoreAllMocks()
@@ -94,6 +94,28 @@ describe('offline repository backup and restore', () => {
     expect(await tree(source)).toEqual(before)
     expect((await fs.stat(path.join(source, 'notes/a.md'))).mtimeMs).toBe(originalStat.mtimeMs)
     await noTemporaryDirectories()
+  })
+
+  it('backs up and restores a Sidemind repository with both markers byte for byte', async () => {
+    await fixture()
+    await put(source, 'sidemind.json', JSON.stringify({ format: 'sidemind-repo', version: 1 }) + '\n')
+    await put(source, 'canvasnote.json', JSON.stringify({ format: 'canvas-note-repo', version: 99 }) + '\n')
+    const saved = await backupRepository(source, backup)
+    expect(saved.repositoryVersion).toBe(2)
+    const manifest = JSON.parse(await fs.readFile(path.join(backup, 'manifest.json'), 'utf8')) as TestManifest
+    expect(manifest.format).toBe('sidemind-backup')
+    await restoreRepository(backup, restored)
+    for (const file of ['sidemind.json', 'canvasnote.json']) expect(await fs.readFile(path.join(restored, file))).toEqual(await fs.readFile(path.join(source, file)))
+  })
+
+  it('still restores a backup written under the Canvas Note format name', async () => {
+    await fixture()
+    await backupRepository(source, backup)
+    const file = path.join(backup, 'manifest.json')
+    const manifest = JSON.parse(await fs.readFile(file, 'utf8'))
+    await fs.writeFile(file, JSON.stringify({ ...manifest, format: 'canvas-note-backup' }))
+    await restoreRepository(backup, restored)
+    expect(await fs.readFile(path.join(restored, 'notes/a.md'))).toEqual(note)
   })
 
   it.each(['wrong-format', 'future-version', 'malformed', 'missing'])('strictly rejects %s markers without initializing or migrating', async kind => {
@@ -192,7 +214,7 @@ describe('offline repository backup and restore', () => {
   it.each(['private-settings', 'local/private-settings', 'notes/private-settings'])('excludes the whole configuration subtree at %s, including API and OAuth credentials', async relative => {
     await fixture()
     const config = path.join(source, relative)
-    vi.stubEnv('CANVAS_CONFIG_DIR', config)
+    vi.stubEnv('SIDEMIND_CONFIG_DIR', config)
     await put(config, 'model.json', 'fake-api-credential')
     await put(config, 'oauth/token.json', 'fake-oauth-credential')
     await backupRepository(source, backup); await restoreRepository(backup, restored)
@@ -204,7 +226,7 @@ describe('offline repository backup and restore', () => {
 
   it.each(['', 'notes', 'local', 'research', 'cache', 'cache/conversations', 'local/proposals'])('rejects configuration overlap with essential data: %s', async relative => {
     await fixture(1)
-    vi.stubEnv('CANVAS_CONFIG_DIR', path.join(source, relative))
+    vi.stubEnv('SIDEMIND_CONFIG_DIR', path.join(source, relative))
     await expect(backupRepository(source, backup)).rejects.toThrow(/overlaps/)
     await absent(backup)
   })
@@ -214,7 +236,7 @@ describe('offline repository backup and restore', () => {
     const config = path.join(source, 'local/private-settings'), alias = path.join(directory, 'config-alias')
     await put(config, 'oauth.json', 'fake-token')
     await fs.symlink(config, alias)
-    vi.stubEnv('CANVAS_CONFIG_DIR', alias)
+    vi.stubEnv('SIDEMIND_CONFIG_DIR', alias)
     await backupRepository(source, backup); await restoreRepository(backup, restored)
     await absent(path.join(restored, 'local/private-settings'))
   })
@@ -238,7 +260,7 @@ describe('offline repository backup and restore', () => {
 
   it('cleans up only its own staging directory after a restore copy failure', async () => {
     await fixture(); await backupRepository(source, backup)
-    const unrelated = path.join(directory, '.canvasnote-restore-unrelated')
+    const unrelated = path.join(directory, '.sidemind-restore-unrelated')
     await put(unrelated, 'keep', 'untouched')
     const before = await tree(backup), open = fs.open.bind(fs)
     vi.spyOn(fs, 'open').mockImplementation(async (file, flags, mode) => {
@@ -248,7 +270,7 @@ describe('offline repository backup and restore', () => {
     await expect(restoreRepository(backup, restored)).rejects.toThrow(/disk write failure/)
     await absent(restored)
     expect(await tree(backup)).toEqual(before)
-    expect((await fs.readdir(directory)).filter(name => name.startsWith('.canvasnote-restore-'))).toEqual(['.canvasnote-restore-unrelated'])
+    expect((await fs.readdir(directory)).filter(name => name.startsWith('.sidemind-restore-'))).toEqual(['.sidemind-restore-unrelated'])
     expect(await fs.readFile(path.join(unrelated, 'keep'), 'utf8')).toBe('untouched')
   })
 

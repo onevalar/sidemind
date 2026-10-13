@@ -19,7 +19,7 @@ const original = '# A\r\n\r\n原始文字。\r\n'
 const run = promisify(execFile)
 beforeEach(async () => {
   directory = await fs.mkdtemp(path.join(os.tmpdir(), 'cn-persistence-'))
-  vi.stubEnv('CANVAS_CONFIG_DIR', path.join(directory, 'private'))
+  vi.stubEnv('SIDEMIND_CONFIG_DIR', path.join(directory, 'private'))
   const { paths } = await openDataRepo(path.join(directory, 'data'), { git: false })
   store = new NoteStore(paths)
   await store.init()
@@ -198,7 +198,7 @@ it('migrates history once and keeps it after cache deletion and a conflicting ol
 })
 
 it('refuses unknown data versions without rewriting the marker or notes', async () => {
-  const marker = path.join(store.paths.root, 'canvasnote.json'), future = '{"format":"canvas-note-repo","version":99}'
+  const marker = path.join(store.paths.root, 'sidemind.json'), future = '{"format":"sidemind-repo","version":99}'
   await fs.writeFile(marker, future)
   await expect(openDataRepo(store.paths.root)).rejects.toThrow('不支持')
   expect(await fs.readFile(marker, 'utf8')).toBe(future)

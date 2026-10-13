@@ -270,7 +270,7 @@ h4.heading { font-size: var(--text-base); }
   .field { transition: none; }
 }
 
-/* Canvas Note integration: fill an existing pane rather than the demo's 660px
+/* Sidemind integration: fill an existing pane rather than the demo's 660px
    framed preview. All inner surfaces above retain the Arc AI Chat styling. */
 .root[data-embedded] { height: 100%; max-width: none; min-height: 0; border: 0; border-radius: 0; }
 .context { margin-bottom: 8px; }

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { prefs } from './prefs'
 import type { ChangeSetDetail, DiscussionSummaryDTO } from '../shared/types'
 import { api, subscribeEvents, type DiscussionView } from './api'
 import { DiscussionDialogs, DiscussionThread, clip, message, title, useDiscussionKit } from './discussion'
@@ -17,14 +18,13 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
 }) {
   const [list, setList] = useState<DiscussionSummaryDTO[]>([])
   const [archived, setArchived] = useState(false)
-  const [selected, setSelected] = useState<string | null>(() => localStorage.getItem('canvas.chat-selected'))
+  const [selected, setSelected] = useState<string | null>(() => prefs.get('chat-selected'))
   const [view, setView] = useState<DiscussionView | null>(null)
   const [changes, setChanges] = useState<Record<string, ChangeSetDetail>>({})
   const [loadError, setLoadError] = useState('')
   const [question, setQuestion] = useState('')
   const [target, setTarget] = useState<string>(NONE)
-  const [detailOpen, setDetailOpen] = useState(() => !!localStorage.getItem('canvas.chat-selected'))
-  useEffect(() => { if (selected) localStorage.setItem('canvas.chat-selected', selected); else localStorage.removeItem('canvas.chat-selected') }, [selected])
+  useEffect(() => { if (selected) prefs.set('chat-selected', selected); else prefs.remove('chat-selected') }, [selected])
   const current = useRef(selected)
   current.current = selected
   const listed = useRef(archived)
@@ -37,7 +37,7 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
       const id = current.current
       if (!id) { setView(null); return }
       const next = await api.discussionView(id).catch(failure => { if (/找不到/.test(message(failure))) return null; throw failure })
-      if (!next) { if (current.current === id) { setSelected(null); setDetailOpen(false) } return }
+      if (!next) { if (current.current === id) setSelected(null); return }
       if (current.current !== id) return
       setView(next); setLoadError('')
       kit.current.adopt(next.runs)
@@ -57,7 +57,6 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
   useEffect(() => { setTarget(origin ?? NONE) }, [selected, origin])
 
   const open = (id: string | null) => {
-    setDetailOpen(true)
     // Choosing the conversation that is already open must not blank it: nothing would trigger a reload.
     if (id === selected) { void load(); return }
     retry.current = null; setSelected(id); setView(null); setChanges({}); setQuestion('')
@@ -91,11 +90,11 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
   const waiting = !!view && !leaf && Object.values(kitValue.runs).some(run => run.status === 'queued' || run.status === 'running')
   const hint = !selected ? '想问什么？回答会保存在对话里，之后可以选择写入笔记。Enter 发送，Shift+Enter 换行。' : leaf ? '继续提问（Enter 发送；想从别处分支，用每条回答下的“追问”）' : !view ? '正在读取对话…' : waiting ? '等待上一条回答完成后继续提问' : '上一条没有回答成功，请先在上面重试'
 
-  return <div className="chat-workspace" data-detail={detailOpen ? 'true' : undefined} hidden={!active}>
+  return <div className="chat-workspace" hidden={!active}>
     <nav className="chat-list" aria-label="对话列表">
       <div className="chat-list-head"><h2>对话</h2>
         <div className="chat-list-actions">
-          <Button variant="ghost" size="sm" aria-pressed={archived} onPress={() => { setArchived(value => !value); open(null); setDetailOpen(false) }}>{archived ? '返回对话' : '已归档'}</Button>
+          <Button variant="ghost" size="sm" aria-pressed={archived} onPress={() => { setArchived(value => !value); open(null) }}>{archived ? '返回对话' : '已归档'}</Button>
           {!archived && <Button size="sm" onPress={() => open(null)}>新对话</Button>}</div></div>
       <ul className="chat-items">
         {list.map(item => <li key={item.id}>
@@ -110,7 +109,6 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
 
     <section className="chat-detail" aria-label={'对话：' + heading}>
       <header className="chat-detail-head">
-        <Button variant="ghost" size="sm" className="chat-back" onPress={() => setDetailOpen(false)}>返回列表</Button>
         <h2>{heading}</h2>
         {summary && <div className="chat-list-actions">
           {summary.notePath && <Button variant="ghost" size="sm" onPress={() => onOpenNote(summary.notePath!)}>打开《{title(summary.notePath)}》</Button>}

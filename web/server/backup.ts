@@ -3,14 +3,16 @@ import { constants, type Stats } from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { createHash } from 'node:crypto'
+import { BACKUP_FORMAT, LEGACY_BACKUP_FORMAT, LEGACY_FORMAT, LEGACY_MARKER, REPO_FORMAT, REPO_MARKER, REPO_VERSION, configDirectory, legacyConfigDirectory } from './sidemind'
 
 // Deliberately independent of repo.ts: opening a repository can initialize or migrate it.
-const MARKER = 'canvasnote.json'
+// Both marker names are payload: Sidemind's own, and the one kept under Canvas Note's name that makes an old version refuse the directory.
+const MARKERS = [REPO_MARKER, LEGACY_MARKER]
 const DATA = ['notes', 'memory', 'canvas', 'research', 'local']
 const HISTORY = ['conversations', 'changesets', 'proposals']
 type RepoVersion = 1 | 2
 type Entry = { path: string; type: 'directory' } | { path: string; type: 'file'; bytes: number; sha256: string }
-type Manifest = { format: 'canvas-note-backup'; version: 1; repositoryVersion: RepoVersion; entries: Entry[] }
+type Manifest = { format: typeof BACKUP_FORMAT; version: 1; repositoryVersion: RepoVersion; entries: Entry[] }
 type Snapshot = { entries: Entry[]; identities: string[] }
 export type BackupResult = { root: string; repositoryVersion: RepoVersion; files: number; directories: number }
 export class BackupError extends Error {}
@@ -93,20 +95,24 @@ async function readJson(file: string): Promise<unknown> {
   } finally { await handle.close() }
 }
 function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === 'object' && !Array.isArray(value) }
+/**
+ * Internal repository versions: 1 = Canvas Note v1 (history still in cache/), 2 = history in local/ and research/, which is
+ * what Sidemind's own `sidemind-repo` version 1 and Canvas Note's v2 both are.
+ */
 async function repoVersion(root: string): Promise<RepoVersion> {
-  const marker = await readJson(path.join(root, MARKER))
-  if (!record(marker) || marker.format !== 'canvas-note-repo' || (marker.version !== 1 && marker.version !== 2)) {
-    fail(`Unsupported repository marker; expected canvas-note-repo version 1 or 2: ${path.join(root, MARKER)}`)
+  const read = async (name: string) => (await statOptional(path.join(root, name))) ? readJson(path.join(root, name)) : null
+  const modern = await read(REPO_MARKER)
+  if (modern !== null) {
+    if (!record(modern) || modern.format !== REPO_FORMAT || modern.version !== REPO_VERSION) fail(`Unsupported repository marker; expected ${REPO_FORMAT} version ${REPO_VERSION}: ${path.join(root, REPO_MARKER)}`)
+    return 2
   }
-  return marker.version
+  const legacy = await read(LEGACY_MARKER)
+  if (!record(legacy) || legacy.format !== LEGACY_FORMAT || (legacy.version !== 1 && legacy.version !== 2)) {
+    fail(`Unsupported repository marker; expected ${REPO_FORMAT} version ${REPO_VERSION} (or ${LEGACY_FORMAT} version 1 or 2): ${path.join(root, REPO_MARKER)}`)
+  }
+  return legacy.version
 }
 
-function defaultConfigDirectory() {
-  if (process.env.CANVAS_CONFIG_DIR) return path.resolve(process.env.CANVAS_CONFIG_DIR)
-  if (process.platform === 'darwin') return path.join(os.homedir(), 'Library', 'Application Support', 'CanvasNote', 'connections')
-  if (process.platform === 'win32') return path.join(process.env.APPDATA || os.homedir(), 'CanvasNote', 'connections')
-  return path.resolve(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'canvas-note', 'connections')
-}
 async function canonicalLocation(location: string): Promise<string> {
   try { return await fs.realpath(location) }
   catch (error) {
@@ -117,10 +123,9 @@ async function canonicalLocation(location: string): Promise<string> {
   }
 }
 async function exclusions(root: string, version: RepoVersion) {
-  const configured = defaultConfigDirectory()
-  // Both the configured spelling and its physical location can be inside the data root.
-  const candidates = [...new Set([configured, await canonicalLocation(configured)])]
-  const critical = [...DATA, MARKER, '.gitignore', ...HISTORY.map(name => `local/${name}`), ...(version === 1 ? HISTORY.map(name => `cache/${name}`) : [])]
+  // Neither Sidemind's settings location nor Canvas Note's old one may end up in a backup, in either spelling.
+  const candidates = [...new Set(await Promise.all([configDirectory(), legacyConfigDirectory()].flatMap(directory => [Promise.resolve(directory), canonicalLocation(directory)])))]
+  const critical = [...DATA, ...MARKERS, '.gitignore', ...HISTORY.map(name => `local/${name}`), ...(version === 1 ? HISTORY.map(name => `cache/${name}`) : [])]
   for (const directory of candidates) {
     if (within(directory, root) || critical.some(name => within(directory, path.join(root, name)))) {
       fail(`Configuration directory overlaps essential repository data; move configuration outside the repository before backup: ${directory}`)
@@ -158,7 +163,7 @@ async function scan(root: string, version?: RepoVersion, excluded: string[] = []
     } else fail(`Only regular files and directories are supported: ${relative}`)
   }
   for (const name of (await fs.readdir(root)).sort()) {
-    if (version && ![...DATA, MARKER, '.gitignore', ...(version === 1 ? ['cache'] : [])].includes(name)) continue
+    if (version && ![...DATA, ...MARKERS, '.gitignore', ...(version === 1 ? ['cache'] : [])].includes(name)) continue
     await visit(name)
   }
   return { entries: sorted(entries), identities: identities.sort() }
@@ -166,7 +171,7 @@ async function scan(root: string, version?: RepoVersion, excluded: string[] = []
 
 function allowed(relative: string, version: RepoVersion) {
   const [first, second] = relative.split('/')
-  return DATA.includes(first!) || relative === MARKER || relative === '.gitignore'
+  return DATA.includes(first!) || MARKERS.includes(relative) || relative === '.gitignore'
     || (version === 1 && first === 'cache' && (second === undefined || HISTORY.includes(second)))
 }
 function exactKeys(object: Record<string, unknown>, keys: string[]) {
@@ -174,7 +179,7 @@ function exactKeys(object: Record<string, unknown>, keys: string[]) {
 }
 function validateManifest(value: unknown): Manifest {
   if (!record(value) || !exactKeys(value, ['format', 'version', 'repositoryVersion', 'entries'])
-    || value.format !== 'canvas-note-backup' || value.version !== 1
+    || (value.format !== BACKUP_FORMAT && value.format !== LEGACY_BACKUP_FORMAT) || value.version !== 1
     || (value.repositoryVersion !== 1 && value.repositoryVersion !== 2) || !Array.isArray(value.entries)) fail('Unsupported backup manifest.')
   const paths = new Map<string, Entry>(), folded = new Set<string>()
   for (const item of value.entries) {
@@ -198,8 +203,8 @@ function validateManifest(value: unknown): Manifest {
     }
   }
   for (const name of ['notes', 'memory', 'canvas']) if (paths.get(name)?.type !== 'directory') fail(`Missing data directory: ${name}`)
-  if (paths.get(MARKER)?.type !== 'file' || (paths.has('.gitignore') && paths.get('.gitignore')?.type !== 'file')) fail('Missing or invalid repository metadata.')
-  return { format: 'canvas-note-backup', version: 1, repositoryVersion: value.repositoryVersion, entries: sorted([...paths.values()]) }
+  if (!MARKERS.some(name => paths.get(name)?.type === 'file') || MARKERS.some(name => paths.has(name) && paths.get(name)?.type !== 'file') || (paths.has('.gitignore') && paths.get('.gitignore')?.type !== 'file')) fail('Missing or invalid repository metadata.')
+  return { format: BACKUP_FORMAT, version: 1, repositoryVersion: value.repositoryVersion, entries: sorted([...paths.values()]) }
 }
 
 async function verifyBackup(root: string): Promise<Manifest> {
@@ -257,8 +262,8 @@ export async function backupRepository(sourceRoot: string, newBackupRoot: string
   const destination = await newDestination(source, newBackupRoot)
   const version = await repoVersion(source), excluded = await exclusions(source, version)
   const before = await scan(source, version, excluded)
-  const manifest = validateManifest({ format: 'canvas-note-backup', version: 1, repositoryVersion: version, entries: before.entries })
-  const staging = await fs.mkdtemp(path.join(path.dirname(destination), '.canvasnote-backup-'))
+  const manifest = validateManifest({ format: BACKUP_FORMAT, version: 1, repositoryVersion: version, entries: before.entries })
+  const staging = await fs.mkdtemp(path.join(path.dirname(destination), '.sidemind-backup-'))
   try {
     const payload = path.join(staging, 'payload')
     await fs.mkdir(payload, { mode: 0o700 })
@@ -277,7 +282,7 @@ export async function restoreRepository(backupRoot: string, newDataRoot: string)
   const source = await safeDirectory(backupRoot)
   const destination = await newDestination(source, newDataRoot)
   const manifest = await verifyBackup(source)
-  const staging = await fs.mkdtemp(path.join(path.dirname(destination), '.canvasnote-restore-'))
+  const staging = await fs.mkdtemp(path.join(path.dirname(destination), '.sidemind-restore-'))
   try {
     await copyEntries(path.join(source, 'payload'), staging, manifest.entries)
     if (!digestEqual((await scan(staging)).entries, manifest.entries)) fail('Restored files failed verification.')

@@ -33,7 +33,7 @@ describe('data repository', () => {
     const { paths, git: repo, migrated } = await openDataRepo(root)
     expect(migrated).toBe(true)
     expect(repo).not.toBeNull()
-    expect((await fs.readdir(root)).sort()).toEqual(['.git', '.gitignore', 'cache', 'canvas', 'canvasnote.json', 'local', 'memory', 'notes', 'research'])
+    expect((await fs.readdir(root)).sort()).toEqual(['.git', '.gitignore', 'cache', 'canvas', 'canvasnote.json', 'local', 'memory', 'notes', 'research', 'sidemind.json'])
     expect(await fs.readFile(path.join(root, 'notes', 'A.md'), 'utf8')).toBe(a)
     expect(await fs.readFile(path.join(root, 'notes', 'Work', 'image.png'), 'utf8')).toBe('binary')
     expect(JSON.parse(await fs.readFile(path.join(root, 'canvas', 'Work', '_canvas.json'), 'utf8'))).toEqual({ version: 1, notes: { 'B.md': { x: -3, y: 4 } }, frames: [{ id: 'f', title: '组', position: { x: -27, y: -60 }, width: 400, height: 300, members: ['B.md'] }] })

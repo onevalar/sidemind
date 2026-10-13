@@ -1,3 +1,4 @@
+import { adoptLegacyConnections, configDirectory, setting } from './sidemind'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import os from 'node:os'
@@ -26,10 +27,8 @@ function validate(input: AIConnectionInput): AIConnectionInput {
 }
 
 function defaultDirectory(): string {
-  if (process.env.CANVAS_CONFIG_DIR) return path.resolve(process.env.CANVAS_CONFIG_DIR)
-  if (process.platform === 'darwin') return path.join(os.homedir(), 'Library', 'Application Support', 'CanvasNote', 'connections')
-  if (process.platform === 'win32') return path.join(process.env.APPDATA || os.homedir(), 'CanvasNote', 'connections')
-  return path.join(process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config'), 'canvas-note', 'connections')
+  adoptLegacyConnections()
+  return configDirectory()
 }
 
 /** Private server settings live outside the notes folder and are scoped to its path. */
@@ -51,10 +50,10 @@ export class AISettings {
     try { raw = await fs.readFile(this.file, 'utf8') }
     catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') throw new AISettingsError('无法读取本机的模型连接设置。')
-      const key = this.environment.CANVAS_AI_API_KEY || this.environment.CANVAS_AI_KEY || ''
-      const model = this.environment.CANVAS_AI_MODEL || ''
+      const key = setting('AI_API_KEY', this.environment) || setting('AI_KEY', this.environment) || ''
+      const model = setting('AI_MODEL', this.environment) || ''
       if (!key || !model) return { connection: null, source: 'none' }
-      const config = validate({ model, baseUrl: this.environment.CANVAS_AI_BASE_URL || DEFAULT_AI_URL, key })
+      const config = validate({ model, baseUrl: setting('AI_BASE_URL', this.environment) || DEFAULT_AI_URL, key })
       return { connection: config as AIConnection, source: 'environment' }
     }
     try {
