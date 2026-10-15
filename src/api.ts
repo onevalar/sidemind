@@ -1,4 +1,4 @@
-import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent, SourceRefDTO, ResolvedSourceDTO, DiscussionDTO, DiscussionSummaryDTO, DraftDTO, TurnDTO, CaptureDTO, RunDTO, RunEvent, ContextPreviewDTO, AgentRunDTO } from '../shared/types'
+import type { AIConnectionInput, PublicAIConfig, PublicChatGPTConfig, NoteDTO, NoteSummary, NotePosition, CanvasFrame, CanvasLayout, AgentScope, AgentEvent, ChangeSetSummary, ChangeSetDetail, ConversationState, ProposalSummary, ProposalDetail, MemoryFileDTO, MemoryTargetKind, RepoStatus, PushEvent, SyncJobDTO, SourceRefDTO, ResolvedSourceDTO, DiscussionDTO, DiscussionSummaryDTO, DraftDTO, TurnDTO, CaptureDTO, RunDTO, RunEvent, ContextPreviewDTO, AgentRunDTO } from '../shared/types'
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, {
@@ -110,7 +110,8 @@ export const api = {
   acknowledgeAgentRun: (id: string) => request<AgentRunDTO>(`/api/agent-runs/${enc(id)}/acknowledge`, { method: 'POST', body: '{}' }),
   stopAgentRun: (id: string) => request<AgentRunDTO>(`/api/agent-runs/${enc(id)}/stop`, { method: 'POST', body: '{}' }),
   agentRun: (id: string) => request<AgentRunDTO>(`/api/agent-runs/${enc(id)}`),
-  conversation: (scope: AgentScope) => request<ConversationState | null>(`/api/ai/conversation?scope=${enc(JSON.stringify(scope))}`),
+  agentRuns: (limit = 20) => request<AgentRunDTO[]>(`/api/agent-runs?limit=${limit}`),
+  conversation: (scope: AgentScope, session?: string) => request<ConversationState | null>(`/api/ai/conversation?scope=${enc(JSON.stringify(scope))}${session ? '&session=' + enc(session) : ''}`),
   changeSets: (filter: { folder?: string; name?: string } = {}) => request<ChangeSetSummary[]>(`/api/ai/changes?folder=${enc(filter.folder ?? '')}${filter.name ? '&name=' + enc(filter.name) : ''}`),
   changeSet: (id: string) => request<ChangeSetDetail>(`/api/ai/changes/${enc(id)}`),
   undoChangeSet: (id: string) => request<ChangeSetSummary>(`/api/ai/changes/${enc(id)}/undo`, { method: 'POST', body: '{}' }),
@@ -121,6 +122,9 @@ export const api = {
   saveMemory: (target: MemoryTargetKind, name: string, content: string, expected: string | null) => request<{ ok: true }>('/api/memory', { method: 'PUT', body: JSON.stringify({ target, name, content, expected }) }),
   repoStatus: () => request<RepoStatus>('/api/repo/status'),
   setRemote: (url: string | null) => request<RepoStatus>('/api/repo/remote', { method: 'PUT', body: JSON.stringify({ url }) }),
+  syncStatus: () => request<SyncJobDTO | null>('/api/repo/sync'),
+  startSync: (options: { enrich?: boolean } = {}) => request<SyncJobDTO>('/api/repo/sync', { method: 'POST', body: JSON.stringify(options) }),
+  stopSync: (id: string) => request<SyncJobDTO>(`/api/repo/sync/${enc(id)}/stop`, { method: 'POST', body: '{}' }),
   push: async (onEvent: (event: PushEvent) => void, signal: AbortSignal) => {
     const response = await fetch('/api/repo/push', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}', signal })
     await ndjson(response, onEvent, '同步连接中断。请刷新状态后重试。')

@@ -10,6 +10,8 @@ import { readRecord, StorageError, writeRecord } from './persistence'
 import { BadNameError, ConflictError, contentVersion, type NoteStore } from './store'
 
 const finished = (status: AgentRunDTO['status']) => !['queued', 'running'].includes(status)
+const summary = (text: string, length = 180) => text.replace(/\s+/g, ' ').trim().slice(0, length)
+const priority = (run: AgentRunDTO) => !finished(run.status) ? 0 : ['waiting_confirmation', 'recovery_required'].includes(run.status) ? 1 : 2
 const RECOVERY = (count: number, why: string) => `${why}它已经修改了 ${count} 处笔记，但没有完成，可能只做了一部分。已完成的修改保留在修改记录中，不会自动重新执行或回滚；请检查修改记录，必要时撤销，再决定是否重新发起。`
 type Listener = (entry: { seq: number; event: AgentEvent }) => void
 type Active = { controller: AbortController; run: AgentRunDTO; events: { seq: number; event: AgentEvent }[]; listeners: Set<Listener>; stopped: boolean; writing: Promise<unknown> }
@@ -24,6 +26,9 @@ export class AgentRunService {
   private readonly directory: string
   private active = new Map<string, Active>()
   private recovered = false
+  private recovering?: Promise<void>
+  private history?: { at: number; runs: AgentRunDTO[] }
+  private listing?: Promise<AgentRunDTO[]>
 
   constructor(private store: NoteStore, private agent: NoteAgent, private options: { track?: <T>(task: Promise<T>) => Promise<T>; shutdown?: AbortSignal; guard?: () => void; /** Which of these proposals still await the user. */ pendingProposals?: (ids: string[]) => Promise<string[]>; /** Change sets this conversation's requests made since a time, from the change engine's own records. */ changesSince?: (session: string, since: number) => Promise<string[]> } = {}) {
     this.directory = path.join(store.paths.local, 'agent-runs')
@@ -55,9 +60,10 @@ export class AgentRunService {
     if (run.status !== 'waiting_confirmation') return run
     if ((await this.options.pendingProposals?.(run.proposals ?? []) ?? ['pending']).length) return run
     const done: AgentRunDTO = { ...run, status: 'completed', updatedAt: Date.now() }
-    const live = this.active.get(run.id)
-    if (live) live.run.status = 'completed'
     await writeRecord(this.file(run.id), { version: 1, ...done })
+    const live = this.active.get(run.id)
+    if (live) Object.assign(live.run, done)
+    this.history = undefined
     return done
   }
 
@@ -70,6 +76,35 @@ export class AgentRunService {
     if (record.version !== 1 || record.id !== id) throw new StorageError('运行记录格式无效，请保留文件并检查备份。')
     const { version, ...run } = record
     return this.settle(run)
+  }
+
+  /** Discover tasks from any page, including after a reload. Active work is never buried by completed history. */
+  async list(limit = 20): Promise<AgentRunDTO[]> {
+    if (!Number.isInteger(limit) || limit < 1) throw new BadNameError('任务数量无效。')
+    await this.recover()
+    // Old terminal runs cannot change spontaneously. Scan their files at most once
+    // per 30 seconds, retaining only one page. Live progress bypasses this cache.
+    let historical = this.history?.runs
+    if (!this.history || Date.now() - this.history.at >= 30000) {
+      this.listing ??= this.readHistory().finally(() => { this.listing = undefined })
+      historical = await this.listing
+    }
+    const combined = new Map(historical!.map(run => [run.id, run]))
+    for (const { run } of this.active.values()) combined.set(run.id, { ...run })
+    // A historical proposal can be decided without its run still being live.
+    for (const [id, run] of combined) if (run.status === 'waiting_confirmation') combined.set(id, await this.get(id))
+    return [...combined.values()].sort((a, b) => priority(a) - priority(b) || b.updatedAt - a.updatedAt || b.createdAt - a.createdAt || a.id.localeCompare(b.id)).slice(0, Math.min(limit, 20))
+  }
+
+  private async readHistory(): Promise<AgentRunDTO[]> {
+    let names: string[]
+    try { names = (await fs.readdir(this.directory)).filter(name => /^[a-f0-9]{32}\.json$/.test(name)) }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') names = []; else throw error }
+    const runs: AgentRunDTO[] = []
+    for (const name of names) runs.push(await this.get(name.slice(0, -5)))
+    const recent = runs.sort((a, b) => priority(a) - priority(b) || b.updatedAt - a.updatedAt || b.createdAt - a.createdAt || a.id.localeCompare(b.id)).slice(0, 20)
+    this.history = { at: Date.now(), runs: recent }
+    return recent
   }
 
   /** Runs for this conversation that a restart stopped part-way through writing, until the user has looked at them. */
@@ -89,13 +124,20 @@ export class AgentRunService {
       if (run.status !== 'recovery_required') throw new ConflictError('这次任务不需要确认。')
       const next: AgentRunDTO = { ...run, status: 'interrupted', error: '你已确认检查过中断前的修改。', updatedAt: Date.now() }
       await writeRecord(this.file(id), { version: 1, ...next })
+      const live = this.active.get(id)
+      if (live) Object.assign(live.run, next)
+      this.history = undefined
       return next
     })
   }
 
   async recover(): Promise<void> {
     if (this.recovered) return
-    this.recovered = true
+    this.recovering ??= this.recoverRecords().then(() => { this.recovered = true }).finally(() => { this.recovering = undefined })
+    await this.recovering
+  }
+
+  private async recoverRecords(): Promise<void> {
     let names: string[]
     try { names = (await fs.readdir(this.directory)).filter(name => /^[a-f0-9]{32}\.json$/.test(name)) }
     catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return; throw error }
@@ -125,7 +167,7 @@ export class AgentRunService {
       if (existing) return existing
       this.options.guard?.()
       const now = Date.now()
-      const run: AgentRunDTO = { id, scope: input.scope, ...(input.session ? { session: input.session } : {}), requestKey: input.requestKey, status: 'queued', seq: 0, createdAt: now, updatedAt: now }
+      const run: AgentRunDTO = { id, scope: input.scope, ...(input.session ? { session: input.session } : {}), requestKey: input.requestKey, request: summary(input.message), activity: '正在准备', status: 'queued', seq: 0, createdAt: now, updatedAt: now }
       const state: Active = { controller: new AbortController(), run, events: [], listeners: new Set(), stopped: false, writing: Promise.resolve() }
       await this.save(state)
       this.active.set(id, state)
@@ -140,6 +182,8 @@ export class AgentRunService {
     const entry = { seq: ++state.run.seq, event }
     state.run.updatedAt = Date.now()
     let durable = false
+    const activity = event.type === 'activity' ? summary(event.text) : event.type === 'delta' ? '正在生成回复' : undefined
+    if (activity && state.run.activity !== activity) { state.run.activity = activity; durable = true }
     if (event.type === 'session') { state.run.session = event.id; durable = true }
     // Written down as it happens: after a crash this is the only record of what the run had already done.
     if (event.type === 'changeset' && !state.run.changes?.includes(event.change.id)) { state.run.changes = [...(state.run.changes ?? []), event.change.id]; durable = true }
@@ -155,6 +199,8 @@ export class AgentRunService {
     let status: AgentRunDTO['status'] = 'completed', error: string | undefined
     try {
       run.status = 'running'
+      run.activity = '正在思考'
+      await this.save(state)
       await this.agent.run({ session: input.session, scope: input.scope, message: input.message, ...(input.scope.kind === 'note' ? { selection: input.selection } : {}) }, model, signal, async event => { this.emit(state, event) })
     } catch (failure) {
       const known = failure instanceof BadNameError || failure instanceof ConflictError || failure instanceof ChatGPTError || failure instanceof AISettingsError || failure instanceof AIRequestError

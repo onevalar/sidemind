@@ -36,7 +36,7 @@ const INSTRUCTIONS = `你是 Sidemind 的笔记 Agent，用用户的语言自然
 - 用户没有要求、你自己认为应该做的修改（顺手修正、额外整理、建议的改名等），一律用 propose_changes 交给用户确认，不要直接写入。不确定用户要什么时先问。
 - 编辑前先读取并使用返回的 version；整篇重写或拆分前必须读完全文；保留未要求修改的内容、Markdown、链接、代码与元数据。改名、移动用专门工具，它们会同时更新所有链接、记忆和画布位置。
 - 冲突后先重新读取当前内容，比较外部新改动和用户授权的目标。若新改动与目标无关且能完整保留，基于最新版本重算所需修改并继续验证，不要重复要求已给出的授权；不得原样重放旧写入或覆盖新内容。若新改动直接改变了待编辑的目标、约束或决定，无法确定最新意图时保留当前内容，只询问影响继续操作的关键问题。
-- 你不能提交或推送；推送只能由用户点击「推送」，那时会更新记忆并写 commit message。
+- 你不能提交或推送；用户点击左下角「同步」后由服务端后台提交和同步。日常同步不调用模型整理记忆，记忆待整理不代表同步失败；未配置远端时只在本机提交。用户关闭详情或刷新页面不会取消同步。
 
 记忆
 - 记忆服务于以后"使用"笔记：写新文章、回顾学习、准备讨论、检索事实。只记录以后使用时会影响判断的信息：用途、现行结论与已废弃观点（及原因）、术语约定、用户的决定与约束、可靠度与缺口、关联与引用、学习中的理解状态与个人理解方式、立场与论点、事实与时效。不记修改流水账，不复述正文。
@@ -174,9 +174,10 @@ export class NoteAgent {
   }
 
   /** Restores the panel: latest conversation for a scope, its change sets and proposals. */
-  async state(scope: AgentScope): Promise<ConversationState | null> {
-    const conversation = await this.deps.conversations.latest(scope)
+  async state(scope: AgentScope, session?: string): Promise<ConversationState | null> {
+    const conversation = session ? await this.deps.conversations.get(session) : await this.deps.conversations.latest(scope)
     if (!conversation) return null
+    if (scopeKey(conversation.scope) !== scopeKey(scope)) throw new BadNameError('对话不属于当前范围。')
     // The change record owns this relationship, even if the process died before saving history.
     const changes = await this.deps.changes.list({ conversation: conversation.id })
     return { id: conversation.id, scope: conversation.scope, updatedAt: conversation.updatedAt, messages: conversation.transcript.map(({ role, text }) => ({ role, text })), changes, proposals: (await this.deps.proposals.list()).filter(proposal => proposal.conversation === conversation.id), plan: conversation.plan ?? [] }

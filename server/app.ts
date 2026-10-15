@@ -21,6 +21,8 @@ import { Models } from './models'
 import { SemanticIndex } from './semantic'
 import { GitError, type Git } from './git'
 import { PushService } from './push'
+import { SyncJobService } from './sync-jobs'
+import { SyncReadSnapshot } from './sync-snapshot'
 import { memoryFile, type MemoryTarget } from './memory'
 import { StorageError } from './persistence'
 import { MissingRecordError, ResearchStore } from './discussions'
@@ -58,9 +60,19 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     return semantic
   }
   const agent = new NoteAgent({ store, index, files, changes, proposals, git, models, conversations, bus, semantic: semanticIndex })
-  const agentRuns = new AgentRunService(store, agent, { track: task => track(task), shutdown: opts.shutdown, changesSince: async (session, since) => (await changes.list({ conversation: session })).filter(set => set.origin === 'request' && set.createdAt >= since).map(set => set.id), pendingProposals: async ids => { const pending: string[] = []; for (const id of ids) if ((await proposals.get(id).catch(() => null))?.status === 'pending') pending.push(id); return pending }, guard: () => { if (syncing) throw new ConflictError('正在同步笔记和对话记忆，请完成后再发送。') } })
+  const agentRuns = new AgentRunService(store, agent, { track: task => track(task), shutdown: opts.shutdown, changesSince: async (session, since) => (await changes.list({ conversation: session })).filter(set => set.origin === 'request' && set.createdAt >= since).map(set => set.id), pendingProposals: async ids => { const pending: string[] = []; for (const id of ids) if ((await proposals.get(id).catch(() => null))?.status === 'pending') pending.push(id); return pending }, guard: () => { if (syncing || syncJobs.busy) throw new ConflictError('正在同步笔记和对话记忆，请完成后再发送。') } })
   const pusher = new PushService({ store, files, git, models, conversations, index, bus })
+  const syncReads = new SyncReadSnapshot(store, bus)
   let syncing = false
+  const syncJobs = new SyncJobService(store.paths.local, {
+    shutdown: opts.shutdown, track: task => track(task),
+    guard: () => { if (agentRuns.busy || syncing || syncJobs.busy) throw new ConflictError('助手任务或同步仍在进行，请完成后再同步。') },
+    execute: async (emit, signal, options) => {
+      syncing = true
+      try { return await syncReads.run(() => pusher.push(emit, signal, options)) }
+      finally { syncing = false }
+    },
+  })
   const slotOf = (value: string | undefined): ModelSlot => { if (value === undefined) return 'main'; if (!MODEL_SLOTS.includes(value as ModelSlot)) throw new BadNameError('模型槽位无效。'); return value as ModelSlot }
   const settingsFor = (slot: ModelSlot) => slot === 'main' ? ai : ai.forSlot(slot)
 
@@ -92,8 +104,8 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     return c.json({ error: 'Internal error' }, 500)
   })
 
-  app.get('/api/notes', async (c) => c.json(await store.list()))
-  app.get('/api/folders', async (c) => c.json(await store.folders()))
+  app.get('/api/notes', async (c) => c.json(await syncReads.list()))
+  app.get('/api/folders', async (c) => c.json(await syncReads.folders()))
   app.post('/api/folders', async (c) => {
     const body = await c.req.json().catch(() => null)
     if (typeof body?.folder !== 'string') return c.json({ error: '请输入文件夹名称。' }, 400)
@@ -108,7 +120,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     bus.emit({ type: 'notes-changed' })
     return c.json({ ok: true })
   })
-  app.get('/api/canvas', async (c) => c.json(await store.canvas(c.req.query('folder') ?? '')))
+  app.get('/api/canvas', async (c) => c.json(await syncReads.canvas(c.req.query('folder') ?? '')))
   app.put('/api/canvas', async (c) => {
     const body = await c.req.json().catch(() => null)
     if (typeof body?.folder !== 'string') return c.json({ error: '请选择画布文件夹。' }, 400)
@@ -264,6 +276,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     return { body, scope, model }
   }
   // Agent runs: accepted once recorded, events can be reattached, and nothing is cancelled by disconnecting. Only Stop stops one.
+  app.get('/api/agent-runs', async (c) => c.json(await agentRuns.list(Number(c.req.query('limit') ?? 20))))
   app.post('/api/agent-runs', async (c) => {
     const parsed = await agentRequest(c)
     if (parsed.error) return parsed.error
@@ -303,7 +316,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     return scope.kind === 'note' ? { kind: 'note', folder: scope.folder, name: scope.name } : { kind: scope.kind, folder: scope.kind === 'chat' ? '' : scope.folder }
   }
   app.get('/api/ai/conversation', async c => {
-    const state = await agent.state(parseScope(c.req.query('scope')))
+    const state = await agent.state(parseScope(c.req.query('scope')), c.req.query('session'))
     if (!state) return c.json(state)
     const activeRun = agentRuns.runForSession(state.id), recovery = await agentRuns.recoveryForSession(state.id)
     return c.json({ ...state, ...(activeRun ? { activeRun } : {}), ...(recovery.length ? { recovery } : {}) })
@@ -350,10 +363,21 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
 
   app.get('/api/repo/status', async c => c.json(await pusher.status()))
   app.put('/api/repo/remote', async c => {
+    if (syncing || syncJobs.busy) throw new ConflictError('同步进行中，请完成后再更改远端仓库。')
     const body = await c.req.json().catch(() => null)
     if (!body || (body.url !== null && typeof body.url !== 'string')) return c.json({ error: '请填写远端仓库地址。' }, 400)
-    return c.json(await pusher.setRemote(body.url || null))
+    return c.json(await store.writer.run(async () => {
+      if (syncing || syncJobs.busy) throw new ConflictError('同步进行中，请完成后再更改远端仓库。')
+      return pusher.setRemote(body.url || null)
+    }))
   })
+  app.get('/api/repo/sync', async c => c.json(await syncJobs.get()))
+  app.post('/api/repo/sync', async c => {
+    const body = await object(c)
+    if (body.enrich !== undefined && typeof body.enrich !== 'boolean') throw new BadNameError('整理记忆选项无效。')
+    return c.json(await syncJobs.start({ enrich: body.enrich === true }), 202)
+  })
+  app.post('/api/repo/sync/:id/stop', async c => c.json(await syncJobs.stop(c.req.param('id'))))
   app.post('/api/repo/push', async c => {
     c.header('Content-Type', 'application/x-ndjson')
     c.header('Cache-Control', 'no-store')
@@ -363,7 +387,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
       const signal = AbortSignal.any([controller.signal, c.req.raw.signal, AbortSignal.timeout(1800000), ...(opts.shutdown ? [opts.shutdown] : [])])
       const emit = async (event: PushEvent) => { if (!output.aborted) await output.write(JSON.stringify(event) + '\n') }
       try {
-        if (agentRuns.busy || syncing) throw new ConflictError('助手任务或同步仍在进行，请完成后再同步。')
+        if (agentRuns.busy || syncing || syncJobs.busy) throw new ConflictError('助手任务或同步仍在进行，请完成后再同步。')
         syncing = true
         try { await track(store.writer.run(() => pusher.push(emit, signal))) }
         finally { syncing = false }
@@ -394,7 +418,7 @@ export function createApp(store: NoteStore, bus: EventBus, opts: AppOptions = {}
     return c.json({ name }, 201)
   })
 
-  app.get('/api/notes/:name', async (c) => c.json(await store.load(c.req.param('name'))))
+  app.get('/api/notes/:name', async (c) => c.json(await syncReads.load(c.req.param('name'))))
   app.get('/api/notes/:name/identity', async (c) => c.json(await store.identity(c.req.param('name'))))
 
   app.put('/api/notes/:name/content', async (c) => {

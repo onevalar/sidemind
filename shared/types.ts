@@ -151,6 +151,18 @@ export type PushEvent =
   | { type: 'report'; report: PushReport }
   | { type: 'error'; text: string }
   | { type: 'done' }
+export interface SyncJobDTO {
+  enrich: boolean
+  id: string
+  status: 'running' | 'stopping' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
+  startedAt: number
+  updatedAt: number
+  finishedAt?: number
+  activity: string
+  events: PushEvent[]
+  report?: PushReport
+  error?: string
+}
 export interface PushReport {
   committed: string | null
   message: string
@@ -286,6 +298,9 @@ export interface AgentRunDTO {
   /** Conversation this run writes to, once known. */
   session?: string
   requestKey: string
+  /** Short user request and latest progress for discovery outside the originating conversation. */
+  request?: string
+  activity?: string
   status: AgentRunStatus
   /** Change sets and proposals this run produced, recorded as they happen so a restart can tell what it already did. */
   changes?: string[]

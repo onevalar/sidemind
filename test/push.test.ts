@@ -9,6 +9,12 @@ import { createApp } from '../server/app'
 import { EventBus } from '../server/events'
 import { NoteStore } from '../server/store'
 import { openDataRepo } from '../server/repo'
+import { PushService } from '../server/push'
+import { MemoryFiles } from '../server/memory-files'
+import { Models } from '../server/models'
+import { ChatGPTConnection } from '../server/chatgpt'
+import { ConversationStore } from '../server/conversations'
+import { NoteIndex } from '../server/note-index'
 import type { PushEvent, PushReport } from '../shared/types'
 
 let dir: string
@@ -62,7 +68,7 @@ describe('data repository', () => {
 
 type Calls = { kind: string; input: any }[]
 /** A fake summary model that answers each pipeline prompt by its instructions. */
-function summaryModel(calls: Calls, overrides: { claimsChanged?: boolean } = {}): typeof fetch {
+function summaryModel(calls: Calls, overrides: { claimsChanged?: boolean; failFolder?: boolean; failLibrary?: boolean } = {}): typeof fetch {
   return async (url, init) => {
     const body = JSON.parse(String(init!.body)), system: string = body.messages[0].content, user: string = body.messages[1]?.content ?? ''
     const json = (value: unknown) => new Response(JSON.stringify({ choices: [{ message: { content: '```json\n' + JSON.stringify(value) + '\n```' }, finish_reason: 'stop' }] }))
@@ -74,15 +80,15 @@ function summaryModel(calls: Calls, overrides: { claimsChanged?: boolean } = {})
       if (input.task.includes('生成完整记忆')) return json({ types: ['观点/论述'], status: '活跃', sections: { '摘要': `关于 ${input.note} 的摘要。`, '用途': '- 回答测试问题 〔推断〕', '现行结论': '- 结论一 〔§开头 · 原文 · 已确认〕' }, commit: '新建 ' + input.note, claims_changed: false })
       return json({ sections: { '现行结论': '- 新结论 〔§开头 · 原文 · 已确认〕', '已废弃的观点': '- 结论一 → 新结论（正文改了）' }, commit: '修改结论', claims_changed: overrides.claimsChanged ?? true })
     }
-    if (system.includes('整个笔记库')) { calls.push({ kind: 'library', input: JSON.parse(user) }); return json({ sections: { '跨文件夹主线': '- 主线' } }) }
-    if (system.includes('一个文件夹')) { calls.push({ kind: 'folder', input: JSON.parse(user) }); return json({ sections: { '全景与覆盖': '- 测试覆盖' } }) }
+    if (system.includes('整个笔记库')) { if (overrides.failLibrary) return new Response('unavailable', { status: 400 }); calls.push({ kind: 'library', input: JSON.parse(user) }); return json({ sections: { '跨文件夹主线': '- 主线' } }) }
+    if (system.includes('一个文件夹')) { if (overrides.failFolder) return new Response('unavailable', { status: 400 }); calls.push({ kind: 'folder', input: JSON.parse(user) }); return json({ sections: { '全景与覆盖': '- 测试覆盖' } }) }
     if (system.includes('__unused__')) { calls.push({ kind: 'library', input: JSON.parse(user) }); return json({ sections: { '跨文件夹主线': '- 主线' } }) }
     if (system.includes('commit message')) { calls.push({ kind: 'commit', input: JSON.parse(user) }); return new Response(JSON.stringify({ choices: [{ message: { content: '更新笔记\n\n- 测试提交' }, finish_reason: 'stop' }] })) }
     throw new Error('unexpected prompt: ' + system.slice(0, 80))
   }
 }
 
-async function setup(calls: Calls, overrides: { claimsChanged?: boolean } = {}) {
+async function setup(calls: Calls, overrides: { claimsChanged?: boolean; failFolder?: boolean; failLibrary?: boolean } = {}) {
   const root = path.join(dir, 'data')
   const { paths, git: repo } = await openDataRepo(root)
   const store = new NoteStore(paths)
@@ -94,7 +100,8 @@ async function setup(calls: Calls, overrides: { claimsChanged?: boolean } = {}) 
   const ai = new AISettings(root, path.join(dir, 'private'), {})
   await ai.forSlot('summary').save({ model: 'cheap', baseUrl: 'https://cheap.example/v1', key: 'k' })
   const app = createApp(store, new EventBus(), { aiSettings: ai, aiTransport: summaryModel(calls, overrides), git: repo })
-  return { root, store, app, ai }
+  const service = new PushService({ store, files: new MemoryFiles(store.paths.memory, store.writer), git: repo, models: new Models(ai, new ChatGPTConnection(ai.file + '.chatgpt.json'), summaryModel(calls, overrides)), conversations: new ConversationStore(path.join(store.paths.local, 'conversations'), store.writer), index: new NoteIndex(store), bus: new EventBus() })
+  return { root, store, app, ai, service }
 }
 async function push(app: ReturnType<typeof createApp>): Promise<{ events: PushEvent[]; report: PushReport }> {
   const response = await app.request('/api/repo/push', { method: 'POST', headers: J, body: '{}' })
@@ -105,6 +112,57 @@ async function push(app: ReturnType<typeof createApp>): Promise<{ events: PushEv
 }
 
 describe('push pipeline', () => {
+  it('retries failed folder and library memories after notes are committed, without rebuilding notes', async () => {
+    const calls: Calls = [], overrides = { failFolder: true, failLibrary: true }
+    const { root, app } = await setup(calls, overrides)
+    await push(app)
+    const folderFile = path.join(root, 'memory', 'Work', '_folder.md'), libraryFile = path.join(root, 'memory', '_library.md')
+    expect(await fs.readFile(folderFile, 'utf8')).toContain('pending: true')
+    expect(await fs.readFile(libraryFile, 'utf8')).toContain('pending: true')
+    expect(git(root, 'status', '--porcelain')).toBe('')
+    calls.length = 0
+    overrides.failFolder = false
+    await push(app)
+    expect(calls.some(call => call.kind === 'note')).toBe(false)
+    expect(calls.some(call => call.kind === 'folder')).toBe(true)
+    expect(await fs.readFile(folderFile, 'utf8')).not.toContain('pending: true')
+    expect(await fs.readFile(libraryFile, 'utf8')).toContain('pending: true')
+    calls.length = 0
+    overrides.failLibrary = false
+    await push(app)
+    expect(calls.map(call => call.kind)).toEqual(['library'])
+    expect(await fs.readFile(libraryFile, 'utf8')).not.toContain('pending: true')
+    expect(git(root, 'status', '--porcelain')).toBe('')
+  })
+
+  it('syncs without model calls and later enriches committed notes from the durable backlog', async () => {
+    const calls: Calls = []
+    const { root, store, service } = await setup(calls)
+    const run = (enrich: boolean) => store.writer.run(() => service.push(async () => {}, new AbortController().signal, { enrich }))
+    const synced = await run(false)
+    expect(calls).toHaveLength(0)
+    expect(synced.committed).toBeTruthy()
+    expect(synced.notes.every(note => note.memory === 'pending')).toBe(true)
+    expect(git(root, 'status', '--porcelain')).toBe('')
+    expect(await fs.readFile(path.join(root, 'memory', 'Work', 'A.md'), 'utf8')).toContain('pending: true')
+    await run(true)
+    expect(calls.filter(call => call.kind === 'note')).toHaveLength(3)
+    const before = await fs.readFile(path.join(root, 'memory', 'Work', 'A.md'), 'utf8')
+    expect(before).not.toContain('pending: true')
+    const basedOn = before.match(/based_on: (\w+)/)![1]
+    await fs.writeFile(path.join(root, 'notes', 'Work', 'A.md'), '# A\n\n结论已被证伪，现在采用完全不同的新解释。\n')
+    calls.length = 0
+    await run(false)
+    expect(calls).toHaveLength(0)
+    const deferred = await fs.readFile(path.join(root, 'memory', 'Work', 'A.md'), 'utf8')
+    expect(deferred).toContain('pending: true')
+    expect(deferred).toContain('based_on: ' + basedOn)
+    await run(true)
+    expect(calls.filter(call => call.kind === 'note')).toHaveLength(1)
+    expect(await fs.readFile(path.join(root, 'memory', 'Work', 'A.md'), 'utf8')).not.toContain('pending: true')
+    expect(git(root, 'status', '--porcelain')).toBe('')
+  })
+
   it('builds memory on the first push, skips the model for wording edits and updates memory incrementally for real changes', async () => {
     const calls: Calls = []
     const { root, store, app } = await setup(calls)

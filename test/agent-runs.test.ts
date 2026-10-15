@@ -83,6 +83,61 @@ beforeEach(async () => {
 afterEach(async () => { await Promise.allSettled([...running]); await fs.rm(dir, { recursive: true, force: true }) })
 
 describe('Note Agent on the run layer', () => {
+  it('discovers a running task outside its page with durable request and current activity', async () => {
+    const release = gate()
+    script = [{ text: '正在整理', hold: release.hold }]
+    const app = build()
+    try {
+      expect(await call(app, 'GET', '/api/agent-runs')).toEqual([])
+      const run = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'discover', scope: { kind: 'note', folder: '', name: 'Existing.md' }, message: '整理\n  这篇文章' }, 202)
+      await until(async () => (await call<AgentRunDTO[]>(app, 'GET', '/api/agent-runs'))[0]?.activity === '正在生成回复')
+      const found = await call<AgentRunDTO[]>(app, 'GET', '/api/agent-runs')
+      expect(found).toEqual([expect.objectContaining({ id: run.id, request: '整理 这篇文章', activity: '正在生成回复', status: 'running', scope: { kind: 'note', folder: '', name: 'Existing.md' }, session: expect.any(String) })])
+      await until(async () => JSON.parse(await fs.readFile(path.join(store.paths.local, 'agent-runs', run.id + '.json'), 'utf8')).activity === '正在生成回复')
+      release.open()
+      await until(async () => (await status(app, run.id)) === 'completed')
+      expect((await call<AgentRunDTO[]>(build(), 'GET', '/api/agent-runs'))[0]).toMatchObject({ id: run.id, request: '整理 这篇文章', activity: '正在生成回复', status: 'completed' })
+    } finally { release.open() }
+  })
+
+  it('bounds history, prioritizes tasks needing attention, and accepts older records without summaries', async () => {
+    const directory = path.join(store.paths.local, 'agent-runs')
+    await fs.mkdir(directory, { recursive: true })
+    for (let i = 0; i < 24; i++) {
+      const id = i.toString(16).padStart(32, '0')
+      await fs.writeFile(path.join(directory, id + '.json'), JSON.stringify({ version: 1, id, requestKey: String(i), scope, status: i === 0 ? 'recovery_required' : 'completed', seq: 0, createdAt: i, updatedAt: i }))
+    }
+    const app = build()
+    const all = await call<AgentRunDTO[]>(app, 'GET', '/api/agent-runs?limit=999')
+    expect(all).toHaveLength(20)
+    expect(all[0]).toMatchObject({ status: 'recovery_required', requestKey: '0' })
+    expect(all[1]!.requestKey).toBe('23')
+    expect(all[0]!.request).toBeUndefined()
+    const reads = vi.spyOn(fs, 'readdir')
+    try {
+      expect(await call(app, 'GET', '/api/agent-runs?limit=1')).toEqual([all[0]])
+      expect(await call(app, 'GET', '/api/agent-runs?limit=1')).toEqual([all[0]])
+      expect(reads.mock.calls.filter(([directory]) => String(directory).endsWith('/agent-runs'))).toHaveLength(0)
+    } finally { reads.mockRestore() }
+    await call(app, 'GET', '/api/agent-runs?limit=-1', undefined, 400)
+    await call(app, 'GET', '/api/agent-runs?limit=abc', undefined, 400)
+  })
+
+  it('returns the exact requested conversation rather than a newer one and validates its scope', async () => {
+    const app = build(), chatScope = { kind: 'chat', folder: '' }
+    script = [{ text: '第一段回答' }, { text: '第二段回答' }]
+    const first = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'exact-first', scope: chatScope, message: '第一个任务' }, 202)
+    await attach(app, first.id)
+    const second = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'exact-second', scope: chatScope, message: '第二个任务' }, 202)
+    await attach(app, second.id)
+    const run = await call<AgentRunDTO>(app, 'GET', `/api/agent-runs/${first.id}`)
+    const result = await call<{ id: string; messages: { text: string }[] }>(app, 'GET', `/api/ai/conversation?scope=${encodeURIComponent(JSON.stringify(chatScope))}&session=${run.session}`)
+    expect(result.id).toBe(run.session)
+    expect(result.messages.map(message => message.text)).toEqual(['第一个任务', '第一段回答'])
+    await call(app, 'GET', `/api/ai/conversation?scope=${encodeURIComponent(JSON.stringify(scope))}&session=${run.session}`, undefined, 400)
+    await call(app, 'GET', `/api/ai/conversation?scope=${encodeURIComponent(JSON.stringify(chatScope))}&session=bad`, undefined, 400)
+  })
+
   it('preserves the full conversation and original goal when compaction fails', async () => {
     script = [{ text: '已理解目标。' }]
     const app = build()
@@ -320,7 +375,11 @@ describe('Note Agent on the run layer', () => {
     const push = await app.request('/api/repo/push', { method: 'POST', headers: J, body: '{}' })
     expect(await push.text()).not.toContain('助手任务或同步仍在进行')
     await call(app, 'POST', `/api/ai/proposals/${waiting.proposals![0]}/accept`, {})
-    expect(await status(app, run.id)).toBe('completed')
+    const settled = await call<AgentRunDTO>(app, 'GET', `/api/agent-runs/${run.id}`)
+    expect(settled.status).toBe('completed')
+    expect(await call(app, 'GET', `/api/agent-runs/${run.id}`)).toEqual(settled)
+    const persisted = JSON.parse(await fs.readFile(path.join(store.paths.local, 'agent-runs', run.id + '.json'), 'utf8'))
+    expect(persisted.updatedAt).toBe(settled.updatedAt)
     expect(await status(build(), run.id)).toBe('completed')
   })
 
