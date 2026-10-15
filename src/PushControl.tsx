@@ -1,73 +1,89 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
-import type { PushReport, RepoStatus } from '../shared/types'
+import type { RepoStatus, SyncJobDTO } from '../shared/types'
 import { api, subscribeEvents } from './api'
-import { Button, Dialog, Icon, Input } from './ui'
+import { Accordion, Button, Dialog, Icon, Input } from './ui'
 
 const kindLabel: Record<string, string> = { new: '新建', deleted: '删除', wording: '措辞', addition: '新增内容', semantic: '关键表述', unchanged: '未改正文' }
-const memoryLabel: Record<string, string> = { updated: '已更新记忆', unchanged: '记忆无需更新', pending: '记忆待补', removed: '已删除记忆', moved: '记忆随文件移动' }
+const active = (job: SyncJobDTO | null) => job?.status === 'running' || job?.status === 'stopping'
 
-/**
- * The single 同步 button: reads changes, lets the summary model update memory and write the
- * commit message, commits, receives remote changes and pushes. Saving stays automatic.
- */
+/** The server owns sync. This control observes it; dismissing details never cancels work. */
 export function PushControl({ beforeLeave, collapsed }: { beforeLeave: MutableRefObject<() => Promise<boolean>>; collapsed: boolean }) {
   const [status, setStatus] = useState<RepoStatus | null>(null)
+  const [job, setJob] = useState<SyncJobDTO | null>(null)
   const [open, setOpen] = useState(false)
-  const [running, setRunning] = useState(false)
-  const [steps, setSteps] = useState<string[]>([])
-  const [warnings, setWarnings] = useState<string[]>([])
-  const [report, setReport] = useState<PushReport | null>(null)
+  const [starting, setStarting] = useState(false)
   const [error, setError] = useState('')
-  const controller = useRef<AbortController | null>(null)
-  const refresh = useCallback(async () => { try { setStatus(await api.repoStatus()) } catch { setStatus(null) } }, [])
-  useEffect(() => {
-    void refresh()
-    let timer: ReturnType<typeof setTimeout>
-    const unsubscribe = subscribeEvents(event => {
-      if (event.type === 'hello' || event.type === 'notes-changed' || event.type === 'canvas-changed' || event.type === 'memory-changed' || event.type === 'repo-changed') { clearTimeout(timer); timer = setTimeout(() => void refresh(), 400) }
-    })
-    return () => { clearTimeout(timer); unsubscribe() }
-  }, [refresh])
-  useEffect(() => () => controller.current?.abort(), [])
-
-  const push = async () => {
-    if (running) return
-    setOpen(true); setRunning(true); setSteps([]); setWarnings([]); setReport(null); setError('')
-    const abort = new AbortController()
-    controller.current = abort
+  const [connectionError, setConnectionError] = useState('')
+  const mounted = useRef(true)
+  const inFlight = useRef(false)
+  const refresh = useCallback(async () => {
+    if (inFlight.current) return
+    inFlight.current = true
     try {
-      if (!await beforeLeave.current()) throw new Error('请先处理尚未保存的文章或画布位置，再同步。')
-      await api.push(event => {
-        if (event.type === 'step') setSteps(current => [...current, event.text])
-        else if (event.type === 'note') setSteps(current => [...current, `${event.name} · ${kindLabel[event.kind] ?? event.kind}${event.detail ? '：' + event.detail : ''}`])
-        else if (event.type === 'warning') setWarnings(current => [...current, event.text])
-        else if (event.type === 'report') setReport(event.report)
-        else if (event.type === 'error') setError(event.text)
-      }, abort.signal)
-    } catch (caught) { setError(abort.signal.aborted ? '已停止同步。已更新的记忆保留在工作区，下次同步时一起提交。' : (caught as Error).message) }
-    finally { setRunning(false); controller.current = null; void refresh() }
+      const [repo, next] = await Promise.all([api.repoStatus(), api.syncStatus()])
+      if (mounted.current) { setStatus(repo); setJob(current => !current ? next : next && next.updatedAt >= current.updatedAt ? next : current); setConnectionError('') }
+    } catch (caught) { if (mounted.current) setConnectionError('无法读取同步状态：' + (caught as Error).message) }
+    finally { inFlight.current = false }
+  }, [])
+  const running = active(job) || starting
+  useEffect(() => {
+    mounted.current = true
+    void refresh()
+    const timer = setInterval(() => void refresh(), running || open ? 1000 : 10000)
+    const unsubscribe = subscribeEvents(event => { if (event.type === 'hello' || event.type === 'repo-changed' || event.type === 'notes-changed') void refresh() })
+    return () => { mounted.current = false; clearInterval(timer); unsubscribe() }
+  }, [refresh, running, open])
+
+  const start = async (enrich = false) => {
+    if (running) { setOpen(true); return }
+    setStarting(true); setError('')
+    try {
+      if (!await beforeLeave.current()) throw new Error('请先处理未保存的修改，再同步。')
+      const next = await api.startSync({ enrich })
+      if (mounted.current) setJob(next)
+    } catch (caught) { if (mounted.current) { setError((caught as Error).message); setOpen(true) } }
+    finally { if (mounted.current) setStarting(false) }
   }
+  const stop = async () => {
+    if (!job || !active(job)) return
+    try { setJob(await api.stopSync(job.id)) } catch (caught) { setError((caught as Error).message) }
+  }
+  const report = job?.report
+  const failed = !!error || !!connectionError || job?.status === 'failed' || job?.status === 'interrupted' || !!(report?.pushError && status?.remote)
+  const title = starting ? '正在准备同步' : active(job) ? job?.enrich ? '正在整理 AI 记忆' : '正在同步' : failed ? '同步需要处理' : job?.status === 'cancelled' ? '同步已停止' : report?.pushed ? '已与远端同步' : report ? '已保存到本机' : '同步'
   const pending = status?.git ? status.changes + (status.ahead ?? 0) : 0
-  const label = !status ? '同步' : !status.git ? '同步不可用：未找到 Git' : pending ? `同步 · ${status.changes} 处改动${status.ahead ? `，${status.ahead} 个待同步提交` : ''}` : status.remote ? '同步 · 检查远端更新' : '同步 · 未配置远端'
+  const label = running ? title + ' · 查看进度' : !status ? '正在读取同步状态' : !status.git ? '同步不可用：未找到 Git' : pending ? `同步 · ${status.changes} 处改动${status.ahead ? `，${status.ahead} 个待同步提交` : ''}` : status.remote ? '同步 · 检查远端更新' : '同步 · 未配置远端'
+  const warnings = [...new Set(job?.events.flatMap(event => event.type === 'warning' ? [event.text] : []) ?? [])]
+  const steps = job?.events.filter(event => event.type === 'step') ?? []
+  const pendingMemory = report?.notes.filter(note => note.memory === 'pending') ?? []
   return <>
-    <Button variant="ghost" size="sm" className="nav-item push-item" aria-label={label} title={label} isDisabled={!status?.git || running} onPress={() => void push()}>
-      <Icon name="sync" size={18}/><span>{running ? '正在同步…' : '同步'}</span>{!collapsed && !!status?.changes && <span className="count">{status.changes}</span>}
-    </Button>
-    <Dialog title="同步" open={open} onClose={() => { if (!running) setOpen(false) }} footer={running
-      ? <Button variant="ghost" onPress={() => controller.current?.abort()}>停止</Button>
-      : <Button onPress={() => setOpen(false)}>完成</Button>}>
-      <div className="push-dialog" aria-busy={running}>
-        <ol className="push-steps" aria-label="同步进度">{steps.map((step, index) => <li key={index}><Icon name={index === steps.length - 1 && running ? 'arrow' : 'check'} size={13}/><span>{step}</span></li>)}</ol>
-        {running && !steps.length && <p className="muted" role="status">正在准备…</p>}
-        {warnings.map((warning, index) => <p key={index} className="push-warning" role="status">{warning}</p>)}
-        {error && <p className="ai-error" role="alert">{error}</p>}
-        {report && <section className="push-report" aria-label="同步结果">
-          <p role="status"><strong>{report.committed ? `已提交 ${report.committed}` : '没有需要提交的改动'}</strong>{' · '}{report.pushed ? '已与远端同步' : report.pushError ?? '未同步到远端'}</p>
-          {report.message && <pre className="push-message">{report.message}</pre>}
-          {!!report.notes.length && <ul className="push-notes">{report.notes.map(note => <li key={note.name}><span title={note.name}>{note.name}</span><span className="muted">{kindLabel[note.kind] ?? note.kind} · {memoryLabel[note.memory]}</span></li>)}</ul>}
-          {!!report.stale.length && <div className="push-stale"><strong>依据已变化，建议核对：</strong><ul>{report.stale.map(item => <li key={item.name}>{item.name}：{item.because}</li>)}</ul></div>}
-          {!!report.layout.length && <p className="muted">画布：{report.layout.join('；')}</p>}
-        </section>}
+    <div className="sync-control">
+      <Button variant="ghost" size="sm" className="nav-item push-item" aria-label={label} title={label} isDisabled={!status?.git || starting} onPress={() => { if (collapsed && job) setOpen(true); else void start() }}>
+        <Icon name={failed ? 'clock' : 'sync'} size={18}/><span>{running ? '同步中' : failed ? '需处理' : report && !pending ? report.pushed ? '已同步' : '已存本机' : '同步'}</span>{!collapsed && !running && !!status?.noteChanges && <span className="count">{status.noteChanges}</span>}
+      </Button>
+      {!collapsed && (job || error) && <Button variant="ghost" size="sm" isIconOnly aria-label="同步详情" title={title} onPress={() => setOpen(true)}><Icon name="more" size={16}/></Button>}
+      <span className="sync-announcement" role="status">{title}</span>
+    </div>
+    <Dialog title={job?.enrich ? 'AI 记忆整理' : '同步'} open={open} onClose={() => setOpen(false)} footer={<>
+      {active(job) ? <Button variant="ghost" isDisabled={job?.status === 'stopping'} onPress={() => void stop()}>{job?.status === 'stopping' ? '正在停止…' : '停止任务'}</Button> : <Button variant="ghost" isDisabled={starting || !status?.git} onPress={() => void start()}>{failed ? '重试同步' : '再次同步'}</Button>}
+      <Button onPress={() => setOpen(false)}>{running ? '后台继续' : '完成'}</Button>
+    </>}>
+      <div className="sync-details">
+        <section aria-label="同步结果" className="sync-summary">
+          <h3>{title}</h3>
+          {running ? <p role="status">{starting ? '正在保存当前修改…' : job?.activity || '正在准备…'}</p> : <p>{report?.pushed ? '本机改动与远端已同步。' : report && !status?.remote ? '尚未配置远端仓库，本次只保存在本机。' : job?.status === 'cancelled' ? '任务已停止，已完成的本机改动会保留。' : '可从左下角开始同步。'}</p>}
+          {running && <p className="muted">可关闭此窗口继续使用，刷新后也能查看进度。</p>}
+          {!!report && <p className="muted">{report.notes.length} 篇笔记 · {report.layout.length} 项画布记录{report.committed ? ` · 本机版本 ${report.committed}` : ''}</p>}
+          {(error || connectionError || job?.error || failed && report?.pushError) && <p className="ai-error" role="alert">{error || connectionError || job?.error || report?.pushError}</p>}
+        </section>
+        {report && !!pendingMemory.length && <Accordion defaultOpen={-1} items={[{ title: `AI 记忆 · ${pendingMemory.length} 篇待整理`, content: <p className="muted">日常同步只保存和传输数据，不再等待 AI 整理。笔记已保存，记忆状态不代表同步失败。</p> }]}/>}
+        {(!!warnings.length || !!report?.stale.length) && <Accordion defaultOpen={-1} items={[{ title: `需要留意 · ${warnings.length + (report?.stale.length ?? 0)}`, content: <ul className="sync-detail-list">{warnings.map(text => <li key={text}>{text}</li>)}{report?.stale.map(item => <li key={item.name}>{item.name}：{item.because}</li>)}</ul> }]}/>}
+        {report && <Accordion defaultOpen={-1} items={[{ title: '查看本次内容', content: <div className="sync-records">
+          {report.message && <p className="sync-commit-message">{report.message}</p>}
+          <ul className="sync-detail-list">{report.notes.map(note => <li key={note.name}><span>{note.name}</span><span className="muted">{kindLabel[note.kind] ?? note.kind}</span></li>)}</ul>
+          {!!report.layout.length && <ul className="sync-detail-list">{report.layout.map(text => <li key={text}>{text}</li>)}</ul>}
+        </div> }]}/>}
+        {!!steps.length && <Accordion defaultOpen={-1} items={[{ title: '运行记录', content: <ol className="sync-detail-list">{steps.map((event, index) => <li key={index}>{event.type === 'step' ? event.text : ''}</li>)}</ol> }]}/>}
       </div>
     </Dialog>
   </>

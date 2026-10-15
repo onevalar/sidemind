@@ -292,3 +292,23 @@ h4.heading { font-size: var(--text-base); }
 .markdown th, .markdown td { padding: 9px 14px; border-bottom: 1px solid var(--border-subtle); }
 .markdown th { background: color-mix(in oklab, var(--surface-muted) 70%, transparent); color: var(--text-secondary); font-weight: 500; }
 .markdown img { max-width: 100%; }
+
+/* Sidebar composition: one navigation row, contextual drafts and an adjacent run status. */
+.headerTools { margin-left: auto; }
+.closeAction { margin-left: 0; }
+.dockContext { display: flex; align-items: center; gap: 8px; }
+.context { min-width: 0; flex: 1; }
+.composerBar .switcherPill { max-width: calc(100% - 48px); overflow: hidden; }
+.composerBar .composerHint { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.empty { align-content: end; justify-items: start; text-align: left; gap: 12px; padding: 24px 0 16px; }
+.suggestionsSection { margin-top: 8px; }
+.suggestions { display: flex; flex-wrap: wrap; gap: 4px; }
+.suggestion { width: auto; justify-content: flex-start; }
+.liveAnswer { margin-top: 12px; }
+.activityRow { display: flex; align-items: center; gap: 8px; color: var(--text-secondary); }
+.activityRow > svg { flex: none; }
+.liveAnswer { display: grid; gap: 8px; }
+.activityRow .thinkingHead { height: auto; min-height: 32px; cursor: default; }
+
+.user { position: relative; }
+.userActions { position: absolute; top: 0; right: 100%; z-index: 1; }

@@ -6,7 +6,7 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import type { KeyboardEvent, ReactNode } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "motion/react";
-import { ArrowDown, ArrowDownToLine, ArrowUp, Settings, SquarePen, X } from "lucide-react";
+import { ArrowDown, ArrowUp, LoaderCircle, Settings, SquarePen, X } from "lucide-react";
 import { motionTokens } from "../../lib/motion-tokens";
 import { Button } from "../../button/button";
 import { CopyButton } from "../../copy-button/copy-button";
@@ -24,6 +24,9 @@ export interface AiChatProps {
   onNew: () => void;
   onClose: () => void;
   context?: ReactNode;
+  navigation?: ReactNode;
+  threadNotice?: ReactNode;
+  activityDetails?: ReactNode;
   messages: AiChatMessage[];
   value: string;
   onValueChange: (value: string) => void;
@@ -61,7 +64,7 @@ function IconSwap({ id, children }: { id: string; children: ReactNode }) {
 }
 
 /** The original AI Chat column, controlled by the real Agent rather than demo state. */
-export function AiChat({ title, model, onConfigure, onNew, onClose, context, messages, value, onValueChange, onSend, onStop, onInterruptSend, busy, locked,
+export function AiChat({ title, model, onConfigure, onNew, onClose, context, navigation, threadNotice, activityDetails, messages, value, onValueChange, onSend, onStop, onInterruptSend, busy, locked,
   activity = "正在思考…", onOpenNote, disabled, emptyTitle, emptyText, suggestions = [], streaming, children, thread: customThread, hideHeader, hideComposer, inputLabel = "AI 消息", placeholder = "输入问题或操作要求…", sendLabel = "发送消息", readOnly }: AiChatProps) {
   const reduced = useReducedMotion();
   const threadRef = useRef<HTMLDivElement>(null);
@@ -117,12 +120,10 @@ export function AiChat({ title, model, onConfigure, onNew, onClose, context, mes
   return <div className={styles.root} data-embedded>
     <section className={styles.main} aria-label={title}>
       {!hideHeader && <header className={styles.header}>
+        {navigation ?? <strong>{title}</strong>}
         <div className={styles.headerTools}>
           <button type="button" className={styles.iconButton} aria-label="开始新对话" disabled={locked} onClick={onNew}><SquarePen size={17} strokeWidth={1.75} aria-hidden="true"/></button>
         </div>
-        <button type="button" className={styles.switcherPill} aria-label={model ? `配置模型：${model}` : "连接模型"} title={model ?? "连接模型"} onClick={onConfigure}>
-          <span className={styles.modelName}>{model ?? "连接模型"}</span><Settings size={15} strokeWidth={1.75} aria-hidden="true"/>
-        </button>
         <button type="button" className={`${styles.iconButton} ${styles.closeAction}`} aria-label="关闭 AI 助手" onClick={onClose}><X size={18} strokeWidth={1.75} aria-hidden="true"/></button>
       </header>}
       <div ref={threadRef} className={styles.thread} onScroll={() => {
@@ -133,15 +134,15 @@ export function AiChat({ title, model, onConfigure, onNew, onClose, context, mes
       }}>
         <div ref={contentRef} className={styles.threadContent}>
           <div className={styles.page}>
+            {threadNotice}
             {customThread !== undefined ? customThread : !messages.length && !busy ? <div className={styles.empty}>
               <h3 className={styles.greeting}>{emptyTitle}</h3><p className={styles.emptyDescription}>{emptyText}</p>
               {!!suggestions.length && <div className={styles.suggestionsSection}>
-                <p className={styles.suggestionsHint}>点击填入输入框，修改后发送</p>
                 <ul className={styles.suggestions} aria-label="示例问题">
                   {suggestions.map((suggestion, index) => <motion.li key={suggestion.label}
                     initial={reduced ? false : { opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: motionTokens.duration.considered, delay: reduced ? 0 : index * motionTokens.stagger.item }}>
-                    <Button type="button" variant="secondary" className={styles.suggestion} onClick={() => { onValueChange(suggestion.prompt); textareaRef.current?.focus(); }}>
-                      <ArrowDownToLine size={16} strokeWidth={1.75} aria-hidden="true"/>{suggestion.label}
+                    <Button type="button" variant="ghost" size="sm" className={styles.suggestion} title="填入输入框，可修改后发送" onClick={() => { onValueChange(suggestion.prompt); textareaRef.current?.focus(); }}>
+                      {suggestion.label}
                     </Button>
                   </motion.li>)}
                 </ul>
@@ -161,9 +162,10 @@ export function AiChat({ title, model, onConfigure, onNew, onClose, context, mes
                   </motion.li>)}
                 </ol>
               </div>
-              {busy && <div className={styles.liveAnswer} aria-hidden="true" inert>
-                {streaming ? <div className={styles.markdown}><NoteMarkdown onOpenNote={onOpenNote}>{streaming}</NoteMarkdown></div>
-                  : <div className={styles.thinkingHead}><TextShimmer>{activity}</TextShimmer></div>}
+              {busy && <div className={styles.liveAnswer} aria-label="当前任务">
+                <div className={styles.activityRow}><LoaderCircle className={styles.spin} size={15} strokeWidth={1.75} aria-hidden="true"/><div className={styles.thinkingHead}><TextShimmer>{streaming ? "正在回复…" : activity}</TextShimmer></div></div>
+                {activityDetails}
+                {streaming && <div className={styles.markdown}><NoteMarkdown onOpenNote={onOpenNote}>{streaming}</NoteMarkdown></div>}
               </div>}
             </>}
             {children}
@@ -173,10 +175,14 @@ export function AiChat({ title, model, onConfigure, onNew, onClose, context, mes
       {!hideComposer && <div className={styles.dock}>
         <AnimatePresence>{!stuck && <motion.button type="button" className={styles.jump} aria-label="跳到最新消息" onClick={toBottom}
           initial={reduced ? false : { opacity: 0, y: 8, scale: .9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }} transition={transition}><ArrowDown size={16} strokeWidth={1.75} aria-hidden="true"/></motion.button>}</AnimatePresence>
-        {context && <div className={styles.context}>{context}</div>}
+        <div className={styles.dockContext}>{context && <div className={styles.context}>{context}</div>}</div>
         <form className={styles.composer} onSubmit={event => { event.preventDefault(); if (stopOnly) onStop(); else send(); }}>
           <textarea ref={textareaRef} className={styles.field} rows={1} value={value} placeholder={placeholder} aria-label={inputLabel} readOnly={readOnly} onChange={event => onValueChange(event.target.value)} onKeyDown={handleKeyDown}/>
-          <div className={styles.composerBar}><span className={styles.composerHint}>{canInterrupt ? "Enter 停止并发送调整" : busy ? "生成中 · Esc 停止" : "Enter 发送 · Shift Enter 换行"}</span>
+          <div className={styles.composerBar}>
+        {!hideHeader && <button type="button" className={styles.switcherPill} aria-label={model ? `配置模型：${model}` : "连接模型"} title={model ?? "连接模型"} onClick={onConfigure}>
+          <span className={styles.modelName}>{model ?? "连接模型"}</span><Settings size={15} strokeWidth={1.75} aria-hidden="true"/>
+        </button>}
+<span className={styles.composerHint}>{canInterrupt ? "Enter 停止并发送调整" : busy ? "生成中 · Esc 停止" : "Enter 发送 · Shift Enter 换行"}</span>
             {canInterrupt && <button type="button" className={styles.iconButton} aria-label="停止生成" onClick={onStop}><span className={styles.stopGlyph}/></button>}
             <button type="submit" className={styles.send} data-busy={stopOnly || undefined} aria-label={stopOnly ? "停止生成" : canInterrupt ? "停止并发送调整" : sendLabel} disabled={!stopOnly && (!!disabled || !!readOnly || !value.trim())}>
               <IconSwap id={stopOnly ? "stop" : "send"}>{stopOnly ? <span className={styles.stopGlyph}/> : <ArrowUp size={18} strokeWidth={2}/>}</IconSwap>

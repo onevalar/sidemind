@@ -33,3 +33,11 @@
   .note-workspace-header { padding-inline: var(--space-3); }
   .editor-back-label, .editor-ai-label { display: none; }
 }
+
+/* One navigation row; title opens the document outline. */
+.note-workspace-header .editor-folder { min-width: 0; flex-shrink: 1; max-width: 28%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-path-separator { color: var(--text-muted); }
+.note-workspace-header .breadcrumb > .editor-title-menu { flex-shrink: 1; min-width: 0; }
+.editor-title-menu > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.editor-title-menu > svg { flex-shrink: 0; }
+@media (max-width: 1100px) { .editor-path-separator { display: none; } }

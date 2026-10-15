@@ -27,7 +27,7 @@ const mount = (model: string | null = 'm') => render(<ExplorePanel name="Materia
 
 it('asks "explain this" when a passage is selected and no question is written', async () => {
   mount()
-  const ask = await screen.findByRole('button', { name: '提问' })
+  const ask = await screen.findByRole('button', { name: '解释原文' })
   await waitFor(() => expect((ask as HTMLButtonElement).disabled).toBe(false))
   fireEvent.click(ask)
   await waitFor(() => expect(api.createDraft).toHaveBeenCalledTimes(1))
@@ -45,7 +45,7 @@ it('keeps the typed question when there is one, and still needs a selection', as
 
 it('does not offer to ask without a selected passage', async () => {
   render(<ExplorePanel name="Materials.md" model="m" active beforeSend={idle} selection={selection('')} reveal={reveal} onConfigure={() => {}} onOpenNote={() => {}}/>)
-  const ask = await screen.findByRole('button', { name: '提问' })
+  const ask = await screen.findByRole('button', { name: '解释原文' })
   expect((ask as HTMLButtonElement).disabled).toBe(true)
 })
 
@@ -59,7 +59,7 @@ it('keeps the quoted passage stable while writing and replaces it only on reques
   selected = '钢很坚固。'
   await new Promise(resolve => setTimeout(resolve, 450))
   expect(screen.getByText('铝很轻。')).toBeTruthy()
-  fireEvent.click(screen.getByRole('button', { name: '使用当前选区' }))
+  fireEvent.click(screen.getByRole('button', { name: '替换选区' }))
   expect(screen.getByText('钢很坚固。')).toBeTruthy()
   expect((input as HTMLTextAreaElement).value).toBe('为什么？')
   expect(document.activeElement).toBe(input)
@@ -100,4 +100,41 @@ it('exposes the saved draft after a failed send and retries that draft instead o
   fireEvent.click(screen.getByRole('button', { name: '全部发送' }))
   await waitFor(() => expect(api.sendDraft).toHaveBeenCalledTimes(2))
   expect(api.createDraft).toHaveBeenCalledTimes(1)
+})
+
+
+it('sends with Enter while allowing Shift+Enter and both IME confirmation variants', async () => {
+  mount()
+  const input = await screen.findByRole('textbox', { name: '你的问题' })
+  await waitFor(() => expect((input as HTMLTextAreaElement).disabled).toBe(false))
+  fireEvent.change(input, { target: { value: '为什么轻？' } })
+  // These keys must retain their native behavior instead of sending the question.
+  expect(fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })).toBe(true)
+  expect(fireEvent.keyDown(input, { key: 'Enter', isComposing: true })).toBe(true)
+  expect(fireEvent.keyDown(input, { key: 'Enter', keyCode: 229 })).toBe(true)
+  expect(api.createSource).not.toHaveBeenCalled()
+  expect(api.createDraft).not.toHaveBeenCalled()
+  expect((input as HTMLTextAreaElement).value).toBe('为什么轻？')
+  expect(fireEvent.keyDown(input, { key: 'Enter' })).toBe(false)
+  await waitFor(() => expect(api.sendDraft).toHaveBeenCalledTimes(1))
+  expect(vi.mocked(api.createDraft).mock.calls[0]![0]).toMatchObject({ items: [expect.objectContaining({ question: '为什么轻？' })] })
+})
+
+it('does not recapture a dismissed quote until the selection changes or the user explicitly restores it', async () => {
+  let selected = '铝很轻。'
+  const read = { current: () => selected }
+  render(<ExplorePanel name="Materials.md" model="m" active beforeSend={idle} selection={read} reveal={reveal} onConfigure={() => {}} onOpenNote={() => {}}/>)
+  await screen.findByText('铝很轻。')
+  fireEvent.click(screen.getByRole('button', { name: '移除引用' }))
+  await new Promise(resolve => setTimeout(resolve, 450))
+  expect(screen.queryByText('铝很轻。')).toBeNull()
+  expect((screen.getByRole('button', { name: '解释原文' }) as HTMLButtonElement).disabled).toBe(true)
+  fireEvent.keyDown(screen.getByRole('textbox', { name: '你的问题' }), { key: 'Enter' })
+  expect(api.createSource).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: '引用选区' }))
+  expect(screen.getByText('铝很轻。')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '移除引用' }))
+  selected = '钢很坚固。'
+  expect(await screen.findByText('钢很坚固。')).toBeTruthy()
+  expect(screen.queryByText('铝很轻。')).toBeNull()
 })

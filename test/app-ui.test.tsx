@@ -7,7 +7,7 @@ import { api } from '../src/api'
 import type { AgentRunDTO } from '../shared/types'
 
 vi.mock('../src/api', () => ({
-  api: { discussions: vi.fn(), listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), search: vi.fn(), openWorkspaceFolder: vi.fn(), conversation: vi.fn(), changeSets: vi.fn(), agent: vi.fn(), stopAgentRun: vi.fn(), followAgent: vi.fn(), agentRun: vi.fn(), undoChangeSet: vi.fn(), acknowledgeAgentRun: vi.fn(), repoStatus: vi.fn(), push: vi.fn() },
+  api: { discussions: vi.fn(), listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), search: vi.fn(), openWorkspaceFolder: vi.fn(), conversation: vi.fn(), changeSets: vi.fn(), agent: vi.fn(), stopAgentRun: vi.fn(), followAgent: vi.fn(), agentRuns: vi.fn(), agentRun: vi.fn(), undoChangeSet: vi.fn(), acknowledgeAgentRun: vi.fn(), repoStatus: vi.fn(), push: vi.fn(), syncStatus: vi.fn(), startSync: vi.fn(), stopSync: vi.fn() },
   subscribeEvents: () => () => {},
 }))
 vi.mock('../src/LibraryCanvas', () => ({ LibraryCanvas: () => <div>文章画布</div> }))
@@ -23,20 +23,22 @@ beforeEach(() => {
   vi.mocked(api.listFolders).mockResolvedValue([''])
   vi.mocked(api.conversation).mockResolvedValue(null)
   vi.mocked(api.changeSets).mockResolvedValue([])
+  vi.mocked(api.agentRuns).mockResolvedValue([])
   vi.mocked(api.repoStatus).mockResolvedValue({ git: true, dataDirectory: '/test', branch: 'main', changes: 0, noteChanges: 0, remote: null, ahead: null, head: null, pushing: false })
   vi.mocked(api.settings).mockImplementation(() => new Promise(() => {}))
+  vi.mocked(api.syncStatus).mockResolvedValue(null)
   localStorage.clear()
 })
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals() })
 
 it('lets a clean workspace check remote updates and displays the sync result', async () => {
   vi.mocked(api.repoStatus).mockResolvedValue({ git: true, dataDirectory: '/test', branch: 'main', changes: 0, noteChanges: 0, remote: 'https://example.test/notes.git', ahead: 0, head: '1234567', pushing: false })
-  vi.mocked(api.push).mockImplementation(async emit => {
-    emit({ type: 'step', text: '正在拉取远端更新并同步本机提交' })
-    emit({ type: 'report', report: { committed: null, message: '', notes: [], folders: [], stale: [], layout: [], pushed: true } })
-  })
+  vi.mocked(api.startSync).mockResolvedValue({ id: 'sync-1', status: 'completed', enrich: false, startedAt: 1, updatedAt: 2, activity: '同步已完成', events: [], report: { committed: null, message: '', notes: [], folders: [], stale: [], layout: [], pushed: true } })
   render(<App/>)
   fireEvent.click(await screen.findByRole('button', { name: '同步 · 检查远端更新' }))
+  await waitFor(() => expect(api.startSync).toHaveBeenCalledWith({ enrich: false }))
+  expect(screen.queryByRole('dialog', { name: '同步' })).toBe(null)
+  fireEvent.click(await screen.findByRole('button', { name: '同步详情' }))
   expect(await screen.findByRole('dialog', { name: '同步' })).toBeTruthy()
   expect((await screen.findByRole('region', { name: '同步结果' })).textContent).toContain('已与远端同步')
   fireEvent.click(screen.getByRole('button', { name: '完成' }))
@@ -201,8 +203,8 @@ it('offers an Agent on the canvas, preserves its conversation when hidden and su
   fireEvent.click(screen.getByRole('button', { name: 'AI 助手' }))
   expect(screen.getByRole('button', { name: 'AI 助手', pressed: true }).title).toBe('关闭 AI 助手')
   expect(screen.getByText('这些笔记主要讨论反射。')).toBeTruthy()
-  fireEvent.click(screen.getByRole('combobox', { name: '对话范围' }))
-  fireEvent.click(await screen.findByRole('option', { name: '纯聊天 · 不读取笔记' }))
+  fireEvent.keyDown(screen.getByRole('button', { name: '对话范围' }), { key: 'Enter' })
+  await act(async () => { fireEvent.click(await screen.findByRole('menuitem', { name: '纯聊天 · 不读取笔记' })); await new Promise(resolve => setTimeout(resolve, 30)) })
   expect(screen.queryByText('这些笔记主要讨论反射。')).toBe(null)
   fireEvent.change(input, { target: { value: '你好' } })
   fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
@@ -211,8 +213,8 @@ it('offers an Agent on the canvas, preserves its conversation when hidden and su
   await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }) })
   expect(await screen.findByText('你好，今天想聊什么？')).toBeTruthy()
   expect(vi.mocked(api.agent).mock.calls.at(-1)![0]).toEqual({ scope: { kind: 'chat', folder: '' }, session: undefined, message: '你好' })
-  fireEvent.click(screen.getByRole('combobox', { name: '对话范围' }))
-  fireEvent.click(await screen.findByRole('option', { name: '文件夹 · Work' }))
+  fireEvent.keyDown(screen.getByRole('button', { name: '对话范围' }), { key: 'Enter' })
+  await act(async () => { fireEvent.click(await screen.findByRole('menuitem', { name: '当前文件夹 · Work' })); await new Promise(resolve => setTimeout(resolve, 30)) })
   expect(screen.getByText('这些笔记主要讨论反射。')).toBeTruthy()
   // Stopping is a request to the server; the page keeps listening until the run reports it has ended.
   const stopped = { id: 'run-2', scope: { kind: 'folder' as const, folder: 'Work' }, requestKey: 'k', status: 'cancelled' as const, seq: 3, error: '已停止。已完成的修改保留在修改记录中，可以撤销。', createdAt: 1, updatedAt: 2 }
@@ -225,9 +227,10 @@ it('offers an Agent on the canvas, preserves its conversation when hidden and su
   })
   await act(async () => { fireEvent.change(input, { target: { value: '继续分析' } }); fireEvent.click(screen.getByRole('button', { name: '发送消息' })) })
   expect(await screen.findByText('继续分析这些笔记的关联…')).toBeTruthy()
-  expect(screen.getByText(/任务在后台运行/)).toBeTruthy()
+  expect(screen.getByLabelText('当前任务')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '运行详情' })).toBe(null)
   expect(screen.getByRole('button', { name: '开始新对话' }).hasAttribute('disabled')).toBe(true)
-  expect(screen.getByRole('combobox', { name: '对话范围' }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByRole('button', { name: '对话范围' }).hasAttribute('disabled')).toBe(true)
   fireEvent.change(input, { target: { value: '下一条消息草稿' } })
   await act(async () => { fireEvent.click(screen.getByRole('button', { name: '停止生成' })) })
   expect(api.stopAgentRun).toHaveBeenCalledWith('run-2')
@@ -388,11 +391,12 @@ it('follows a request that was still running when the page opened, without repea
   expect(api.followAgent).toHaveBeenCalledWith('run-9', expect.any(Function), expect.any(AbortSignal))
   expect(screen.getAllByText('已读取两篇。')).toHaveLength(1)
   expect(screen.getByText('整理一下')).toBeTruthy()
-  expect(screen.getByText(/任务在后台运行/)).toBeTruthy()
-  expect(screen.getByRole('combobox', { name: '对话范围' }).hasAttribute('disabled')).toBe(true)
+  expect(screen.getByLabelText('当前任务')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '运行详情' })).toBe(null)
+  expect(screen.getByRole('button', { name: '对话范围' }).hasAttribute('disabled')).toBe(true)
   await act(async () => { end({ ...running, status: 'completed' }) })
-  await waitFor(() => expect(screen.queryByText(/任务在后台运行/)).toBe(null))
-  expect(screen.getByRole('combobox', { name: '对话范围' }).hasAttribute('disabled')).toBe(false)
+  await waitFor(() => expect(screen.queryByRole('button', { name: '运行详情' })).toBe(null))
+  expect(screen.getByRole('button', { name: '对话范围' }).hasAttribute('disabled')).toBe(false)
   expect(api.stopAgentRun).not.toHaveBeenCalled()
 })
 
@@ -413,7 +417,8 @@ it('does not stop a running request when the panel is closed or the page goes aw
   fireEvent.click(screen.getByRole('button', { name: '关闭 AI 助手' }))
   fireEvent.click(screen.getByRole('button', { name: 'AI 助手' }))
   expect(screen.getByText('分析进行中…')).toBeTruthy()
-  expect(screen.getByText(/任务在后台运行/)).toBeTruthy()
+  expect(screen.getByLabelText('当前任务')).toBeTruthy()
+  expect(screen.queryByRole('button', { name: '运行详情' })).toBe(null)
   view.unmount()
   // Leaving only detaches this page from the run; nothing asks the server to stop it.
   expect(signal!.aborted).toBe(true)
@@ -482,4 +487,181 @@ it('switches workspaces with the dropdown and puts chat navigation in the shared
   fireEvent.keyDown(screen.getByRole('button', { name: '切换工作区：笔记' }), { key: 'ArrowDown' })
   fireEvent.click(await screen.findByRole('menuitem', { name: '对话' }))
   expect((await screen.findByRole('textbox', { name: '你的问题' }) as HTMLTextAreaElement).value).toBe('切换后保留')
+})
+
+it('keeps assistant drafts while switching to exploration and back', async () => {
+  configured()
+  render(<App/>); await screen.findByText('文章画布')
+  fireEvent.change(screen.getByRole('textbox', { name: 'AI 消息' }), { target: { value: '尚未发送的整理要求' } })
+  fireEvent.keyDown(screen.getByRole('button', { name: '助手' }), { key: 'ArrowDown' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: '探索 · 围绕原文深入讨论' }))
+  fireEvent.click(await screen.findByRole('button', { name: '需要查找或整理笔记？前往助手' }))
+  expect((await screen.findByRole('textbox', { name: 'AI 消息' }) as HTMLTextAreaElement).value).toBe('尚未发送的整理要求')
+  expect(api.agent).not.toHaveBeenCalled()
+})
+
+it('does not present a previous note run as the new note reply and can still stop it', async () => {
+  let finish!: (run: AgentRunDTO) => void
+  vi.mocked(api.agent).mockImplementation(async (_, emit, __, hooks) => {
+    emit({ type: 'session', id: 'original' }); hooks?.onRun?.(running)
+    emit({ type: 'activity', text: '正在阅读第一篇笔记' })
+    return new Promise(resolve => { finish = resolve })
+  })
+  vi.mocked(api.stopAgentRun).mockResolvedValue(running)
+  const openTask = vi.fn()
+  const props = { folder: '', model: 'm', beforeSend: { current: async () => true }, selection: { current: () => undefined }, onConfigure() {}, onClose() {}, onOpenNote: openTask }
+  const app = render(<AgentPanel {...props} name="First.md"/>)
+  await act(async () => { fireEvent.change(screen.getByRole('textbox', { name: 'AI 消息' }), { target: { value: '阅读' } }); fireEvent.keyDown(screen.getByRole('textbox', { name: 'AI 消息' }), { key: 'Enter' }) })
+  expect(screen.getByLabelText('当前任务').textContent).toContain('正在阅读第一篇笔记')
+  expect(screen.queryByRole('button', { name: '运行详情' })).toBe(null)
+  app.rerender(<AgentPanel {...props} name="Second.md"/>)
+  expect(screen.queryByLabelText('当前任务')).toBe(null)
+  expect(screen.getByText('另一段对话的任务仍在运行')).toBeTruthy()
+  fireEvent.click(screen.getByRole('button', { name: '返回任务' }))
+  expect(openTask).toHaveBeenCalledWith('First.md')
+  fireEvent.click(screen.getByRole('button', { name: '停止任务' }))
+  expect(api.stopAgentRun).toHaveBeenCalledWith(running.id)
+  await act(async () => finish({ ...running, status: 'cancelled' }))
+  expect(screen.queryByText('另一段对话的任务仍在运行')).toBe(null)
+})
+
+it('shows only meaningful task steps and keeps the composer as the stop control', async () => {
+  let finish!: (run: AgentRunDTO) => void
+  vi.mocked(api.agent).mockImplementation(async (_, emit, __, hooks) => {
+    hooks?.onRun?.(running)
+    emit({ type: 'activity', text: '正在读取原文' })
+    emit({ type: 'plan', steps: [{ text: '阅读文章', status: 'active' }, { text: '调整段落', status: 'pending' }] })
+    return new Promise(resolve => { finish = resolve })
+  })
+  render(<AgentPanel folder="" name={null} model="m" beforeSend={{ current: async () => true }} selection={{ current: () => undefined }} onConfigure={() => {}} onClose={() => {}} onOpenNote={() => {}}/>)
+  await act(async () => { fireEvent.change(screen.getByRole('textbox', { name: 'AI 消息' }), { target: { value: '重排段落' } }); fireEvent.keyDown(screen.getByRole('textbox', { name: 'AI 消息' }), { key: 'Enter' }) })
+  expect(screen.getByLabelText('当前任务').textContent).toContain('正在读取原文')
+  expect(screen.getAllByRole('button', { name: '停止生成' })).toHaveLength(1)
+  expect(screen.queryByRole('button', { name: '停止' })).toBe(null)
+  const steps = screen.getByRole('button', { name: '任务步骤 · 0/2' })
+  expect(steps.getAttribute('aria-expanded')).toBe('false')
+  expect(screen.queryByRole('list', { name: '任务计划' })).toBe(null)
+  fireEvent.click(steps)
+  expect(screen.getByRole('list', { name: '任务计划' }).textContent).toContain('调整段落')
+  await act(async () => finish({ ...running, status: 'completed' }))
+  expect(screen.queryByLabelText('当前任务')).toBe(null)
+})
+
+it('collapses completed edits by default and exposes distinct review and undo actions', async () => {
+  const change = { id: 'cs-compact', memory: 0, request: '重排段落', createdAt: 1, files: [{ name: '基本粒子.md', kind: 'edit' as const }], layouts: [], undone: false, undoable: true, origin: 'request' as const }
+  vi.mocked(api.conversation).mockResolvedValue({ id: 'c1', scope: running.scope, updatedAt: 1, messages: [{ role: 'assistant', text: '段落已调整。' }], changes: [change], proposals: [], plan: [] })
+  vi.mocked(api.undoChangeSet).mockResolvedValue({ ...change, undone: true })
+  render(<AgentPanel folder="" name={null} model="m" beforeSend={{ current: async () => true }} selection={{ current: () => undefined }} onConfigure={() => {}} onClose={() => {}} onOpenNote={() => {}}/>)
+  const summary = await screen.findByRole('button', { name: '已修改 · 1 篇文章' })
+  expect(summary.getAttribute('aria-expanded')).toBe('false')
+  expect(screen.queryByRole('button', { name: '查看改动' })).toBe(null)
+  fireEvent.click(summary)
+  expect(screen.getByRole('button', { name: '查看改动' })).toBeTruthy()
+  expect(within(screen.getByRole('region', { name: '一次修改' })).queryByText('重排段落')).toBe(null)
+  fireEvent.click(screen.getByRole('button', { name: '撤销这次修改' }))
+  await waitFor(() => expect(api.undoChangeSet).toHaveBeenCalledWith('cs-compact'))
+  expect(await screen.findByRole('button', { name: '已撤销 · 1 篇文章' })).toBeTruthy()
+})
+
+it('opens the exact requested task session, including a pure chat task', async () => {
+  const chatScope = { kind: 'chat' as const, folder: '' }
+  vi.mocked(api.conversation).mockImplementation(async (scope, session) => session === 'older-chat' ? { id: session, scope, updatedAt: 1, messages: [{ role: 'user', text: '此前的任务' }, { role: 'assistant', text: '此前的结果' }], changes: [], proposals: [], plan: [] } : null)
+  render(<AgentPanel folder="" name={null} model="m" taskRequest={{ key: 1, run: { ...running, status: 'completed', scope: chatScope, session: 'older-chat' } }} beforeSend={{ current: async () => true }} selection={{ current: () => undefined }} onConfigure={() => {}} onClose={() => {}} onOpenNote={() => {}}/>)
+  expect(await screen.findByText('此前的结果')).toBeTruthy()
+  expect(api.conversation).toHaveBeenCalledWith(chatScope, 'older-chat')
+  expect(screen.getByRole('button', { name: '对话范围' }).textContent).toContain('纯聊天')
+})
+
+it.each(['other-scope', 'same-scope'] as const)('reads an older %s task while keeping the active stream attached, then returns to that stream', async target => {
+  let finish!: (run: AgentRunDTO) => void
+  let signal!: AbortSignal
+  const scope = { kind: 'note' as const, folder: '', name: 'Current.md' }
+  const activeRun = { ...running, scope, session: 'active-session' }
+  const olderScope = target === 'same-scope' ? scope : { ...scope, name: 'Earlier.md' }
+  const props = { folder: '', name: scope.name, model: 'm', beforeSend: { current: async () => true }, selection: { current: () => undefined }, onConfigure() {}, onClose() {}, onOpenNote() {} }
+  vi.mocked(api.agent).mockImplementation(async (_, emit, abort, hooks) => {
+    signal = abort
+    emit({ type: 'session', id: 'active-session' }); hooks?.onRun?.(activeRun)
+    emit({ type: 'delta', text: '仍在处理当前文章' })
+    return new Promise(resolve => { finish = resolve })
+  })
+  vi.mocked(api.conversation).mockImplementation(async (scope, session) => session === 'older-session' ? { id: session, scope, updatedAt: 1, messages: [{ role: 'user', text: '以前的请求' }, { role: 'assistant', text: '以前已完成的结果' }], changes: [], proposals: [], plan: [] } : null)
+  const view = render(<AgentPanel {...props}/>)
+  await act(async () => { fireEvent.change(screen.getByRole('textbox', { name: 'AI 消息' }), { target: { value: '处理当前文章' } }); fireEvent.keyDown(screen.getByRole('textbox', { name: 'AI 消息' }), { key: 'Enter' }) })
+  expect(await screen.findByText('仍在处理当前文章')).toBeTruthy()
+  view.rerender(<AgentPanel {...props} name={olderScope.name} taskRequest={{ key: 1, run: { ...activeRun, id: 'old-run', session: 'older-session', status: 'completed', scope: olderScope } }}/>)
+  expect(await screen.findByText('以前已完成的结果')).toBeTruthy()
+  expect(api.conversation).toHaveBeenCalledWith(olderScope, 'older-session')
+  expect(screen.queryByText('仍在处理当前文章')).toBe(null)
+  expect(screen.getByText('另一段对话的任务仍在运行')).toBeTruthy()
+  expect(signal.aborted).toBe(false)
+  expect(api.stopAgentRun).not.toHaveBeenCalled()
+  expect(api.followAgent).not.toHaveBeenCalled()
+  view.rerender(<AgentPanel {...props} taskRequest={{ key: 2, run: activeRun }}/>)
+  expect(await screen.findByText('仍在处理当前文章')).toBeTruthy()
+  expect(screen.queryByText('以前已完成的结果')).toBe(null)
+  expect(api.agent).toHaveBeenCalledTimes(1)
+  expect(api.followAgent).not.toHaveBeenCalled()
+  await act(async () => finish({ ...activeRun, status: 'completed' }))
+})
+
+it('shows a failed task without a session from its run record, never unrelated latest scope history', async () => {
+  vi.mocked(api.conversation).mockResolvedValue({ id: 'unrelated', scope: running.scope, updatedAt: 1, messages: [{ role: 'assistant', text: '不相关的旧结果' }], changes: [], proposals: [], plan: [] })
+  render(<AgentPanel folder="" name={null} model="m" taskRequest={{ key: 1, run: { ...running, status: 'failed', request: '整理今天的资料', error: '模型连接失败' } }} beforeSend={{ current: async () => true }} selection={{ current: () => undefined }} onConfigure={() => {}} onClose={() => {}} onOpenNote={() => {}}/>)
+  expect(await screen.findByText('整理今天的资料')).toBeTruthy()
+  expect(screen.getByRole('alert').textContent).toBe('模型连接失败')
+  expect(screen.queryByText('不相关的旧结果')).toBe(null)
+  expect(api.conversation).not.toHaveBeenCalled()
+})
+
+it.each(['note', 'chat'] as const)('follows an exact pre-session %s task without loading an unrelated saved conversation', async kind => {
+  let finish!: (run: AgentRunDTO) => void
+  let signal!: AbortSignal
+  const scope = kind === 'note' ? { kind, folder: '', name: 'Current.md' } : { kind, folder: '' }
+  const task = { ...running, scope, request: '当前刚发出的请求', activity: '正在连接模型' }
+  vi.mocked(api.conversation).mockResolvedValue({ id: 'unrelated', scope, updatedAt: 1, messages: [{ role: 'assistant', text: '不相关的旧结果' }], changes: [], proposals: [], plan: [] })
+  vi.mocked(api.followAgent).mockImplementation(async (_, emit, abort) => {
+    signal = abort
+    emit({ type: 'session', id: 'new-session' })
+    emit({ type: 'delta', text: '当前任务的回复' })
+    return new Promise(resolve => { finish = resolve })
+  })
+  const props = { folder: '', name: kind === 'note' ? 'Current.md' : null, model: 'm', beforeSend: { current: async () => true }, selection: { current: () => undefined }, onConfigure() {}, onClose() {}, onOpenNote() {} }
+  const view = render(<AgentPanel {...props} taskRequest={{ key: 1, run: task }}/>)
+  expect(await screen.findByText('当前任务的回复')).toBeTruthy()
+  expect(screen.getAllByText('当前刚发出的请求')).toHaveLength(1)
+  expect(screen.queryByText('不相关的旧结果')).toBe(null)
+  expect(api.conversation).not.toHaveBeenCalled()
+  expect(api.followAgent).toHaveBeenCalledWith(task.id, expect.any(Function), expect.any(AbortSignal))
+  view.rerender(<AgentPanel {...props} taskRequest={{ key: 2, run: task }}/>)
+  expect(screen.getByText('当前任务的回复')).toBeTruthy()
+  expect(api.followAgent).toHaveBeenCalledTimes(1)
+  expect(signal.aborted).toBe(false)
+  await act(async () => finish({ ...task, session: 'new-session', status: 'completed' }))
+})
+
+it('detaches the old listener to follow a newly selected active task without stopping either server task', async () => {
+  let oldSignal!: AbortSignal, newSignal!: AbortSignal
+  let finish!: (run: AgentRunDTO) => void
+  vi.mocked(api.agent).mockImplementation(async (_, emit, signal, hooks) => {
+    oldSignal = signal; emit({ type: 'session', id: 'first-session' }); hooks?.onRun?.(running)
+    emit({ type: 'delta', text: '旧任务的流' })
+    return new Promise(resolve => signal.addEventListener('abort', () => resolve(null), { once: true }))
+  })
+  const task = { ...running, id: 'new-active', request: '在另一个窗口开始的任务' }
+  vi.mocked(api.followAgent).mockImplementation(async (_, emit, signal) => {
+    newSignal = signal; emit({ type: 'session', id: 'new-session' }); emit({ type: 'delta', text: '新选择任务的流' })
+    return new Promise(resolve => { finish = resolve })
+  })
+  const props = { folder: '', name: null, model: 'm', beforeSend: { current: async () => true }, selection: { current: () => undefined }, onConfigure() {}, onClose() {}, onOpenNote() {} }
+  const view = render(<AgentPanel {...props}/>)
+  await act(async () => { fireEvent.change(screen.getByRole('textbox', { name: 'AI 消息' }), { target: { value: '旧任务' } }); fireEvent.keyDown(screen.getByRole('textbox', { name: 'AI 消息' }), { key: 'Enter' }) })
+  expect(await screen.findByText('旧任务的流')).toBeTruthy()
+  view.rerender(<AgentPanel {...props} taskRequest={{ key: 1, run: task }}/>)
+  expect(await screen.findByText('新选择任务的流')).toBeTruthy()
+  expect(oldSignal.aborted).toBe(true)
+  expect(newSignal.aborted).toBe(false)
+  expect(api.stopAgentRun).not.toHaveBeenCalled()
+  expect(api.followAgent).toHaveBeenCalledWith('new-active', expect.any(Function), expect.any(AbortSignal))
+  await act(async () => finish({ ...task, session: 'new-session', status: 'completed' }))
 })

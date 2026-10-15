@@ -3,7 +3,7 @@ import { useNote } from './useNote'
 import { CodeEditor } from './CodeEditor'
 import { outlineHeadings, richEditingIssue } from './outline'
 import { RichEditor, type RichEditorHandle, type RichSelection } from './RichEditor'
-import { Button, DropdownMenu, Icon, SegmentedControl } from './ui'
+import { Button, DropdownMenu, Icon } from './ui'
 import { Dialog as ArcDialog, DialogContent } from './components/arc/dialog/dialog'
 import { NoteMarkdown } from './NoteMarkdown'
 import { richSelectionSource } from './rich-selection'
@@ -145,12 +145,18 @@ export function NoteWorkspace({ name, beforeLeave, agentSelection, reveal, aiOpe
   return <>
     <header className="topbar editor-topbar note-workspace-header">
       <div className="breadcrumb">
-        <Button size="sm" variant="ghost" aria-label="返回画布" onPress={onBack}><Icon name="grid" size={16}/><span className="editor-back-label">画布</span></Button>
-        <div className="editor-location"><span className="editor-folder">{note.space || '笔记文件夹'}</span><span className="editor-title" title={title}>{title}</span></div>
+        <Button size="sm" variant="ghost" isIconOnly aria-label="返回画布" title={'返回画布 · ' + (note.space || '笔记文件夹')} onPress={onBack}><Icon name="grid" size={16}/></Button>
+        <span className="editor-folder" title={note.space || '笔记文件夹'}>{note.space || '笔记文件夹'}</span>
+        <span className="editor-path-separator" aria-hidden="true">/</span>
+        <Button ref={outlineToggle} className="editor-title-menu" variant="ghost" size="sm" aria-label="本文目录" title={title + ' · 打开目录'} aria-expanded={outlineOpen} aria-haspopup="dialog" onPress={() => setOutlineOpen(true)}><span>{title}</span><Icon name="down" size={13}/></Button>
       </div>
       <div className="toolbar editor-actions">
-        <Button ref={outlineToggle} variant="ghost" size="sm" aria-expanded={outlineOpen} aria-haspopup="dialog" onPress={() => setOutlineOpen(true)}>目录</Button>
-        <Button size="sm" variant={aiOpen ? 'secondary' : 'ghost'} className="ai-toggle" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" title={aiOpen ? '关闭 AI 助手' : '打开 AI 助手'} onPress={onToggleAI}><Icon name="spark"/><span className="editor-ai-label">AI 助手</span></Button>
+        <DropdownMenu label="文章编辑方式" trigger={<Button variant="ghost" size="sm" aria-label="文章编辑方式">{reading ? '阅读' : sourceMode ? '源码' : '写作'}<Icon name="down" size={13}/></Button>} items={[
+          { label: '阅读', onSelect: () => changeMode('read') },
+          { label: '写作', disabled: !!issue || !!editorError, onSelect: () => changeMode('edit') },
+          { label: '源码', onSelect: () => changeMode('source') },
+        ]}/>
+        <Button size="sm" isIconOnly variant={aiOpen ? 'secondary' : 'ghost'} className="ai-toggle" aria-label="AI 助手" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" title={aiOpen ? '关闭 AI 助手' : '打开 AI 助手'} onPress={onToggleAI}><Icon name="spark"/></Button>
         <DropdownMenu label="文章更多操作" trigger={<Button variant="ghost" size="sm" isIconOnly aria-label="文章更多操作"><Icon name="more"/></Button>} items={[
           { label: '文章记忆', icon: <Icon name="spark"/>, onSelect: () => setMemoryOpen(true) },
           { label: '撤销上次保存', icon: <Icon name="undo"/>, disabled: undoCount === 0, separatorBefore: true, onSelect: () => { void save().then(saved => { if (saved) void undo() }) } },
@@ -159,10 +165,6 @@ export function NoteWorkspace({ name, beforeLeave, agentSelection, reveal, aiOpe
     </header>
     <div ref={workspace} className="workspace-body note-workspace-body">
       <section className="note-stage">
-        <div className="editor-modebar">
-          <SegmentedControl label="文章编辑方式" value={sourceMode ? 'source' : mode} onValueChange={value => changeMode(value as typeof mode)} options={[{ value: 'read', label: '阅读' }, { value: 'edit', label: '写作' }, { value: 'source', label: '源码' }]}/>
-          <span className="editor-mode-hint">{reading ? '选中文字，继续探索' : sourceMode ? 'Markdown 源码' : '修改自动保存'}</span>
-        </div>
         {error && <div className="inline-error" role="alert">{error}{status === 'conflict' && <Button size="sm" variant="ghost" onPress={() => void reload()}>放弃草稿并重新载入</Button>}</div>}
         {(issue || editorError) && <p className="editor-format-note" role="status">{reading ? '阅读预览可能隐藏 Markdown 扩展；完整原文保留在源码中。' : issue || editorError}</p>}
         <div className="editor-workspace">

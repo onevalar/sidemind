@@ -25,12 +25,18 @@ beforeEach(() => {
   })
 })
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals() })
+const switchMode = async (name: string) => {
+  fireEvent.keyDown(screen.getByRole('button', { name: '文章编辑方式' }), { key: 'ArrowDown' })
+  const item = await screen.findByRole('menuitem', { name })
+  if (item.getAttribute('aria-disabled') === 'true') { fireEvent.keyDown(item, { key: 'Escape' }); return }
+  await act(async () => { fireEvent.click(item); await new Promise(resolve => setTimeout(resolve, 30)) })
+}
 const open = async (source = true, selection = { current: () => undefined as string | undefined }) => {
   render(<NoteWorkspace name="Note.md" beforeLeave={{ current: async () => true }} agentSelection={selection} theme="light" onOpenNote={() => {}} onBack={() => {}}/>)
   await screen.findByRole('textbox', { name: '文章正文' })
   await waitFor(() => expect(screen.queryByText('正在准备编辑器…')).toBe(null))
   if (!source) return screen.getByRole('textbox', { name: '文章正文' })
-  fireEvent.click(screen.getByRole('button', { name: '源码' }))
+  await switchMode('源码')
   return screen.findByRole('textbox', { name: 'Markdown 正文' })
 }
 
@@ -40,7 +46,7 @@ describe('revealing a saved passage', () => {
     render(<NoteWorkspace name="Note.md" beforeLeave={{ current: async () => true }} reveal={reveal} theme="light" onOpenNote={() => {}} onBack={() => {}}/>)
     await screen.findByRole('textbox', { name: '文章正文' })
     await waitFor(() => expect(screen.queryByText('正在准备编辑器…')).toBe(null))
-    fireEvent.click(screen.getByRole('button', { name: '源码' }))
+    await switchMode('源码')
     const editor = await screen.findByRole('textbox', { name: 'Markdown 正文' }) as HTMLTextAreaElement
     expect(reveal.current(selected, original.indexOf(selected))).toBe(true)
     expect(editor.value.slice(editor.selectionStart, editor.selectionEnd)).toBe(nativeText(selected))
@@ -83,7 +89,7 @@ describe('article editing with the shared Agent', () => {
     const editor = await screen.findByRole('textbox', { name: 'Markdown 正文' }) as HTMLTextAreaElement
     expect(editor.value).toBe(nativeText(disk.content))
     expect(screen.getByText(/包含需要保留原样/)).toBeTruthy()
-    fireEvent.click(screen.getByRole('button', { name: '写作' }))
+    await switchMode('写作')
     expect(screen.queryByRole('textbox', { name: '文章正文' })).toBe(null)
     await act(async () => { fireEvent.keyDown(editor, { key: 's', ctrlKey: true }) })
     expect(api.saveContent).not.toHaveBeenCalled()
@@ -95,14 +101,14 @@ describe('article editing with the shared Agent', () => {
     fireEvent.change(editor, { target: { value: draft } })
     const start = draft.indexOf('Keep this'), end = start + 'Keep this'.length
     editor.focus(); editor.setSelectionRange(start, end, 'backward'); fireEvent.select(editor)
-    fireEvent.click(screen.getByRole('button', { name: '写作' }))
+    await switchMode('写作')
     const rich = await screen.findByRole('textbox', { name: '文章正文' })
     expect(within(rich).getByRole('heading', { name: 'Fresh title' })).toBeTruthy()
     expect(rich.querySelector('strong')?.textContent).toBe('strong')
     expect(rich.getAttribute('contenteditable')).toBe('true')
     expect(screen.queryByRole('button', { name: '斜体' })).toBe(null)
     expect(api.saveContent).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '源码' }))
+    await switchMode('源码')
     const reopened = screen.getByRole('textbox', { name: 'Markdown 正文' }) as HTMLTextAreaElement
     expect(reopened.value).toBe(draft)
     expect([reopened.selectionStart, reopened.selectionEnd, reopened.selectionDirection]).toEqual([start, end, 'backward'])
@@ -117,7 +123,7 @@ describe('article editing with the shared Agent', () => {
   it('keeps the outline current, ignores code headings and navigates CRLF without writing', async () => {
     disk.content = '# Note\r\n\r\nIntroduction.\r\n\r\n```md\r\n## Not a section\r\n```\r\n\r\n### Target\r\n\r\nKeep this ending.\r\n'
     const editor = await open() as HTMLTextAreaElement, saved = disk.content
-    const toggle = screen.getByRole('button', { name: '目录' })
+    const toggle = screen.getByRole('button', { name: '本文目录' })
     fireEvent.click(toggle)
     expect(screen.queryByRole('button', { name: '定位到：Not a section' })).toBe(null)
     fireEvent.click(screen.getByRole('button', { name: '定位到：Target' }))
@@ -154,13 +160,13 @@ describe('reading, writing and exploring a note', () => {
     fireEvent.change(editor, { target: { value: draft } })
     const start = draft.indexOf('paragraph')
     editor.setSelectionRange(start, start + 9, 'backward'); fireEvent.select(editor)
-    fireEvent.click(screen.getByRole('button', { name: '阅读' }))
+    await switchMode('阅读')
     const preview = screen.getByRole('article', { name: '文章阅读预览' })
     expect(within(preview).getByRole('heading', { name: 'Revised note' })).toBeTruthy()
     expect(screen.queryByRole('textbox', { name: '文章正文' })).toBe(null)
     expect(screen.queryByRole('textbox', { name: 'Markdown 正文' })).toBe(null)
     expect(api.saveContent).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByRole('button', { name: '源码' }))
+    await switchMode('源码')
     const returned = screen.getByRole('textbox', { name: 'Markdown 正文' }) as HTMLTextAreaElement
     expect(returned.value).toBe(draft)
     expect([returned.selectionStart, returned.selectionEnd, returned.selectionDirection]).toEqual([start, start + 9, 'backward'])
@@ -172,7 +178,7 @@ describe('reading, writing and exploring a note', () => {
     await screen.findByRole('textbox', { name: '文章正文' })
     await waitFor(() => expect(screen.queryByText('正在准备编辑器…')).toBe(null))
     expect(screen.queryByRole('region', { name: '选区探索' })).toBe(null)
-    fireEvent.click(screen.getByRole('button', { name: '源码' }))
+    await switchMode('源码')
     const editor = screen.getByRole('textbox', { name: 'Markdown 正文' }) as HTMLTextAreaElement
     const start = editor.value.indexOf(nativeText(selected))
     editor.setSelectionRange(start, start + nativeText(selected).length); fireEvent.select(editor)
@@ -188,7 +194,7 @@ describe('reading, writing and exploring a note', () => {
     render(<NoteWorkspace name="Note.md" beforeLeave={{ current: async () => true }} agentSelection={selection} theme="light" onExplore={explore} onOpenNote={() => {}} onBack={() => {}}/>)
     await screen.findByRole('textbox', { name: '文章正文' })
     await waitFor(() => expect(screen.queryByText('正在准备编辑器…')).toBe(null))
-    fireEvent.click(screen.getByRole('button', { name: '阅读' }))
+    await switchMode('阅读')
     const preview = screen.getByRole('article', { name: '文章阅读预览' })
     const text = within(preview).getByText('Before stays.').firstChild!
     const range = document.createRange(); range.selectNodeContents(text)
@@ -197,7 +203,7 @@ describe('reading, writing and exploring a note', () => {
     expect(selection.current()).toBe('Before stays.')
     fireEvent.click(screen.getByRole('button', { name: '探索选区' }))
     expect(explore).toHaveBeenCalledExactlyOnceWith('Before stays.')
-    fireEvent.click(screen.getByRole('button', { name: '写作' }))
+    await switchMode('写作')
     expect(screen.queryByRole('region', { name: '选区探索' })).toBe(null)
     expect(api.saveContent).not.toHaveBeenCalled()
   })

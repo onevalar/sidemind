@@ -29,6 +29,7 @@ vi.mock('@xyflow/react', async importOriginal => ({
 let dir: string, store: NoteStore
 beforeEach(async () => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
+  vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} })
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cn-canvas-ui-'))
   store = new NoteStore(dir)
   await store.init()
@@ -164,4 +165,32 @@ it('leaves unselected documents in place and skips occupied grid cells when arra
   await waitFor(async () => expect((await store.canvas('Work')).positions).toEqual({
     'Work/A.md': { x: 15, y: 173 }, 'Work/B.md': { x: 403, y: 173 }, 'Work/C.md': { x: 15, y: 397 },
   }))
+})
+
+
+it('keeps canvas tools in the header and identifies only the article with an active AI task', async () => {
+  const before = await store.canvas('Work')
+  await api.saveCanvas('Work', [{ id: 'reading', space: 'Work', title: 'Reading', members: ['Work/A.md', 'Work/B.md'], position: { x: 67, y: 109 }, width: 640, height: 280 }], before.positions, [])
+  const notes = (await store.list()).filter(note => note.space === 'Work')
+  const onSearch = vi.fn()
+  const props = { notes, folder: 'Work', theme: 'light' as const, viewport: { x: 0, y: 0, zoom: 1 }, onViewport: () => {}, onOpen: () => {}, onPreview: () => {}, onCreate: () => {}, onSearch, beforeLeave: { current: async () => true } }
+  const renderWorkspace = (runningNotes: string[]) => <><header aria-label="画布顶栏"><div id="canvas-toolbar"/></header><LibraryCanvas {...props} runningNotes={runningNotes}/></>
+  const view = render(renderWorkspace(['Work/A.md']))
+  await waitFor(() => expect(screen.getByTestId('canvas').getAttribute('aria-busy')).toBe('false'))
+  const header = screen.getByRole('banner', { name: '画布顶栏' })
+  fireEvent.click(within(header).getByRole('button', { name: '搜索文章' }))
+  expect(onSearch).toHaveBeenCalledOnce()
+  expect(within(screen.getByLabelText('文章画布')).queryByRole('group', { name: '画布视图' })).toBeNull()
+  expect(screen.queryByText('布局已保存')).toBeNull()
+  expect(screen.queryByText('单击选择 · 双击编辑')).toBeNull()
+  expect(screen.getAllByText('Reading')).toHaveLength(1)
+  expect(screen.queryByText('A.md')).toBeNull()
+  expect(within(screen.getByRole('button', { name: 'A' })).getByRole('status').textContent).toBe('AI 处理中')
+  expect(within(screen.getByRole('button', { name: 'B' })).queryByRole('status')).toBeNull()
+  view.rerender(renderWorkspace([]))
+  await waitFor(() => expect(screen.queryByText('AI 处理中')).toBeNull())
+  // Keyboard help remains available through the view menu, without permanent instructional chrome.
+  fireEvent.pointerDown(within(header).getByRole('button', { name: '画布视图，缩放 100%' }), { button: 0, ctrlKey: false, pointerType: 'mouse' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: '画布操作指南' }))
+  expect(await screen.findByRole('dialog', { name: '画布操作指南' })).toBeTruthy()
 })

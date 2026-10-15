@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { useCallback, useEffect, useRef, useState, type MutableRefObject, type ReactNode } from 'react'
 import type { ChangeSetDetail, DraftDTO, SourceRefDTO } from '../shared/types'
 import { api, subscribeEvents, type NoteResearch } from './api'
 import { DiscussionDialogs, DiscussionThread, clip, folderOf, message, useDiscussionKit } from './discussion'
@@ -8,7 +8,8 @@ import { composing } from './ime'
 const EXPLAIN = '请解释这段内容。'
 
 /** Explore a note: ask about selected passages, compare answers, write one back, and trace it to its basis. */
-export function ExplorePanel({ name, model, active, beforeSend, selection, reveal, onConfigure, onOpenNote, request, onClose }: {
+export function ExplorePanel({ name, model, active, beforeSend, selection, reveal, onConfigure, onOpenNote, request, onClose, navigation, onAssistant }: {
+  navigation?: ReactNode; onAssistant?: () => void
   request?: { name: string; quote: string; key: number } | null; onClose?: () => void
   name: string | null; model: string | null; active: boolean; beforeSend: MutableRefObject<() => Promise<boolean>>
   selection: MutableRefObject<() => string | undefined>; reveal: MutableRefObject<(quote: string, start: number | null) => boolean>; onConfigure: () => void; onOpenNote: (name: string) => void
@@ -19,6 +20,9 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
   const [quote, setQuote] = useState('')
   const [question, setQuestion] = useState('')
   const input = useRef<HTMLTextAreaElement>(null)
+  const history = useRef<HTMLDivElement>(null)
+  const followHistory = useRef(true)
+  const dismissedSelection = useRef<string | null>(null)
   const pending = useRef(new Map<string, { quote: string; question: string }>())
   const composingDraft = useRef({ quote, question })
   composingDraft.current = { quote, question }
@@ -43,7 +47,7 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
   kit.current = kitValue
   const { busy, guard, flush, texts, setTexts, sendDraft } = kitValue
   useEffect(() => {
-    setView(null); setLoadError('')
+    setView(null); setLoadError(''); dismissedSelection.current = null
     const saved = name ? pending.current.get(name) : undefined
     setQuote(saved?.quote ?? ''); setQuestion(saved?.question ?? '')
     void load()
@@ -52,6 +56,7 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
   useEffect(() => {
     if (!active || !request || request.name !== name || handledRequest.current === request.key) return
     handledRequest.current = request.key
+    dismissedSelection.current = null
     setQuote(request.quote)
     const frame = requestAnimationFrame(() => input.current?.focus())
     return () => cancelAnimationFrame(frame)
@@ -61,15 +66,29 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
   // Capture an initial passage, then keep it stable while the user writes a question.
   useEffect(() => {
     if (!active) return
-    const read = () => { const text = selection.current()?.trim(); if (text && !composingDraft.current.quote && !composingDraft.current.question) setQuote(previous => previous || text) }
+    const read = () => { const text = selection.current()?.trim(); if (text && text !== dismissedSelection.current && !composingDraft.current.quote && !composingDraft.current.question) setQuote(previous => previous || text) }
     read()
     const timer = setInterval(read, 400)
     return () => clearInterval(timer)
-  }, [active, selection])
+  }, [active, selection, name])
+
+  // Follow a live answer only while the reader remains at the end of the history.
+  useEffect(() => {
+    const node = history.current
+    if (!active || !node || !name) return
+    followHistory.current = true
+    const follow = () => { if (followHistory.current) node.scrollTop = node.scrollHeight }
+    follow()
+    if (typeof ResizeObserver === 'undefined' || !node.firstElementChild) return
+    const observer = new ResizeObserver(follow)
+    observer.observe(node.firstElementChild)
+    return () => observer.disconnect()
+  }, [active, name])
 
   /** Freeze the selection as a source and keep the question in a durable draft, without sending. */
   const collect = async (send: boolean) => {
     if (!name || !view) return
+    followHistory.current = true
     const passage = quote
     const text = question.trim() || EXPLAIN
     await flush()
@@ -87,27 +106,18 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
   }
   const dropItem = (draft: DraftDTO, id: string) => guard('drop' + id, async () => { await api.updateDraft(draft.id, draft.revision, draft.items.filter(item => item.id !== id)); await load() })
 
-  if (!name) return <aside className="explore-panel">{onClose && <div className="explore-heading"><h3>探索笔记</h3><IconButton icon="close" label="关闭 AI 助手" onPress={onClose}/></div>}<p className="muted explore-empty">打开一篇笔记，选中一段文字，就可以围绕它提问。</p></aside>
+  const heading = <div className="explore-heading">{navigation ?? <h3>探索</h3>}{onClose && <IconButton icon="close" label="关闭 AI 助手" onPress={onClose}/>}</div>
+  if (!name) return <aside className="explore-panel" aria-label="探索">{heading}<div className="explore-history explore-onboarding"><h3>从一段原文开始</h3><p className="muted explore-empty">打开笔记并选中文字，即可解释概念、比较回答，再把有用的内容写回笔记。</p>{onAssistant && <Button variant="ghost" size="sm" onPress={onAssistant}>需要查找或整理笔记？前往助手</Button>}</div></aside>
   const sources = view?.sources ?? {}
   const drafts = view?.drafts ?? []
   const noModel = !model
   const error = kitValue.error || loadError
+  const useSelection = () => { const text = selection.current()?.trim(); if (text) { dismissedSelection.current = null; setQuote(text); input.current?.focus() } }
 
   return <aside className="explore-panel" aria-label="探索">
-    <div className="explore-heading"><div><h3>探索笔记</h3><p className="muted">{name.split('/').pop()?.replace(/\.md$/, '')}</p></div>{onClose && <IconButton icon="close" label="关闭 AI 助手" onPress={onClose}/>}</div>
-    <section className="explore-composer" aria-label="围绕选中文字提问">
-      <div className="section-header"><span className="section-label">引用原文</span>{quote && <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => { const text = selection.current()?.trim(); if (text) { setQuote(text); input.current?.focus() } }}>使用当前选区</Button>}</div>
-      {quote ? <blockquote className="explore-quote">{clip(quote, 240)}</blockquote> : <p className="muted explore-hint">在笔记中选中一段文字。</p>}
-      <TextArea ref={input} aria-label="你的问题" value={question} rows={3} placeholder="针对这段内容提问，留空则解释原文" readOnly={!!busy} disabled={!view}
-        onChange={event => setQuestion(event.target.value)}
-        onKeyDown={event => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey) && !composing(event)) { event.preventDefault(); if (!noModel && !busy && view && quote) void guard('ask', () => collect(true)) } }}/>
-      <div className="explore-actions">
-        <span className="muted explore-shortcut">⌘ / Ctrl + Enter 发送</span>
-        <Button variant="ghost" size="sm" isDisabled={!!busy || !view || !quote} onPress={() => void guard('collect', () => collect(false))}>加入待发送</Button>
-        <Button size="sm" isDisabled={!!busy || !view || noModel || !quote} onPress={() => void guard('ask', () => collect(true))}>{busy === 'ask' ? '发送中…' : '提问'}</Button>
-      </div>
-      {noModel && <p className="muted explore-hint">尚未连接模型。<Button variant="ghost" size="sm" onPress={onConfigure}>去设置</Button> 仍可先收集问题。</p>}
-    </section>
+    {heading}
+    <p className="explore-note-context muted" title={name}>{name.split('/').pop()?.replace(/\.md$/, '')}</p>
+    <div ref={history} className="explore-history" aria-label="探索记录" onScroll={event => { const node = event.currentTarget; followHistory.current = node.scrollHeight - node.scrollTop - node.clientHeight < 48 }}><div className="explore-history-content">
     {error && <p className="ai-error" role="alert">{error}</p>}
 
     {drafts.map(draft => <section className="explore-draft" key={draft.id} aria-label="待发送的问题">
@@ -124,7 +134,21 @@ export function ExplorePanel({ name, model, active, beforeSend, selection, revea
 
     {view?.discussions.map(discussion => <DiscussionThread key={discussion.id} kit={kitValue} discussion={discussion} sources={sources} captures={view.captures} changes={changes}
       model={model} noteName={name} appendTo={name} newFolder={folderOf(name)}/>)}
-    {view && !view.discussions.length && !drafts.length && <p className="muted explore-empty">还没有探索记录。选中文字并提问后，回答会保留在这里，可以选择写回笔记。</p>}
+    {view && !view.discussions.length && !drafts.length && <div className="explore-onboarding"><h3>{quote ? '围绕这段原文深入理解' : '从一段原文开始'}</h3><p className="muted explore-empty">{quote ? '直接提问，或留空发送以解释原文。回答会保留引用，你可以追问、比较并写回笔记。' : '在笔记中选中文字，再到这里提问。回答与引用保存在当前笔记的探索记录中。'}</p></div>}
+    </div></div>
+    <section className="explore-composer" aria-label="围绕选中文字提问">
+      <div className="section-header"><span className="section-label">{quote ? '已引用原文' : '尚未引用原文'}</span><div className="explore-actions"><Button variant="ghost" size="sm" isDisabled={!!busy} onPress={useSelection}>{quote ? '替换选区' : '引用选区'}</Button>{quote && <IconButton icon="close" label="移除引用" isDisabled={!!busy} onPress={() => { dismissedSelection.current = selection.current()?.trim() || quote; setQuote(''); input.current?.focus() }}/>}</div></div>
+      {quote && <blockquote className="explore-quote explore-composer-quote">{quote}</blockquote>}
+      <TextArea ref={input} aria-label="你的问题" value={question} rows={2} placeholder={quote ? '针对原文提问，留空则解释原文…' : '先在笔记中选中文字…'} readOnly={!!busy} disabled={!view}
+        onChange={event => setQuestion(event.target.value)}
+        onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !composing(event)) { event.preventDefault(); if (!noModel && !busy && view && quote) void guard('ask', () => collect(true)) } }}/>
+      <div className="explore-actions">
+        <span className="muted explore-shortcut">Enter 发送 · Shift + Enter 换行</span>
+        <Button variant="ghost" size="sm" isDisabled={!!busy || !view || !quote} onPress={() => void guard('collect', () => collect(false))}>加入待发送</Button>
+        <Button size="sm" isDisabled={!!busy || !view || noModel || !quote} onPress={() => void guard('ask', () => collect(true))}>{busy === 'ask' ? '发送中…' : question.trim() ? '提问' : '解释原文'}</Button>
+      </div>
+      <div className="explore-model"><Button variant="ghost" size="sm" onPress={onConfigure}>{model ?? '连接模型'}</Button>{noModel && <span className="muted explore-hint">连接后发送，也可先收集问题</span>}</div>
+    </section>
     <DiscussionDialogs kit={kitValue}/>
   </aside>
 }
