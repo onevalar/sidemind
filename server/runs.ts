@@ -109,9 +109,15 @@ export class RunService {
   }
 
   private async finish(state: Active, status: RunDTO['status'], extra: Partial<RunDTO> = {}) {
-    Object.assign(state.run, extra, { status })
-    this.emit(state, { type: 'status', run: this.snapshot(state.run) })
-    await this.save(state)
+    // Polling and stream subscribers must not see completion while its terminal
+    // record is still being written. Drain earlier progress writes first so none
+    // can overwrite the final record after it has been published.
+    await state.writing
+    const terminal = { ...state.run, ...extra, status, seq: state.run.seq + 1, updatedAt: Date.now() }
+    await this.persist(terminal)
+    Object.assign(state.run, terminal)
+    const event: RunEvent = { type: 'status', seq: terminal.seq, run: this.snapshot(terminal) }
+    for (const listener of state.listeners) listener(event)
   }
 
   /** Writes are queued per run and always carry the newest state, so an older write can never land last. */

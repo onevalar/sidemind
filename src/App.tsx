@@ -9,7 +9,7 @@ import { AIConnectionSettings } from './AIConnectionSettings'
 import { ChatGPTSettings } from './ChatGPTSettings'
 import { QuickSearch } from './QuickSearch'
 import { captureContent } from './note-links'
-import { Button, ContextMenu, Dialog, Icon, IconButton, Input, TextArea, Select, SegmentedControl } from './ui'
+import { Button, ContextMenu, Dialog, Icon, IconButton, Input, TextArea, Select, SegmentedControl, DropdownMenu } from './ui'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/arc/tabs/tabs'
 import { ResizablePanel, ResizablePanels } from './components/arc/resizable-panels/resizable-panels'
 import { AgentPanel } from './AgentPanel'
@@ -61,6 +61,7 @@ export function App() {
   const [aiOpen, setAiOpen] = useState(() => prefs.get('ai-open') !== 'false')
   const [mode, setMode] = useState<'note' | 'chat'>(() => prefs.get('mode') === 'chat' ? 'chat' : 'note')
   const [aiTab, setAiTab] = useState<'agent' | 'explore'>('agent')
+  const [exploreRequest, setExploreRequest] = useState<{ name: string; quote: string; key: number } | null>(null)
   const [focus, setFocus] = useState<{ names: string[]; key: number } | null>(null)
   const [folderMemoryOpen, setFolderMemoryOpen] = useState(false)
   const [aiShare] = useState(() => Math.min(65, Math.max(15, Number(prefs.get('ai-width')) || 30)))
@@ -70,6 +71,9 @@ export function App() {
   const creating = useRef(false)
   const requestVersion = useRef(0)
   const navigationVersion = useRef(0)
+  const [chatNavigation, setChatNavigation] = useState<HTMLDivElement | null>(null)
+  const newChat = useRef<() => void>(() => {})
+  const searchAction = useRef<() => void>(() => {})
   const newAction = useRef<() => void>(() => {})
   const refreshList = useCallback(async () => {
     const revision = ++requestVersion.current
@@ -103,7 +107,7 @@ export function App() {
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
       if (event.defaultPrevented || composing(event) || event.repeat || event.altKey || event.shiftKey || !(event.metaKey || event.ctrlKey)) return
-      if (event.key.toLowerCase() === 'k') { event.preventDefault(); setSearchOpen(value => !value) }
+      if (event.key.toLowerCase() === 'k') { event.preventDefault(); searchAction.current() }
       if (event.key.toLowerCase() === 'n' && !document.querySelector('[role="dialog"]')) { event.preventDefault(); newAction.current() }
     }
     window.addEventListener('keydown', key)
@@ -138,7 +142,8 @@ export function App() {
     setMode(next)
   }
   const openCreate = () => { setDestination(space); setFormError(''); setCreateOpen(true); setSearchOpen(false) }
-  newAction.current = openCreate
+  searchAction.current = () => { if (mode === 'chat') { setSidebarCollapsed(false); requestAnimationFrame(() => document.getElementById('chat-search')?.focus()) } else setSearchOpen(value => !value) }
+  newAction.current = mode === 'chat' ? () => newChat.current() : openCreate
   const create = async () => {
     if (creating.current) return
     creating.current = true; setBusy(true); setFormError('')
@@ -174,14 +179,21 @@ export function App() {
   const aiModel = settings?.chatgpt.unavailable ? null : settings?.chatgpt.activeAccountId ? settings.chatgpt.configured ? 'ChatGPT · ' + settings.chatgpt.model : null : settings?.ai.configured ? settings.ai.model : null
   return <div className={'app' + (sidebarCollapsed ? ' sidebar-collapsed' : '')}>
     <div className="narrow-guard" role="status"><strong>Sidemind</strong><p>这是桌面软件，需要更宽的窗口。请把浏览器窗口拉宽（至少 1000 像素）后继续使用。</p></div>
-    <aside className="sidebar" aria-label="笔记导航">
-      <div className="brand"><span className="brand-mark"><Icon name="note" size={19}/></span><strong>Sidemind</strong><Button variant="ghost" size="sm" isIconOnly aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} aria-expanded={!sidebarCollapsed} aria-controls="sidebar-navigation" onPress={() => setSidebarCollapsed(value => !value)}><Icon name="panel"/></Button></div>
-      <Button variant="ghost" size="sm" aria-label="搜索笔记" className="search-trigger nav-item" onPress={() => setSearchOpen(true)}><Icon name="search" size={16}/><span>搜索文章</span></Button>
-      <Button variant="ghost" size="sm" aria-label="新建文章" className="nav-item" onPress={openCreate} isDisabled={busy}><Icon name="plus"/><span>新建文章</span></Button>
-      {!sidebarCollapsed && <SegmentedControl className="mode-switch" label="工作模式" value={mode} onValueChange={value => void switchMode(value as typeof mode)} options={[{ value: 'note', label: '笔记' }, { value: 'chat', label: '对话' }]}/>}
-      <span className="mode-compact" data-always={sidebarCollapsed ? 'true' : undefined}><IconButton icon="chat" label={mode === 'note' ? '切换到对话' : '切换到笔记'} onPress={() => void switchMode(mode === 'note' ? 'chat' : 'note')}/></span>
-      {sidebarCollapsed && <IconButton icon="grid" label="返回当前文件夹画布" onPress={() => void navigate(null)}/>}
-      <div id="sidebar-navigation" className="sidebar-navigation" hidden={sidebarCollapsed}>
+    <aside className="sidebar" aria-label="工作区导航">
+      <div className="brand">
+        <DropdownMenu label="切换工作区" align="start" trigger={<Button variant="ghost" className="workspace-switch" aria-label={'切换工作区：' + (mode === 'note' ? '笔记' : '对话')}><Icon name={mode === 'note' ? 'note' : 'chat'}/><span className="workspace-switch-label">{mode === 'note' ? '笔记' : '对话'}</span><Icon name="down" size={15}/></Button>} items={[
+          { label: '笔记', icon: <Icon name="note"/>, onSelect: () => void switchMode('note') },
+          { label: '对话', icon: <Icon name="chat"/>, onSelect: () => void switchMode('chat') },
+        ]}/>
+        <Button variant="ghost" size="sm" isIconOnly aria-label={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} title={sidebarCollapsed ? '展开侧边栏' : '折叠侧边栏'} aria-expanded={!sidebarCollapsed} aria-controls="sidebar-navigation chat-navigation" onPress={() => setSidebarCollapsed(value => !value)}><Icon name="panel"/></Button>
+      </div>
+      {mode === 'note' && <>
+        <Button variant="ghost" size="sm" aria-label="搜索笔记" className="search-trigger nav-item" onPress={() => setSearchOpen(true)}><Icon name="search" size={16}/><span>搜索文章</span></Button>
+        <Button variant="ghost" size="sm" aria-label="新建文章" className="nav-item" onPress={openCreate} isDisabled={busy}><Icon name="plus"/><span>新建文章</span></Button>
+        {sidebarCollapsed && <IconButton icon="grid" label="返回当前文件夹画布" onPress={() => void navigate(null)}/>}
+      </>}
+      <div id="chat-navigation" className="chat-navigation" ref={setChatNavigation} hidden={mode !== 'chat'}/>
+      <div id="sidebar-navigation" className="sidebar-navigation" hidden={sidebarCollapsed || mode !== 'note'}>
       <div className="section-header sidebar-section"><span className="section-label">文件夹画布</span><IconButton icon="plus" label="新建文件夹" onPress={() => { setFormError(''); setNewFolderOpen(true) }}/></div>
       <nav className="spaces" aria-label="文件夹">{folders.map(folder => <ContextMenu key={folder} label="文件夹操作" heading={folderLabel(folder)} items={[
         { id: 'open-folder', label: openingFolder ? '正在打开…' : '在文件管理器中打开', disabled: openingFolder, icon: <Icon name="folder" size={16}/>, onSelect: () => void openFolder(folder) },
@@ -193,12 +205,12 @@ export function App() {
     </aside>
     <main className="stage">
       {error && <div className="global-error" role="alert"><span>{error}</span><Button size="sm" variant="ghost" onPress={() => void refreshList()}>重试</Button><IconButton icon="close" label="关闭提示" onPress={() => setError('')}/></div>}
-      <ChatWorkspace notes={notes.map(note => ({ name: note.name, title: note.title }))} model={aiModel} active={mode === 'chat'} beforeSend={beforeLeave} onConfigure={() => setSettingsOpen(true)} onOpenNote={openNote}/>
+      <ChatWorkspace navigationRoot={chatNavigation} newChat={newChat} notes={notes.map(note => ({ name: note.name, title: note.title }))} model={aiModel} active={mode === 'chat'} beforeSend={beforeLeave} onConfigure={() => setSettingsOpen(true)} onOpenNote={openNote}/>
       <div className="agent-workspace" hidden={mode === 'chat'}><ResizablePanels label="笔记与 AI 助手" onLayoutChange={sizes => { if (aiOpen && sizes[1]) prefs.set('ai-width', String(sizes[1])) }}>
       <ResizablePanel id="article-pane" label="笔记与 AI 助手分栏宽度" defaultSize={100 - aiShare} minSize={360}>
-      {selected && NoteWorkspace ? <NoteWorkspace key={selected} name={selected} theme={resolvedTheme} beforeLeave={beforeLeave} agentSelection={agentSelection} reveal={reveal} aiOpen={aiOpen} onToggleAI={() => setAiOpen(value => !value)} onOpenNote={openNote} onBack={() => void navigate(null)}/> : <>
-        <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span className="library-folder" title={folderLabel(space)}>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="ghost" onPress={() => setFolderMemoryOpen(true)}>文件夹记忆</Button><Button size="sm" variant="secondary" className="ai-toggle" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" title={aiOpen ? '关闭 AI 助手' : '打开 AI 助手'} onPress={() => setAiOpen(value => !value)}><Icon name="spark" size={16}/>AI 助手</Button><Button size="sm" onPress={openCreate}><Icon name="plus" size={16}/>新建文章</Button></div></header>
-        {!loaded ? <div className="empty">{error ? '笔记尚未载入，请重试。' : '正在载入画布…'}</div> : <LibraryCanvas key={space} folder={space} notes={visible} theme={resolvedTheme} viewport={views.get(space) ?? { x: 0, y: 0, zoom: 1 }} onViewport={viewport => { views.set(space, viewport); prefs.set('views', JSON.stringify([...views])) }} beforeLeave={beforeLeave} onOpen={openNote} onPreview={setPreview} onCreate={openCreate} focus={focus}/>}
+      {selected && NoteWorkspace ? <NoteWorkspace key={selected} name={selected} theme={resolvedTheme} beforeLeave={beforeLeave} agentSelection={agentSelection} reveal={reveal} aiOpen={aiOpen} onToggleAI={() => setAiOpen(value => !value)} onOpenNote={openNote} onExplore={quote => { setExploreRequest({ name: selected, quote, key: Date.now() }); setAiTab('explore'); setAiOpen(true) }} onBack={() => void navigate(null)}/> : <>
+        <header className="topbar library-topbar"><div className="breadcrumb"><Icon name="folder" size={17}/><span className="library-folder" title={folderLabel(space)}>{folderLabel(space)}</span><span className="count">{visible.length} 篇</span></div><div className="toolbar"><Button size="sm" variant="secondary" className="ai-toggle" aria-pressed={aiOpen} aria-controls="ai-assistant-pane" title={aiOpen ? '关闭 AI 助手' : '打开 AI 助手'} onPress={() => setAiOpen(value => !value)}><Icon name="spark" size={16}/><span className="library-ai-label">AI 助手</span></Button><Button size="sm" aria-label="新建文章" onPress={openCreate}><Icon name="plus" size={16}/><span className="library-create-label">新建文章</span></Button><DropdownMenu label="画布更多操作" trigger={<Button variant="ghost" size="sm" isIconOnly aria-label="画布更多操作"><Icon name="more"/></Button>} items={[{ label: '文件夹记忆', icon: <Icon name="spark" size={16}/>, onSelect: () => setFolderMemoryOpen(true) }]}/></div></header>
+        {!loaded ? <div className="empty">{error ? '笔记尚未载入，请重试。' : '正在载入画布…'}</div> : <LibraryCanvas key={space} folder={space} notes={visible} theme={resolvedTheme} viewport={views.get(space) ?? { x: 0, y: 0, zoom: 1 }} onViewport={viewport => { views.set(space, viewport); prefs.set('views', JSON.stringify([...views])) }} beforeLeave={beforeLeave} onOpen={openNote} onPreview={setPreview} onCreate={openCreate} onSearch={() => setSearchOpen(true)} focus={focus}/>}
       </>}
       </ResizablePanel>
       <ResizablePanel id="ai-assistant-pane" label="AI 助手" defaultSize={aiShare} minSize={320} maxSize={720} hidden={!aiOpen}>
@@ -208,7 +220,7 @@ export function App() {
         <AgentPanel folder={space} name={selected} model={aiModel} beforeSend={beforeLeave} selection={agentSelection} onConfigure={() => setSettingsOpen(true)} onClose={closeAI} onOpenNote={openNote} onFocus={focusNotes}/>
         </div>
         <div className="ai-pane-tab" hidden={aiTab !== 'explore'}>
-          <ExplorePanel name={selected} model={aiModel} active={aiOpen && aiTab === 'explore'} beforeSend={beforeLeave} selection={agentSelection} reveal={reveal} onConfigure={() => setSettingsOpen(true)} onOpenNote={openNote}/>
+          <ExplorePanel request={exploreRequest} onClose={closeAI} name={selected} model={aiModel} active={aiOpen && aiTab === 'explore'} beforeSend={beforeLeave} selection={agentSelection} reveal={reveal} onConfigure={() => setSettingsOpen(true)} onOpenNote={openNote}/>
         </div>
         </div>
       </ResizablePanel>

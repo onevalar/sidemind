@@ -1,19 +1,21 @@
 import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 'react'
+import { createPortal } from 'react-dom'
+import { AiChat } from './components/arc/blocks/ai-chat/ai-chat'
 import { prefs } from './prefs'
 import type { ChangeSetDetail, DiscussionSummaryDTO } from '../shared/types'
 import { api, subscribeEvents, type DiscussionView } from './api'
-import { DiscussionDialogs, DiscussionThread, clip, message, title, useDiscussionKit } from './discussion'
-import { Button, Select, TextArea } from './ui'
-import { composing } from './ime'
+import { DiscussionDialogs, DiscussionThread, message, title, useDiscussionKit } from './discussion'
+import { Button, Input, Icon, DropdownMenu } from './ui'
 
-const NONE = '__none__'
-const ago = (time: number) => new Date(time).toLocaleString(undefined, { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+
+const ago = (time: number) => new Date(time).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
 
 /**
  * Independent conversations. They run on the same discussion, run and write-back layers as exploring a note, so a
  * conversation started from a passage shows up here and a plain one can be written into any note.
  */
-export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, onOpenNote }: {
+export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, onOpenNote, navigationRoot, newChat }: {
+  navigationRoot?: HTMLElement | null; newChat?: MutableRefObject<() => void>
   notes: { name: string; title: string }[]; model: string | null; active: boolean; beforeSend: MutableRefObject<() => Promise<boolean>>; onConfigure: () => void; onOpenNote: (name: string) => void
 }) {
   const [list, setList] = useState<DiscussionSummaryDTO[]>([])
@@ -22,8 +24,14 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
   const [view, setView] = useState<DiscussionView | null>(null)
   const [changes, setChanges] = useState<Record<string, ChangeSetDetail>>({})
   const [loadError, setLoadError] = useState('')
-  const [question, setQuestion] = useState('')
-  const [target, setTarget] = useState<string>(NONE)
+  const [drafts, setDrafts] = useState<Record<string, string>>(() => {
+    try { const saved = JSON.parse(prefs.get('chat-drafts') || '{}'); return saved && typeof saved === 'object' && !Array.isArray(saved) ? Object.fromEntries(Object.entries(saved).filter(([, value]) => typeof value === 'string')) as Record<string, string> : {} } catch { return {} }
+  })
+  const draftKey = selected ?? 'new'
+  const question = drafts[draftKey] ?? ''
+  const setQuestion = (value: string) => setDrafts(current => ({ ...current, [draftKey]: value }))
+  useEffect(() => { prefs.set('chat-drafts', JSON.stringify(drafts)) }, [drafts])
+  const [query, setQuery] = useState('')
   useEffect(() => { if (selected) prefs.set('chat-selected', selected); else prefs.remove('chat-selected') }, [selected])
   const current = useRef(selected)
   current.current = selected
@@ -54,13 +62,13 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
   useEffect(() => subscribeEvents(event => { if (active && (event.type === 'notes-changed' || event.type === 'note-changed')) void load() }), [active, load])
   // Where an answer is appended follows the conversation: a conversation about a note defaults to that note.
   const origin = list.find(item => item.id === selected)?.notePath ?? null
-  useEffect(() => { setTarget(origin ?? NONE) }, [selected, origin])
 
   const open = (id: string | null) => {
     // Choosing the conversation that is already open must not blank it: nothing would trigger a reload.
     if (id === selected) { void load(); return }
-    retry.current = null; setSelected(id); setView(null); setChanges({}); setQuestion('')
+    retry.current = null; setSelected(id); setView(null); setChanges({})
   }
+  useEffect(() => { if (newChat) newChat.current = () => { if (!busy) { setArchived(false); setQuery(''); open(null) } } })
   const noModel = !model
 
   // A send that failed after its draft was saved retries with the same draft, so it can never create a second question.
@@ -80,7 +88,7 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
     kitValue.setTexts(value => ({ ...value, [pending!.item]: text }))
     const sent = await kitValue.sendDraft({ id: pending.draft, items: [{ id: pending.item, question: text, sourceIds: [] }] }, [pending.item])
     retry.current = null
-    setQuestion(''); setSelected(sent.discussion.id)
+    setDrafts(current => { const next = { ...current }; if (next[draftKey] === text || next[draftKey]?.trim() === text) delete next[draftKey]; return next }); setSelected(sent.discussion.id)
   })
   const archive = (id: string, value: boolean) => guard('archive' + id, async () => { await api.archiveDiscussion(id, value); if (selected === id) open(null); await load() })
   const error = kitValue.error || loadError
@@ -88,54 +96,49 @@ export function ChatWorkspace({ notes, model, active, beforeSend, onConfigure, o
   const heading = summary?.title ?? view?.discussion.title ?? '新对话'
   const submit = () => { if (!noModel) void send() }
   const waiting = !!view && !leaf && Object.values(kitValue.runs).some(run => run.status === 'queued' || run.status === 'running')
-  const hint = !selected ? '想问什么？回答会保存在对话里，之后可以选择写入笔记。Enter 发送，Shift+Enter 换行。' : leaf ? '继续提问（Enter 发送；想从别处分支，用每条回答下的“追问”）' : !view ? '正在读取对话…' : waiting ? '等待上一条回答完成后继续提问' : '上一条没有回答成功，请先在上面重试'
+  const liveRuns = Object.values(kitValue.runs).filter(run => run.discussionId === selected && (run.status === 'queued' || run.status === 'running'))
+  const filtered = list.filter(item => (item.title + ' ' + item.lastQuestion).toLocaleLowerCase().includes(query.toLocaleLowerCase().trim()))
+  const navigation = <nav className="chat-list" aria-label="对话列表" hidden={!active}>
+    <Button variant="ghost" size="sm" className="nav-item chat-new" aria-label="新对话" isDisabled={!!busy} onPress={() => { setArchived(false); setQuery(''); open(null) }}><Icon name="plus"/><span>新对话</span></Button>
+    <div className="chat-search"><Input id="chat-search" aria-label="搜索对话" placeholder="搜索对话" value={query} onChange={event => setQuery(event.target.value)}/></div>
+    <div className="section-header sidebar-section chat-list-heading"><span className="section-label">{archived ? '已归档' : '最近对话'}</span>
+      <DropdownMenu label="对话列表选项" trigger={<Button variant="ghost" size="sm" isIconOnly aria-label="对话列表选项"><Icon name="more"/></Button>} items={[{ label: archived ? '返回最近对话' : '查看已归档', disabled: !!busy, onSelect: () => { setArchived(value => !value); open(null) } }]}/>
+    </div>
+    <ul className="chat-items">
+      {filtered.map(item => <li key={item.id}>
+        <Button variant="ghost" size="sm" isDisabled={!!busy} className={'chat-item' + (item.id === selected ? ' is-active' : '')} aria-current={item.id === selected ? 'page' : undefined} onPress={() => open(item.id)}>
+          <span className="chat-item-title">{item.title}</span>
+          <span className="chat-item-meta muted">{drafts[item.id]?.trim() ? '草稿 · ' : ''}{ago(item.updatedAt)}</span>
+        </Button>
+      </li>)}
+    </ul>
+    {!filtered.length && <p className="muted chat-empty">{query ? '没有找到匹配的对话。' : archived ? '没有已归档的对话。' : '从一个问题开始。'}</p>}
+  </nav>
 
-  return <div className="chat-workspace" hidden={!active}>
-    <nav className="chat-list" aria-label="对话列表">
-      <div className="chat-list-head"><h2>对话</h2>
-        <div className="chat-list-actions">
-          <Button variant="ghost" size="sm" aria-pressed={archived} onPress={() => { setArchived(value => !value); open(null) }}>{archived ? '返回对话' : '已归档'}</Button>
-          {!archived && <Button size="sm" onPress={() => open(null)}>新对话</Button>}</div></div>
-      <ul className="chat-items">
-        {list.map(item => <li key={item.id}>
-          <Button variant="ghost" size="sm" className={'chat-item' + (item.id === selected ? ' is-active' : '')} aria-current={item.id === selected ? 'true' : undefined} onPress={() => open(item.id)}>
-            <span className="chat-item-title">{item.title}</span>
-            <span className="chat-item-meta muted">{item.notePath ? '来自《' + title(item.notePath) + '》 · ' : ''}{item.turnCount} 个问题 · {ago(item.updatedAt)}</span>
-          </Button>
-        </li>)}
-      </ul>
-      {!list.length && <p className="muted chat-empty">{archived ? '没有已归档的对话。' : '还没有对话。在右侧写下第一个问题。'}</p>}
-    </nav>
-
+  return <div className={'chat-workspace' + (navigationRoot !== undefined ? ' has-shared-navigation' : '')} hidden={!active}>
+    {navigationRoot === undefined ? navigation : navigationRoot ? createPortal(navigation, navigationRoot) : null}
     <section className="chat-detail" aria-label={'对话：' + heading}>
       <header className="chat-detail-head">
         <h2>{heading}</h2>
-        {summary && <div className="chat-list-actions">
-          {summary.notePath && <Button variant="ghost" size="sm" onPress={() => onOpenNote(summary.notePath!)}>打开《{title(summary.notePath)}》</Button>}
-          <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void archive(summary.id, !summary.archived)}>{summary.archived ? '取消归档' : '归档'}</Button></div>}
+        <div className="chat-list-actions">
+          <Button variant="ghost" size="sm" onPress={onConfigure} title={model ?? '连接模型'}><span className="chat-model">{model ?? '连接模型'}</span><Icon name="down" size={14}/></Button>
+          {summary && <DropdownMenu label="对话操作" trigger={<Button variant="ghost" size="sm" isIconOnly aria-label="对话操作"><Icon name="more"/></Button>} items={[
+            ...(summary.notePath ? [{ label: '打开来源笔记', onSelect: () => onOpenNote(summary.notePath!) }] : []),
+            { label: summary.archived ? '取消归档' : '归档对话', disabled: !!busy, onSelect: () => void archive(summary.id, !summary.archived) },
+          ]}/>}
+        </div>
       </header>
-      <div className="chat-scroll">
-        {error && <p className="ai-error" role="alert">{error}</p>}
-        {view && selected && <>
-          {leaf && <div className="chat-target">
-            <Select id="chat-target-note" label="写入笔记" value={target} onValueChange={setTarget} options={[{ value: NONE, label: '不追加（只能存为新笔记）' }, ...notes.map(note => ({ value: note.name, label: note.title }))]}/>
-          </div>}
-          <DiscussionThread kit={kitValue} discussion={view.discussion} sources={view.sources} captures={view.captures} changes={changes} model={model}
-            readOnly={!!view.discussion.imported?.readOnly} noteName={null} appendTo={target === NONE ? null : target} appendLabel={notes.find(note => note.name === target)?.title} newFolder="" notes={notes}/></>}
-        {!selected && <p className="muted chat-empty">这是一段没有读取任何笔记的独立对话。想基于笔记内容提问，请在笔记里选中文字后使用「探索」。</p>}
-        {selected && !view && !error && <p className="muted chat-empty">正在读取对话…</p>}
-      </div>
-      {view?.discussion.imported?.readOnly ? <div className="chat-composer"><p className="muted" role="note">这是从旧助手对话导入的只读历史：可以阅读，也可以把其中的回答写入笔记，但不能在这里继续提问。要继续原来的对话，请回到笔记页的助手面板。</p></div> :
-      <div className="chat-composer">
-        {/* readOnly, not disabled: a disabled field drops keyboard focus, and the next question would need a click first. */}
-        <TextArea aria-label={selected ? '继续提问' : '你的问题'} value={question} rows={3} placeholder={hint} aria-busy={!!busy} readOnly={!!busy || (!!selected && (!view || !leaf))}
-          onChange={event => setQuestion(event.target.value)}
-          onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !composing(event)) { event.preventDefault(); submit() } }}/>
-        <div className="explore-actions">
-          {noModel && <span className="muted explore-hint">尚未连接模型。<Button variant="ghost" size="sm" onPress={onConfigure}>去设置</Button></span>}
-          <Button size="sm" isDisabled={!!busy || noModel || !question.trim() || (!!selected && !leaf)} onPress={submit}>{busy === 'send' ? '发送中…' : selected ? '继续提问' : '开始对话'}</Button></div>
-      </div>
-      }
+      <AiChat key={selected ?? 'new'} title="对话内容" model={model} hideHeader onConfigure={onConfigure} onNew={() => open(null)} onClose={() => {}}
+        messages={[]} value={question} onValueChange={setQuestion} onSend={submit} onStop={() => { void Promise.all(liveRuns.map(run => api.stopRun(run.id))).catch(failure => kitValue.setError(message(failure))) }}
+        busy={liveRuns.length > 0} disabled={!!busy || noModel || (!!selected && (!view || !leaf))} readOnly={!!busy}
+        inputLabel={selected ? '继续提问' : '你的问题'} sendLabel={selected ? '继续提问' : '开始对话'} placeholder={selected ? '继续提问…' : '有什么想一起想清楚的？'}
+        emptyTitle="从一个问题开始" emptyText="一起推敲想法，值得留下的，再存进笔记。" onOpenNote={onOpenNote}
+        hideComposer={!!view?.discussion.imported?.readOnly}
+        context={error ? <p className="ai-error" role="alert">{error}</p> : noModel ? <p className="muted explore-hint">连接模型后即可开始。<Button variant="ghost" size="sm" onPress={onConfigure}>连接模型</Button></p> : waiting ? <p className="muted explore-hint">正在回答，你可以先写下一个问题。</p> : undefined}
+        thread={selected ? view ? <DiscussionThread kit={kitValue} discussion={view.discussion} sources={view.sources} captures={view.captures} changes={changes} model={model}
+          presentation="chat" readOnly={!!view.discussion.imported?.readOnly} noteName={null} appendTo={origin} newFolder="" notes={notes}/> : <p className="muted chat-empty" role="status">{loadError || '正在读取对话…'}</p> : undefined}>
+        {view?.discussion.imported?.readOnly && <p className="muted chat-empty" role="note">这是只读历史，可以阅读或保存到笔记。继续交流请新建对话。</p>}
+      </AiChat>
     </section>
     <DiscussionDialogs kit={kitValue}/>
   </div>

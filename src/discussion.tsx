@@ -4,7 +4,9 @@ import { api, subscribeRun, type CaptureTarget } from './api'
 import { NoteMarkdown } from './NoteMarkdown'
 import { WriteBackDialog, type WriteBackSubject } from './WriteBackDialog'
 import { DiscussionGraph, type TurnState } from './DiscussionGraph'
-import { Button, Dialog, TextArea } from './ui'
+import { Button, Dialog, TextArea, DropdownMenu, Icon } from './ui'
+import { CopyButton } from './components/arc/copy-button/copy-button'
+import chatStyles from './components/arc/blocks/ai-chat/ai-chat.module.css'
 import { composing } from './ime'
 
 export const title = (path: string) => path.split('/').at(-1)!.replace(/\.md$/, '')
@@ -141,7 +143,7 @@ export function useDiscussionKit(options: DiscussionKitOptions) {
 export type DiscussionKit = ReturnType<typeof useDiscussionKit>
 
 /** The questions and answers of one discussion, indented by branch depth, with every per-answer action. */
-export function DiscussionThread({ kit, discussion, sources, captures, changes, model, noteName, appendTo, appendLabel, newFolder, notes, readOnly }: {
+export function DiscussionThread({ kit, discussion, sources, captures, changes, model, noteName, appendTo, appendLabel, newFolder, notes, readOnly, presentation }: {
   kit: DiscussionKit; discussion: DiscussionDTO; sources: Record<string, SourceRefDTO>; captures: CaptureDTO[]; changes: Record<string, ChangeSetDetail>
   model: string | null
   /** The note open in the editor, if any: relative links in answers resolve against it and quotes from it can be located there. */
@@ -155,6 +157,7 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
   /** Notes the write dialog may append to. Defaults to just `appendTo`. */
   notes?: { name: string; title: string }[]
   /** History that cannot be continued here (old Agent conversations): no new questions, retries or comparisons. */
+  presentation?: 'chat'
   readOnly?: boolean
 }) {
   const { busy, runs, followUp, setFollowUp, version, setVersion, picked, compareText, setCompareText } = kit
@@ -171,27 +174,30 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
   const depth = new Map<string, number>(), byId = new Map(discussion.turns.map(turn => [turn.id, turn]))
   const depthOf = (turn: TurnDTO): number => { if (!depth.has(turn.id)) depth.set(turn.id, turn.parents.length ? 1 + Math.max(...turn.parents.map(id => depthOf(byId.get(id)!))) : 0); return depth.get(turn.id)! }
   const choosing = picked.discussion === discussion.id ? picked.turns : []
+  const children = new Map<string, number>()
+  for (const turn of discussion.turns) for (const parent of turn.parents) children.set(parent, (children.get(parent) ?? 0) + 1)
+  const branched = discussion.turns.some(turn => turn.parents.length > 1) || [...children.values()].some(count => count > 1)
   const base = noteName ?? ''
   return <section className="explore-discussion" aria-label={'讨论：' + discussion.title}>
-    {discussion.turns.length > 1 && <div className="explore-actions graph-toggle"><Button variant="ghost" size="sm" aria-pressed={graph} onPress={() => setGraph(value => !value)}>{graph ? '收起分支图' : '分支图'}</Button></div>}
+    {branched && <div className="explore-actions graph-toggle"><Button variant="ghost" size="sm" aria-pressed={graph} onPress={() => setGraph(value => !value)}>{graph ? '收起分支图' : '分支图'}</Button></div>}
     {graph && <DiscussionGraph turns={discussion.turns} states={Object.fromEntries(discussion.turns.map(turn => [turn.id, turnState(turn)]))} current={reached} onSelect={reach}/>}
     {discussion.turns.map(turn => {
       const answers = turn.answers, index = Math.min(version[turn.id] ?? answers.length - 1, answers.length - 1), shown = answers[index]
       const live = runs[turn.id], active = !!live && (live.status === 'queued' || live.status === 'running')
       const finishedBad = !!live && ['failed', 'cancelled', 'interrupted'].includes(live.status)
       const saved = shown ? captures.filter(capture => capture.answers.some(entry => entry.answerId === shown.id)) : []
-      return <article className="explore-turn" id={'turn-' + turn.id} tabIndex={-1} data-reached={reached === turn.id || undefined} key={turn.id} data-follow-up={turn.parents.length ? 'true' : undefined} style={{ marginLeft: Math.min(depthOf(turn), 3) * 14 }}>
+      return <article className="explore-turn" id={'turn-' + turn.id} tabIndex={-1} data-reached={reached === turn.id || undefined} key={turn.id} data-follow-up={turn.parents.length ? 'true' : undefined} style={{ marginLeft: presentation === 'chat' ? 0 : Math.min(depthOf(turn), 3) * 14 }}>
         {turn.parents.length > 1 && <p className="muted explore-merge">合并比较 · 来自 {turn.parents.length} 条分支</p>}
         {turn.sourceIds.map(id => sources[id] && <blockquote className="explore-quote" key={id}>{clip(sources[id]!.quote, 160)}<span className="explore-quote-actions">
           {noteName !== null && <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.locate(id, noteName)}>在原文中定位</Button>}
           {noteName === null && <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.locate(id, null)}>打开原文</Button>}
           <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.showBasis(id)}>查看依据</Button></span></blockquote>)}
-        <p className="explore-question">{turn.question}</p>
+        {presentation === 'chat' ? <div className={chatStyles.user} style={{ alignSelf: 'flex-end' }}><div className={chatStyles.bubble} style={{ borderRadius: 20 }}><p className={chatStyles.bubbleText}>{turn.question}</p></div></div> : <p className="explore-question">{turn.question}</p>}
         {(active || finishedBad) && live && <div className="explore-run" aria-live="polite">
           {(live.status === 'queued' || live.status === 'running') && <div className="explore-run-head"><span className="muted" role="status">{live.text ? '正在回答…' : '正在准备回答…'}</span><Button variant="ghost" size="sm" onPress={() => void api.stopRun(live.id).catch(failure => kit.setError(message(failure)))}>停止</Button></div>}
-          {live.text && <div className="explore-answer" data-partial={finishedBad ? 'true' : undefined}><NoteMarkdown name={base} onOpenNote={kit.onOpenNote}>{live.text}</NoteMarkdown></div>}
+          {live.text && <div className={"explore-answer " + chatStyles.markdown} data-partial={finishedBad ? 'true' : undefined}><NoteMarkdown name={base} onOpenNote={kit.onOpenNote}>{live.text}</NoteMarkdown></div>}
           {finishedBad && (live.status === 'cancelled' ? <p className="muted" role="status">{live.error}</p> : <p className="ai-error" role="alert">{live.error}</p>)}</div>}
-        {shown && !active && <div className="explore-answer"><NoteMarkdown name={base} onOpenNote={kit.onOpenNote}>{shown.text}</NoteMarkdown></div>}
+        {shown && !active && <div className={"explore-answer " + chatStyles.markdown}><NoteMarkdown name={base} onOpenNote={kit.onOpenNote}>{shown.text}</NoteMarkdown></div>}
         {shown && !active && !!shown.summarizedTurns?.length && <p className="muted explore-hint">生成这条回答时，较早的 {shown.summarizedTurns.length} 条回答以摘要代替了原文。</p>}
         {answers.length > 1 && <div className="explore-versions" aria-label="回答版本">
           <Button variant="ghost" size="sm" isDisabled={index === 0} onPress={() => setVersion(value => ({ ...value, [turn.id]: index - 1 }))}>上一版</Button>
@@ -206,15 +212,19 @@ export function DiscussionThread({ kit, discussion, sources, captures, changes, 
               {detail && !detail.undone && <Button variant="ghost" size="sm" isDisabled={!!busy || !detail.undoable} title={detail.undoable ? undefined : '之后又有修改，撤销会覆盖新内容'} onPress={() => void kit.undo(capture)}>{detail.undoable ? '撤销' : '无法撤销'}</Button>}
             </span></div>
         })}
-        <div className="explore-actions">
-          {shown && <>
-            {appendTo && <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.save(discussion, turn, shown, { kind: 'append', note: appendTo })}>{noteName !== null && appendTo === noteName ? '追加到本文' : `追加到《${appendLabel ?? title(appendTo)}》`}</Button>}
-            <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.save(discussion, turn, shown, { kind: 'new', folder: newFolder })}>存为新笔记</Button>
-            <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => kit.setWriting({ discussion, turn, answer: shown, sources, notes: notes ?? (appendTo ? [{ name: appendTo, title: appendLabel ?? title(appendTo) }] : []), defaultNote: appendTo, newFolder })}>写入…</Button></>}
-          {!active && !readOnly && <Button variant="ghost" size="sm" isDisabled={!!busy || noModel} onPress={() => void kit.guard('retry' + turn.id, () => kit.answer(discussion.id, turn))}>{shown ? '重新回答' : finishedBad ? '重试' : '生成回答'}</Button>}
-          {shown && !readOnly && <Button variant="ghost" size="sm" aria-pressed={choosing.includes(turn.id)} isDisabled={!!busy} onPress={() => kit.toggle(discussion, turn)}>{choosing.includes(turn.id) ? '已选 · 取消' : '选择比较'}</Button>}
-          <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => void kit.showContext(discussion, turn)}>查看上下文</Button>
-          {!readOnly && <Button variant="ghost" size="sm" isDisabled={!!busy || noModel || !shown} onPress={() => setFollowUp(followUp?.turn === turn.id ? null : { turn: turn.id, text: '' })}>追问</Button>}
+        <div className="answer-actions" aria-label="回答操作">
+          {shown && !active && <><CopyButton value={shown.text} label="复制回复" iconOnly variant="plain"/>
+            <Button variant="ghost" size="sm" isDisabled={!!busy} onPress={() => kit.setWriting({ discussion, turn, answer: shown, sources, notes: notes ?? (appendTo ? [{ name: appendTo, title: appendLabel ?? title(appendTo) }] : []), defaultNote: appendTo, newFolder })}><Icon name="note" size={15}/>保存到笔记</Button></>}
+          {!shown && !active && !readOnly && <Button variant="ghost" size="sm" isDisabled={!!busy || noModel} onPress={() => void kit.guard('retry' + turn.id, () => kit.answer(discussion.id, turn))}>{finishedBad ? '重试' : '生成回答'}</Button>}
+          {choosing.includes(turn.id) && <Button variant="secondary" size="sm" onPress={() => kit.toggle(discussion, turn)}>已选比较 · 取消</Button>}
+          {!active && <DropdownMenu label="更多回答操作" trigger={<Button variant="ghost" size="sm" isIconOnly aria-label="更多回答操作"><Icon name="more" size={16}/></Button>} items={[
+            ...(shown && !readOnly ? [
+              { label: '从这里分支提问', disabled: !!busy || noModel, onSelect: () => setFollowUp({ turn: turn.id, text: '' }) },
+              { label: '重新回答', disabled: !!busy || noModel, onSelect: () => void kit.guard('retry' + turn.id, () => kit.answer(discussion.id, turn)) },
+              { label: choosing.includes(turn.id) ? '取消比较选择' : '选择比较', disabled: !!busy, onSelect: () => kit.toggle(discussion, turn) },
+            ] : []),
+            { label: '查看上下文', disabled: !!busy, separatorBefore: !!shown && !readOnly, onSelect: () => void kit.showContext(discussion, turn) },
+          ]}/>}
         </div>
         {followUp?.turn === turn.id && <div className="explore-follow">
           <TextArea aria-label="追问" rows={2} autoFocus value={followUp.text} placeholder="基于这条回答继续问"

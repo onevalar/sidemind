@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { NoteAgent } from '../server/agent'
 import { AISettings } from '../server/ai-settings'
 import { createApp } from '../server/app'
 import { NoteStore } from '../server/store'
@@ -82,6 +83,38 @@ beforeEach(async () => {
 afterEach(async () => { await Promise.allSettled([...running]); await fs.rm(dir, { recursive: true, force: true }) })
 
 describe('Note Agent on the run layer', () => {
+  it('preserves the full conversation and original goal when compaction fails', async () => {
+    script = [{ text: '已理解目标。' }]
+    const app = build()
+    const first = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'long-history', scope, message: '整理资料，保留原文和所有来源' }, 202)
+    await attach(app, first.id)
+    const firstRun = await call<AgentRunDTO>(app, 'GET', `/api/agent-runs/${first.id}`)
+    const file = path.join(store.paths.local, 'conversations', firstRun.session! + '.json')
+    const conversation = JSON.parse(await fs.readFile(file, 'utf8'))
+    conversation.messages = Array.from({ length: 6 }, (_, index) => ({ role: index % 2 ? 'assistant' : 'user', content: index === 0 ? '原始目标：保留所有来源。' + '资料'.repeat(23000) : '旧上下文'.repeat(12000) }))
+    await fs.writeFile(file, JSON.stringify(conversation))
+    script = [{}] // Summary service returned no usable answer.
+    const next = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'failed-compaction', scope, session: firstRun.session, message: '继续' }, 202)
+    const { entries } = await attach(app, next.id)
+    expect(entries.some(entry => entry.event.type === 'error' && entry.event.text.includes('压缩失败'))).toBe(true)
+    expect(await status(app, next.id)).toBe('failed')
+    const preserved = JSON.parse(await fs.readFile(file, 'utf8'))
+    expect(preserved.messages.slice(0, -1)).toEqual(conversation.messages)
+    expect(preserved.messages.at(-1)).toEqual({ role: 'user', content: '继续' })
+    expect(entries.some(entry => entry.event.type === 'changeset')).toBe(false)
+  })
+
+  it('persists the final status and event sequence before the client receives done', async () => {
+    script = [{ text: '已完成。' }]
+    const app = build()
+    const run = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'durable-done', scope, message: '你好' }, 202)
+    const { entries } = await attach(app, run.id)
+    const finalEvent = entries.at(-1)!
+    expect(finalEvent.event.type).toBe('done')
+    const persisted = JSON.parse(await fs.readFile(path.join(store.paths.local, 'agent-runs', run.id + '.json'), 'utf8'))
+    expect(persisted).toMatchObject({ status: 'completed', seq: finalEvent.seq })
+  })
+
   it('records the request, runs the unchanged tool loop once, and a repeated key does not run it again', async () => {
     script = [{ calls: [{ name: 'create_note', args: { title: '新笔记', content: '# 新笔记\n\n正文\n' } }] }, { text: '已创建。' }]
     const app = build()
@@ -135,6 +168,51 @@ describe('Note Agent on the run layer', () => {
     const state = await call<{ messages: { text: string }[]; changes: unknown[] } | null>(app, 'GET', `/api/ai/conversation?scope=${encodeURIComponent(JSON.stringify(scope))}`)
     expect(state!.messages.map(message => message.text)).toContain('创建两篇笔记')
     expect(state!.changes).toHaveLength(1)
+  })
+
+  it('cancels the remaining calls in one model response and durably records a result for each call', async () => {
+    const firstChanged = gate(), release = gate(), runAgent = NoteAgent.prototype.run
+    // Pause after the real first mutation and its changeset event. The HTTP stop lands at
+    // this exact boundary, rather than racing a timer against subsequent file writes.
+    const spy = vi.spyOn(NoteAgent.prototype, 'run').mockImplementation(function (this: NoteAgent, input, model, signal, emit) {
+      return runAgent.call(this, input, model, signal, async event => {
+        await emit(event)
+        if (event.type === 'changeset') { firstChanged.open(); await release.hold }
+      })
+    })
+    try {
+      script = [{ calls: [
+        { name: 'create_note', args: { title: '同批第一篇', content: '# 第一篇\n' } },
+        { name: 'create_note', args: { title: '同批第二篇', content: '# 第二篇\n' } },
+        { name: 'create_note', args: { title: '同批第三篇', content: '# 第三篇\n' } },
+      ] }]
+      const app = build()
+      const run = await call<AgentRunDTO>(app, 'POST', '/api/agent-runs', { requestKey: 'stop-within-batch', scope, message: '创建三篇笔记' }, 202)
+      await firstChanged.hold
+      await call(app, 'POST', `/api/agent-runs/${run.id}/stop`, {})
+      release.open()
+      const { entries } = await attach(app, run.id)
+
+      expect(transports).toBe(1)
+      expect((await store.names()).filter(name => name.startsWith('同批'))).toEqual(['同批第一篇.md'])
+      expect(await fs.readFile(path.join(store.root, '同批第一篇.md'), 'utf8')).toBe('# 第一篇\n')
+      expect(entries.filter(entry => entry.event.type === 'changeset')).toHaveLength(1)
+      expect(entries.at(-1)!.event.type).toBe('done')
+      const persisted = JSON.parse(await fs.readFile(path.join(store.paths.local, 'agent-runs', run.id + '.json'), 'utf8'))
+      expect(persisted).toMatchObject({ status: 'cancelled', seq: entries.at(-1)!.seq, changes: [expect.any(String)] })
+
+      const conversation = JSON.parse(await fs.readFile(path.join(store.paths.local, 'conversations', persisted.session + '.json'), 'utf8'))
+      expect(conversation.messages[0]).toEqual({ role: 'user', content: '创建三篇笔记' })
+      const calls = conversation.messages.find((message: { role: string; tool_calls?: unknown[] }) => message.role === 'assistant' && message.tool_calls)?.tool_calls
+      expect(calls).toHaveLength(3)
+      const results = conversation.messages.filter((message: { role: string }) => message.role === 'tool')
+      expect(results.map((result: { tool_call_id: string }) => result.tool_call_id)).toEqual(calls.map((tool: { id: string }) => tool.id))
+      expect(JSON.parse(results[0].content)).toMatchObject({ created: '同批第一篇.md', changeSet: persisted.changes[0] })
+      for (const result of results.slice(1)) expect(JSON.parse(result.content)).toMatchObject({ code: 'cancelled' })
+      expect(conversation.changesets).toEqual(persisted.changes)
+      const changeset = JSON.parse(await fs.readFile(path.join(store.paths.local, 'changesets', persisted.changes[0] + '.json'), 'utf8'))
+      expect(changeset.files.filter((file: { area: string }) => file.area === 'notes').map((file: { name: string }) => file.name)).toEqual(['同批第一篇.md'])
+    } finally { release.open(); spy.mockRestore() }
   })
 
   /** Runs a script until the model is mid-reply, then simulates a crash: the record on disk still says "running". */

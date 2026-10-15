@@ -11,6 +11,7 @@ import { contextFor, estimateTokens } from '../server/explore'
 import type { ContextPreviewDTO, DiscussionDTO, RunDTO, TurnDTO } from '../shared/types'
 
 let dir: string, store: NoteStore, research: ResearchStore
+const tasks = new Set<Promise<unknown>>()
 const J = { host: 'localhost:3001', 'content-type': 'application/json' }
 beforeEach(async () => {
   dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cn-branches-'))
@@ -18,7 +19,7 @@ beforeEach(async () => {
   await store.init()
   research = new ResearchStore(store)
 })
-afterEach(() => fs.rm(dir, { recursive: true, force: true }))
+afterEach(async () => { await Promise.allSettled([...tasks]); await fs.rm(dir, { recursive: true, force: true }) })
 
 /** R → A (only knows aluminium) and R → B (only knows wood). */
 async function tree() {
@@ -107,7 +108,7 @@ describe('budget', () => {
     const ai = new AISettings(path.join(dir, 'notes'), path.join(dir, 'private'), {})
     await ai.save({ model: 'm', baseUrl: 'https://models.example/v1', key: 'k' })
     const sent: { messages: { role: string; content: string }[] }[] = []
-    const app = createApp(store, new EventBus(), { aiSettings: ai, aiTransport: async (_, init) => {
+    const app = createApp(store, new EventBus(), { aiSettings: ai, tasks, aiTransport: async (_, init) => {
       sent.push(JSON.parse(String(init!.body)))
       return new Response(JSON.stringify({ choices: [{ message: { content: '好' }, finish_reason: 'stop' }] }))
     } })
@@ -157,7 +158,7 @@ describe('summaries when the context does not fit', () => {
     return { sent, build: async () => {
       const ai = new AISettings(path.join(dir, 'notes'), path.join(dir, 'private'), {})
       await ai.save({ model: 'm', baseUrl: 'https://models.example/v1', key: 'k' })
-      const app = createApp(store, new EventBus(), { aiSettings: ai, aiTransport: async (_, init) => { sent.push(JSON.parse(String(init!.body))); return new Response(JSON.stringify({ choices: [{ message: { content: reply() }, finish_reason: 'stop' }] })) } })
+      const app = createApp(store, new EventBus(), { aiSettings: ai, tasks, aiTransport: async (_, init) => { sent.push(JSON.parse(String(init!.body))); return new Response(JSON.stringify({ choices: [{ message: { content: reply() }, finish_reason: 'stop' }] })) } })
       const call = async <T>(method: string, url: string, body?: unknown, expected = 200): Promise<T> => {
         const response = await app.request(url, { method, headers: J, ...(body === undefined ? {} : { body: JSON.stringify(body) }) })
         const text = await response.text()

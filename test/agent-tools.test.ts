@@ -271,3 +271,129 @@ describe('proposals, conversations and streaming', () => {
     expect(events).toContainEqual({ type: 'message', text: '有 1 篇。' })
   })
 })
+
+describe('Agent evidence and capability contracts', () => {
+  it('discovers product semantics and real capabilities without eagerly reading note bodies', async () => {
+    let context: any, advertised: string[] = []
+    const events = await send(app([
+      (_, body) => { advertised = body.tools.map((tool: any) => tool.function.name); return reply(null, [call('workspace_context', {})]) },
+      result => { context = result; return reply('可以整理当前文件夹的文档区。') },
+    ]), { kind: 'folder', folder: 'Work' }, '你能怎样帮我组织这些文章？')
+    expect(context).toMatchObject({ focus: { kind: 'folder', folder: 'Work' }, access: 'whole_library', services: { semanticSearch: false, gitHistory: false } })
+    expect(context.tools).toEqual(advertised)
+    expect(context.tools).not.toContain('semantic_search')
+    expect(context.objects.frame).toContain('不是文件夹')
+    expect(context.memorySections.library).toContain('关于用户')
+    expect(JSON.stringify(context)).not.toContain('See [Other]')
+    expect(events.some(event => event.type === 'changeset')).toBe(false)
+  })
+
+  it('tracks only returned section characters, recovers through pagination, then verifies and undoes a full rewrite', async () => {
+    const original = '# Long\n\n' + 'a'.repeat(31000) + '\nSOURCE AT THE END\n'
+    await store.saveContent('Work/Topic.md', original, await read('Work/Topic.md'))
+    let version = '', first: any, blockedRewrite: any, blockedSection: any, tail: any, verified: any
+    const events = await send(app([
+      () => reply(null, [call('read_section', { name: 'Work/Topic.md', section: 'Long' })]),
+      result => { first = result; version = result.version; return reply(null, [call('rewrite_note', { name: 'Work/Topic.md', version, content: '# Lost tail\n' })]) },
+      result => { blockedRewrite = result; return reply(null, [call('edit_section', { name: 'Work/Topic.md', version, section: 'Long', content: 'Lost tail' })]) },
+      result => { blockedSection = result; return reply(null, [call('read_section', { name: 'Work/Topic.md', section: 'Long', offset: first.nextOffset })]) },
+      result => { tail = result; return reply(null, [call('rewrite_note', { name: 'Work/Topic.md', version, content: '# Summary\n\nSOURCE AT THE END\n' })]) },
+      () => reply(null, [call('read_note', { name: 'Work/Topic.md' })]),
+      result => { verified = result; return reply('重写后核对了原文末尾来源。') },
+    ]), { kind: 'note', folder: 'Work', name: 'Work/Topic.md' }, '完整阅读后重写，保留结尾来源')
+    expect(first).toMatchObject({ nextOffset: 30000, truncated: true, totalCharacters: original.length })
+    expect(first.content).not.toContain('SOURCE AT THE END')
+    expect(blockedRewrite.error).toContain('尚未读取全文')
+    expect(blockedSection.error).toContain('尚未读取完整章节')
+    expect(tail).toMatchObject({ nextOffset: null, truncated: false, offset: 30000 })
+    expect(first.content + tail.content).toBe(original)
+    expect(verified.content).toBe(await read('Work/Topic.md'))
+    expect(verified.content).toContain('SOURCE AT THE END')
+    expect(events.filter(event => event.type === 'changeset')).toHaveLength(1)
+    const undone = await createApp(store, new EventBus(), { aiSettings: ai }).request(`/api/ai/changes/${lastSet(events).id}/undo`, { method: 'POST', headers: J, body: '{}' })
+    expect(undone.status).toBe(200)
+    expect(await read('Work/Topic.md')).toBe(original)
+  })
+
+  it('does not treat a serialized excerpt as proof of reading the full note', async () => {
+    const original = '# Escaped\n\n' + '\u0001'.repeat(30000)
+    await store.saveContent('Work/Topic.md', original, await read('Work/Topic.md'))
+    let observed: any, refusal: any
+    await send(app([
+      () => reply(null, [call('read_note', { name: 'Work/Topic.md', limit: 30000 })]),
+      result => {
+        observed = result
+        // A model could recover the version from the textual excerpt; that must
+        // not restore the server-side proof for content it never received.
+        const version = /"version":"([a-f0-9]+)"/.exec(result.excerpt)![1]
+        return reply(null, [call('rewrite_note', { name: 'Work/Topic.md', version, content: '# Wrong\n' })])
+      },
+      result => { refusal = result; return reply('返回值过长，需要缩小分页后继续读取。') },
+    ]), { kind: 'note', folder: 'Work', name: 'Work/Topic.md' }, '读取后改写')
+    expect(observed).toMatchObject({ truncated: true })
+    expect(refusal).toMatchObject({ code: 'conflict' })
+    expect(refusal.error).toContain('未读取')
+    expect(await read('Work/Topic.md')).toBe(original)
+  })
+
+  it('keeps read evidence aligned when sequential replacements change offsets within the read section', async () => {
+    const original = '# Note\n\n## Read\n\nAlpha and Beta.\n\n## Unread\n\nKeep this.\n'
+    await store.saveContent('Work/Topic.md', original, await read('Work/Topic.md'))
+    await send(app([
+      () => reply(null, [call('read_section', { name: 'Work/Topic.md', section: 'Note / Read' })]),
+      result => reply(null, [call('edit_note', { name: 'Work/Topic.md', version: result.version, edits: [{ oldText: 'Alpha', newText: 'A much longer alpha' }, { oldText: 'Beta', newText: 'B' }] })]),
+      () => reply('两处修改完成。'),
+    ]), { kind: 'note', folder: 'Work', name: 'Work/Topic.md' }, '只改 Read 章节的两处文字')
+    expect(await read('Work/Topic.md')).toBe(original.replace('Alpha', 'A much longer alpha').replace('Beta', 'B'))
+  })
+
+  it('rejects ambiguous headings and never permits editing an unread section of a known version', async () => {
+    const original = '# Root\n\n## A\n\n### Repeated\n\nAlpha\n\n## B\n\n### Repeated\n\nBeta\n'
+    await store.saveContent('Work/Topic.md', original, await read('Work/Topic.md'))
+    const results: any[] = []
+    await send(app([
+      () => reply(null, [call('read_section', { name: 'Work/Topic.md', section: 'Repeated' })]),
+      result => { results.push(result); return reply(null, [call('read_section', { name: 'Work/Topic.md', section: 'Root / A / Repeated' })]) },
+      result => { results.push(result); return reply(null, [call('edit_section', { name: 'Work/Topic.md', version: result.version, section: 'Root / B / Repeated', content: 'Wrong replacement' })]) },
+      result => { results.push(result); return reply('需要读取 B 的原文后才能修改。') },
+    ]), { kind: 'note', folder: 'Work', name: 'Work/Topic.md' }, '检查同名章节')
+    expect(results[0].error).toContain('多个同名章节')
+    expect(results[1].content).toContain('Alpha')
+    expect(results[2].error).toContain('尚未读取完整章节')
+    expect(await read('Work/Topic.md')).toBe(original)
+  })
+
+  it('rejects malformed write and nested proposal arguments before effects, and allows corrected previews', async () => {
+    const original = await read('Work/Topic.md'), results: any[] = []
+    const events = await send(app([
+      () => reply(null, [call('batch_replace', { find: 'Topic', replace: 'Changed', preview: 'true' })]),
+      result => { results.push(result); return reply(null, [call('propose_changes', { reason: '建议', operations: [{ tool: 'delete_notes', arguments: { names: ['Work/Topic.md'], invented: true } }] })]) },
+      result => { results.push(result); return reply(null, [call('batch_replace', { find: 'Topic', replace: 'Changed', preview: true, names: ['Work/Topic.md'] })]) },
+      result => { results.push(result); return reply('预览完成，没有写入。') },
+    ]), { kind: 'folder', folder: 'Work' }, '预览替换')
+    expect(results[0].error).toContain('preview')
+    expect(results[1].error).toContain('invented')
+    expect(results[2]).toMatchObject({ preview: true, files: 1 })
+    expect(events.some(event => event.type === 'changeset' || event.type === 'proposal')).toBe(false)
+    expect(await read('Work/Topic.md')).toBe(original)
+  })
+
+  it('composes discovery, reading, synthesis, grouping and verification while preserving sources', async () => {
+    const original = await read('Work/Topic.md')
+    let created = '', frame = '', observedCanvas: any, observedNote: any
+    const events = await send(app([
+      () => reply(null, [call('list_notes', { folder: 'Work', recursive: false })]),
+      result => reply(null, [call('read_note', { name: result.notes[0].name })]),
+      () => reply(null, [call('create_note', { title: '研究提纲', content: '# 研究提纲\n\n需要核对 Other 的引用。\n', sources: ['Work/Topic.md'] })]),
+      result => { created = result.created; return reply(null, [call('create_frame', { folder: 'Work', title: '待核实', members: ['Work/Topic.md', created] })]) },
+      result => { frame = result.frame; return reply(null, [call('read_canvas', { folder: 'Work' })]) },
+      result => { observedCanvas = result; return reply(null, [call('read_note', { name: created })]) },
+      result => { observedNote = result; return reply('提纲和待核实文档区均已创建并核对，来源文章保留。') },
+    ]), { kind: 'folder', folder: 'Work' }, '根据当前文章写研究提纲，把提纲和来源一起放入待核实文档区，保留原文')
+    expect(created).toBe('Work/研究提纲.md')
+    expect(observedCanvas.frames).toContainEqual(expect.objectContaining({ id: frame, title: '待核实', members: ['Work/Topic.md', created] }))
+    expect(observedNote.content).toBe(await read(created))
+    expect(await read('Work/Topic.md')).toBe(original)
+    expect(new Set(events.flatMap(event => event.type === 'changeset' ? [event.change.id] : [])).size).toBe(1)
+  })
+})

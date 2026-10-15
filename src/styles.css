@@ -48,7 +48,7 @@ button.icon-button { width: var(--control-height-sm); min-width: var(--control-h
 .muted { color: var(--muted); }
 .app { display: flex; height: 100%; min-width: 0; }
 .sidebar { width: 240px; flex: none; display: flex; flex-direction: column; padding: 12px; gap: 4px; overflow: hidden; background: var(--sidebar-surface); border-right: 1px solid var(--workspace-divider); }
-.sidebar > :not(.sidebar-navigation) { flex-shrink: 0; }
+.sidebar > :not(.sidebar-navigation):not(.chat-navigation) { flex-shrink: 0; }
 .sidebar-navigation { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: auto; }
 .sidebar-navigation[hidden] { display: none; }
 .brand { display: flex; align-items: center; gap: 9px; padding: 0 4px 4px; }
@@ -77,9 +77,6 @@ button.icon-button { width: var(--control-height-sm); min-width: var(--control-h
 .sidebar-collapsed .sidebar-footer { width: 100%; grid-template-columns: minmax(0, 1fr); }
 .sidebar-collapsed .brand-mark, .sidebar-collapsed .brand strong, .sidebar-collapsed .nav-item [data-slot="button-label"] > span > span > span { display: none; }
 .sidebar-collapsed .nav-item { width: 36px; justify-content: center; padding: 0; }
-/* The Note/Chat switch: a segmented control when the sidebar is wide, one icon button when it is collapsed or narrow. */
-.sidebar .mode-compact { display: none; }
-.sidebar .mode-compact[data-always] { display: contents; }
 .sidebar-collapsed .search-trigger { background: transparent; border-color: transparent; }
 .stage { position: relative; flex: 1; min-width: 0; background: var(--panel); display: flex; flex-direction: column; overflow: hidden; }
 .topbar { height: 72px; flex-shrink: 0; padding: 0 32px; display: flex; align-items: center; justify-content: space-between; gap: 16px; }
@@ -389,14 +386,14 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .narrow-guard p { margin: 0; max-width: 28em; color: var(--text-secondary); }
 }
 .agent-workspace[hidden], .chat-workspace[hidden] { display: none; }
-.chat-workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); }
+.chat-workspace { min-width: 0; flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr); }
 .chat-list { min-height: 0; display: flex; flex-direction: column; border-right: 1px solid var(--workspace-divider); }
 .chat-list-head, .chat-detail-head { flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--workspace-divider); }
 .chat-list-head h2, .chat-detail-head h2 { margin: 0; font-size: 14px; font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-detail-head h2 { flex: 1; }
 .chat-list-actions { display: flex; gap: 2px; flex: none; }
 .chat-items { list-style: none; margin: 0; padding: 8px; overflow-y: auto; flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 2px; }
-.chat-item { width: 100%; height: auto; padding-block: 8px; text-align: left; }
+.chat-item { width: 100%; height: auto; min-height: 52px; padding-block: 8px; text-align: left; }
 .chat-item [data-slot="button-label"], .chat-item [data-slot="button-label"] > span, .chat-item [data-slot="button-label"] > span > span { display: block; width: 100% !important; min-width: 0; overflow: hidden; text-align: left; }
 .chat-item [data-slot="button-label"] > span > span > .chat-item-title, .chat-item [data-slot="button-label"] > span > span > .chat-item-meta { display: block; }
 .chat-item.is-active { background: var(--workspace-selection); }
@@ -441,3 +438,44 @@ select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .explore-context h4 { margin: 0 0 4px; font-size: 12px; font-weight: 550; color: var(--text-secondary); }
 .explore-context pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 12px; line-height: 1.7; }
 .agent-background-note { margin: 16px 0 0; font-size: 12px; line-height: 1.7; }
+
+/* One navigation column follows the current workspace. */
+.brand { justify-content: space-between; gap: 4px; min-height: 48px; }
+.workspace-switch { min-width: 0; }
+.chat-navigation { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.chat-navigation[hidden], .chat-list[hidden] { display: none; }
+.chat-navigation .chat-list { flex: 1; border: 0; gap: 4px; }
+.chat-search { padding: 4px 0; }
+.chat-navigation .chat-items { padding: 0; gap: 4px; }
+.chat-list-heading { margin-top: 12px; }
+.chat-workspace.has-shared-navigation { display: flex; }
+.chat-workspace.has-shared-navigation[hidden] { display: none; }
+.has-shared-navigation .chat-detail { flex: 1; }
+.chat-detail-head { min-height: 64px; padding-inline: 28px; }
+.chat-detail-head .chat-model { display: block; max-width: 240px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-detail > [data-embedded] { flex: 1; height: auto; }
+.chat-detail .explore-discussion { gap: 24px; padding-top: 24px; }
+.chat-detail .explore-turn { border: 0; gap: 18px; padding: 0 0 16px; }
+.answer-actions { display: flex; align-items: center; gap: 2px; flex-wrap: wrap; }
+.answer-actions > button { color: var(--text-secondary); }
+.chat-detail .answer-actions { margin-left: -6px; }
+.sidebar-collapsed .brand { flex-direction: column; }
+.sidebar-collapsed .workspace-switch-label, .sidebar-collapsed .workspace-switch svg:last-child { display: none; }
+.sidebar-collapsed .workspace-switch { padding-inline: 8px; }
+.sidebar-collapsed .chat-navigation { width: 100%; }
+.sidebar-collapsed .chat-search, .sidebar-collapsed .chat-list-heading, .sidebar-collapsed .chat-items, .sidebar-collapsed .chat-empty { display: none; }
+
+/* Passage exploration shares the document and assistant hierarchy. */
+.explore-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.explore-heading h3 { margin: 0; font-size: 14px; font-weight: 600; }
+.explore-heading p { margin: 2px 0 0; font-size: 12px; overflow-wrap: anywhere; }
+.explore-shortcut { margin-right: auto; align-self: center; font-size: 11px; }
+.explore-composer { padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+
+#article-pane { container: article-pane / inline-size; }
+.library-topbar { padding-inline: 20px; }
+.library-topbar .toolbar { gap: 4px; }
+@container article-pane (max-width: 560px) {
+  .library-ai-label, .library-create-label, .editor-back-label, .editor-ai-label { display: none; }
+  .library-topbar { padding-inline: 12px; gap: 8px; }
+}

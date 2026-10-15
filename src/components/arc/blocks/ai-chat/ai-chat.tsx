@@ -29,6 +29,8 @@ export interface AiChatProps {
   onValueChange: (value: string) => void;
   onSend: () => void;
   onStop: () => void;
+  /** The application owns cancelling, waiting for persistence, and resuming the same conversation. */
+  onInterruptSend?: () => void;
   busy: boolean;
   locked?: boolean;
   activity?: string;
@@ -39,6 +41,14 @@ export interface AiChatProps {
   suggestions?: { label: string; prompt: string }[];
   streaming?: string;
   children?: ReactNode;
+  /** Slots keep full-page discussions on the same Arc reading and composing surface. */
+  thread?: ReactNode;
+  hideHeader?: boolean;
+  hideComposer?: boolean;
+  inputLabel?: string;
+  placeholder?: string;
+  sendLabel?: string;
+  readOnly?: boolean;
 }
 
 function IconSwap({ id, children }: { id: string; children: ReactNode }) {
@@ -51,8 +61,8 @@ function IconSwap({ id, children }: { id: string; children: ReactNode }) {
 }
 
 /** The original AI Chat column, controlled by the real Agent rather than demo state. */
-export function AiChat({ title, model, onConfigure, onNew, onClose, context, messages, value, onValueChange, onSend, onStop, busy, locked,
-  activity = "正在思考…", onOpenNote, disabled, emptyTitle, emptyText, suggestions = [], streaming, children }: AiChatProps) {
+export function AiChat({ title, model, onConfigure, onNew, onClose, context, messages, value, onValueChange, onSend, onStop, onInterruptSend, busy, locked,
+  activity = "正在思考…", onOpenNote, disabled, emptyTitle, emptyText, suggestions = [], streaming, children, thread: customThread, hideHeader, hideComposer, inputLabel = "AI 消息", placeholder = "输入问题或操作要求…", sendLabel = "发送消息", readOnly }: AiChatProps) {
   const reduced = useReducedMotion();
   const threadRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -71,8 +81,18 @@ export function AiChat({ title, model, onConfigure, onNew, onClose, context, mes
   useLayoutEffect(() => {
     const node = textareaRef.current;
     if (!node) return;
-    node.style.height = "0px";
-    node.style.height = `${Math.min(168, node.scrollHeight)}px`;
+    const resize = () => {
+      if (!node.clientWidth) return;
+      node.style.height = "0px";
+      node.style.height = `${Math.min(168, node.scrollHeight)}px`;
+    };
+    resize();
+    let width = node.clientWidth;
+    const observer = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(() => {
+      if (node.clientWidth !== width) { width = node.clientWidth; resize(); }
+    });
+    observer?.observe(node);
+    return () => observer?.disconnect();
   }, [value]);
 
   function toBottom() {
@@ -81,9 +101,9 @@ export function AiChat({ title, model, onConfigure, onNew, onClose, context, mes
     thread?.scrollTo({ top: thread.scrollHeight, behavior: reduced ? "auto" : "smooth" });
   }
   function send() {
-    if (busy || disabled || !value.trim()) return;
+    if (disabled || readOnly || !value.trim() || busy && !onInterruptSend) return;
     stick.current = true; setStuck(true);
-    onSend();
+    if (busy) onInterruptSend?.(); else onSend();
   }
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
     if (composing(event)) return;
@@ -91,10 +111,12 @@ export function AiChat({ title, model, onConfigure, onNew, onClose, context, mes
     if (event.key === "Escape" && busy) { event.preventDefault(); onStop(); }
   }
   const transition = reduced ? { duration: 0 } : { ...motionTokens.spring.smooth, opacity: { duration: motionTokens.duration.standard } };
+  const canInterrupt = busy && !!onInterruptSend && !!value.trim();
+  const stopOnly = busy && !canInterrupt;
 
   return <div className={styles.root} data-embedded>
     <section className={styles.main} aria-label={title}>
-      <header className={styles.header}>
+      {!hideHeader && <header className={styles.header}>
         <div className={styles.headerTools}>
           <button type="button" className={styles.iconButton} aria-label="开始新对话" disabled={locked} onClick={onNew}><SquarePen size={17} strokeWidth={1.75} aria-hidden="true"/></button>
         </div>
@@ -102,7 +124,7 @@ export function AiChat({ title, model, onConfigure, onNew, onClose, context, mes
           <span className={styles.modelName}>{model ?? "连接模型"}</span><Settings size={15} strokeWidth={1.75} aria-hidden="true"/>
         </button>
         <button type="button" className={`${styles.iconButton} ${styles.closeAction}`} aria-label="关闭 AI 助手" onClick={onClose}><X size={18} strokeWidth={1.75} aria-hidden="true"/></button>
-      </header>
+      </header>}
       <div ref={threadRef} className={styles.thread} onScroll={() => {
         const thread = threadRef.current;
         if (!thread) return;
@@ -111,7 +133,7 @@ export function AiChat({ title, model, onConfigure, onNew, onClose, context, mes
       }}>
         <div ref={contentRef} className={styles.threadContent}>
           <div className={styles.page}>
-            {!messages.length && !busy ? <div className={styles.empty}>
+            {customThread !== undefined ? customThread : !messages.length && !busy ? <div className={styles.empty}>
               <h3 className={styles.greeting}>{emptyTitle}</h3><p className={styles.emptyDescription}>{emptyText}</p>
               {!!suggestions.length && <div className={styles.suggestionsSection}>
                 <p className={styles.suggestionsHint}>点击填入输入框，修改后发送</p>
@@ -148,19 +170,20 @@ export function AiChat({ title, model, onConfigure, onNew, onClose, context, mes
           </div>
         </div>
       </div>
-      <div className={styles.dock}>
+      {!hideComposer && <div className={styles.dock}>
         <AnimatePresence>{!stuck && <motion.button type="button" className={styles.jump} aria-label="跳到最新消息" onClick={toBottom}
           initial={reduced ? false : { opacity: 0, y: 8, scale: .9 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0 }} transition={transition}><ArrowDown size={16} strokeWidth={1.75} aria-hidden="true"/></motion.button>}</AnimatePresence>
         {context && <div className={styles.context}>{context}</div>}
-        <form className={styles.composer} onSubmit={event => { event.preventDefault(); if (busy) onStop(); else send(); }}>
-          <textarea ref={textareaRef} className={styles.field} rows={1} value={value} placeholder="输入问题或操作要求…" aria-label="AI 消息" onChange={event => onValueChange(event.target.value)} onKeyDown={handleKeyDown}/>
-          <div className={styles.composerBar}><span className={styles.composerHint}>Enter 发送 · Shift Enter 换行</span>
-            <button type="submit" className={styles.send} data-busy={busy || undefined} aria-label={busy ? "停止生成" : "发送消息"} disabled={!busy && (!!disabled || !value.trim())}>
-              <IconSwap id={busy ? "stop" : "send"}>{busy ? <span className={styles.stopGlyph}/> : <ArrowUp size={18} strokeWidth={2}/>}</IconSwap>
+        <form className={styles.composer} onSubmit={event => { event.preventDefault(); if (stopOnly) onStop(); else send(); }}>
+          <textarea ref={textareaRef} className={styles.field} rows={1} value={value} placeholder={placeholder} aria-label={inputLabel} readOnly={readOnly} onChange={event => onValueChange(event.target.value)} onKeyDown={handleKeyDown}/>
+          <div className={styles.composerBar}><span className={styles.composerHint}>{canInterrupt ? "Enter 停止并发送调整" : busy ? "生成中 · Esc 停止" : "Enter 发送 · Shift Enter 换行"}</span>
+            {canInterrupt && <button type="button" className={styles.iconButton} aria-label="停止生成" onClick={onStop}><span className={styles.stopGlyph}/></button>}
+            <button type="submit" className={styles.send} data-busy={stopOnly || undefined} aria-label={stopOnly ? "停止生成" : canInterrupt ? "停止并发送调整" : sendLabel} disabled={!stopOnly && (!!disabled || !!readOnly || !value.trim())}>
+              <IconSwap id={stopOnly ? "stop" : "send"}>{stopOnly ? <span className={styles.stopGlyph}/> : <ArrowUp size={18} strokeWidth={2}/>}</IconSwap>
             </button>
           </div>
         </form>
-      </div>
+      </div>}
       <p className={styles.srOnly} role="status" aria-live="polite">{busy ? activity : ""}</p>
     </section>
   </div>;

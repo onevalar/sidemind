@@ -17,5 +17,6 @@ export async function runAgent(app: ReturnType<typeof createApp>, scope: AgentSc
     if (!/^event: agent$/m.test(block)) continue
     events.push((JSON.parse(/^data: (.*)$/m.exec(block)![1]!) as { event: AgentEvent }).event)
   }
+  expect(events.filter(event => event.type === 'error'), 'Agent must complete without a swallowed model assertion or runtime error').toEqual([])
   return events
 }

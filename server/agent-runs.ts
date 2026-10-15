@@ -172,10 +172,22 @@ export class AgentRunService {
       }
     } finally {
       if (status === 'completed' && run.proposals?.length && (await this.options.pendingProposals?.(run.proposals).catch(() => run.proposals!) ?? []).length) status = 'waiting_confirmation'
-      run.status = status
-      if (error) run.error = error
-      this.emit(state, { type: 'done' })
-      await this.save(state)
+      // Publish completion only once its terminal record is durable. Until then,
+      // polling and sync guards still see a running task, even for a fast model.
+      await state.writing
+      const terminal: AgentRunDTO = { ...run, status, seq: run.seq + 1, updatedAt: Date.now(), ...(error ? { error } : {}) }
+      try { await writeRecord(this.file(run.id), { version: 1, ...terminal }) }
+      catch (failure) {
+        console.error(failure)
+        terminal.status = 'failed'
+        terminal.error = '任务结果未能保存。已完成的文件修改仍保留，请检查修改记录；不要重复执行写入。'
+        this.emit(state, { type: 'error', text: terminal.error })
+        terminal.seq = run.seq + 1
+      }
+      Object.assign(run, terminal)
+      const done = { seq: run.seq, event: { type: 'done' } as AgentEvent }
+      state.events.push(done)
+      for (const listener of state.listeners) listener(done)
     }
   }
 

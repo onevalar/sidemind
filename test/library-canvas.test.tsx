@@ -2,7 +2,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ReactFlowProps } from '@xyflow/react'
 import { NoteStore } from '../server/store'
@@ -94,4 +94,74 @@ it('groups only Shift-right-click selections, then auto-fits an entering card wi
   render(<LibraryCanvas {...props}/>)
   expect((await screen.findByRole('button', { name: '移动文档区：文档区' })).textContent).toContain('3 篇')
   expect(await new NoteStore(dir).canvas('Work')).toEqual(fitted)
+})
+
+
+it('exposes preview and editing only for the selection, and clears selection without changing the layout', async () => {
+  const notes = (await store.list()).filter(note => note.space === 'Work')
+  const onOpen = vi.fn(), onPreview = vi.fn()
+  render(<LibraryCanvas notes={notes} folder="Work" theme="light" viewport={{ x: 0, y: 0, zoom: 1 }} onViewport={() => {}} onOpen={onOpen} onPreview={onPreview} onCreate={() => {}} beforeLeave={{ current: async () => true }}/>)
+  await waitFor(() => expect(screen.getByTestId('canvas').getAttribute('aria-busy')).toBe('false'))
+  expect(screen.queryByRole('group', { name: '所选内容操作' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'B' }))
+  const actions = screen.getByRole('group', { name: '所选内容操作' })
+  fireEvent.click(within(actions).getByRole('button', { name: '预览' }))
+  fireEvent.click(within(actions).getByRole('button', { name: '编辑' }))
+  expect(onPreview).toHaveBeenCalledWith('Work/B.md')
+  expect(onOpen).toHaveBeenCalledWith('Work/B.md')
+  fireEvent.click(within(actions).getByRole('button', { name: '取消选择' }))
+  expect(screen.queryByRole('group', { name: '所选内容操作' })).toBeNull()
+  expect(document.activeElement).toBe(screen.getByLabelText('文章画布'))
+  expect(api.saveCanvas).not.toHaveBeenCalled()
+  fireEvent.keyDown(screen.getByLabelText('文章画布'), { key: 'a', metaKey: true })
+  expect(screen.getByText('已选 3 篇')).toBeTruthy()
+  fireEvent.keyDown(screen.getByLabelText('文章画布'), { key: 'Escape' })
+  expect(screen.queryByRole('group', { name: '所选内容操作' })).toBeNull()
+})
+
+it('arranges selected documents within their regions and retains unsaved conflict protection', async () => {
+  const before = await store.canvas('Work')
+  const region = { id: 'reading', space: 'Work', title: 'Reading', members: ['Work/A.md', 'Work/B.md'], position: { x: 67, y: 109 }, width: 640, height: 280 }
+  await api.saveCanvas('Work', [region], before.positions, [])
+  const notes = (await store.list()).filter(note => note.space === 'Work')
+  const beforeLeave = { current: async () => true }
+  render(<LibraryCanvas notes={notes} folder="Work" theme="dark" viewport={{ x: 0, y: 0, zoom: 1 }} onViewport={() => {}} onOpen={() => {}} onPreview={() => {}} onCreate={() => {}} beforeLeave={beforeLeave}/>)
+  await waitFor(() => expect(screen.getByTestId('canvas').getAttribute('aria-busy')).toBe('false'))
+  // Move B down first so explicit arranging produces a meaningful grid change.
+  const second = screen.getByRole('button', { name: 'B' })
+  fireEvent.focus(second)
+  fireEvent.keyDown(second, { key: 'ArrowDown' })
+  await waitFor(async () => expect((await store.canvas('Work')).positions['Work/B.md']?.y).toBe(193))
+  fireEvent.keyDown(second, { key: 'a', ctrlKey: true })
+  fireEvent.pointerDown(screen.getByRole('button', { name: '整理' }), { button: 0, ctrlKey: false, pointerType: 'mouse' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: '整齐排列所选文章' }))
+  await waitFor(async () => expect((await store.canvas('Work')).positions['Work/B.md']).toEqual({ x: 403, y: 173 }))
+  const arranged = await store.canvas('Work')
+  expect(arranged.frames[0]?.members).toEqual(['Work/A.md', 'Work/B.md'])
+  expect(arranged.positions['Work/C.md']).toEqual(before.positions['Work/C.md'])
+  expect(await beforeLeave.current()).toBe(true)
+  for (const title of ['A', 'B', 'C']) expect((await store.load(`Work/${title}.md`)).content).toBe(`# ${title}\n\nOriginal ${title}.`)
+
+  vi.mocked(api.saveCanvas).mockRejectedValueOnce(new Error('文档区已被其他窗口修改'))
+  fireEvent.focus(second)
+  fireEvent.keyDown(second, { key: 'ArrowRight' })
+  await screen.findByRole('alert')
+  expect(await beforeLeave.current()).toBe(false)
+  expect((await store.canvas('Work')).positions).toEqual(arranged.positions)
+  fireEvent.click(screen.getByRole('button', { name: '重试' }))
+  await waitFor(async () => expect(await beforeLeave.current()).toBe(true))
+  expect((await store.canvas('Work')).positions['Work/B.md']).toEqual({ x: 423, y: 173 })
+})
+
+it('leaves unselected documents in place and skips occupied grid cells when arranging', async () => {
+  const notes = (await store.list()).filter(note => note.space === 'Work')
+  render(<LibraryCanvas notes={notes} folder="Work" theme="light" viewport={{ x: 0, y: 0, zoom: 1 }} onViewport={() => {}} onOpen={() => {}} onPreview={() => {}} onCreate={() => {}} beforeLeave={{ current: async () => true }}/>)
+  await waitFor(() => expect(screen.getByTestId('canvas').getAttribute('aria-busy')).toBe('false'))
+  fireEvent.click(screen.getByRole('button', { name: 'A' }))
+  fireEvent.click(screen.getByRole('button', { name: 'C' }), { shiftKey: true })
+  fireEvent.pointerDown(screen.getByRole('button', { name: '整理' }), { button: 0, ctrlKey: false, pointerType: 'mouse' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: '整齐排列所选文章' }))
+  await waitFor(async () => expect((await store.canvas('Work')).positions).toEqual({
+    'Work/A.md': { x: 15, y: 173 }, 'Work/B.md': { x: 403, y: 173 }, 'Work/C.md': { x: 15, y: 397 },
+  }))
 })

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { AISettings } from '../server/ai-settings'
 import { createApp } from '../server/app'
 import { NoteStore } from '../server/store'
@@ -91,9 +91,40 @@ beforeEach(async () => {
   research = new ResearchStore(store)
   transports = 0
 })
-afterEach(async () => { await Promise.allSettled([...running]); await fs.rm(dir, { recursive: true, force: true }) })
+afterEach(async () => { await Promise.allSettled([...running]); vi.restoreAllMocks(); await fs.rm(dir, { recursive: true, force: true }) })
 
 describe('persistent answer runs', () => {
+  it('publishes completion only after the terminal record is on disk', async () => {
+    const { app } = build(), ids = await turn()
+    let release!: () => void, reached!: () => void
+    const pendingWrite = new Promise<void>(resolve => { release = resolve })
+    const terminalWrite = new Promise<void>(resolve => { reached = resolve })
+    const rename = fs.rename.bind(fs)
+    vi.spyOn(fs, 'rename').mockImplementation(async (from, to) => {
+      if (String(to).startsWith(path.join(store.paths.local, 'runs') + path.sep)) {
+        const value = JSON.parse(await fs.readFile(from, 'utf8')) as RunDTO
+        if (value.status === 'completed') { reached(); await pendingWrite }
+      }
+      return rename(from, to)
+    })
+    const run = await call<RunDTO>(app, 'POST', `/api/discussions/${ids.discussionId}/turns/${ids.turnId}/runs`, { requestKey: 'durable-terminal' }, 202)
+    await ready()
+    let notified = false
+    const events = listen(app, run.id, frames => frames.some(frame => frame.event === 'status' && frame.data.run.status === 'completed')).then(frames => { notified = true; return frames })
+    gate.send('已保存的回答'); gate.finish()
+    try {
+      await terminalWrite
+      expect((await call<RunDTO>(app, 'GET', `/api/runs/${run.id}`)).status).toBe('running')
+      expect(JSON.parse(await fs.readFile(path.join(store.paths.local, 'runs', run.id + '.json'), 'utf8')).status).not.toBe('completed')
+      expect(notified).toBe(false)
+    } finally { release() }
+    await events
+    const persisted = JSON.parse(await fs.readFile(path.join(store.paths.local, 'runs', run.id + '.json'), 'utf8'))
+    const completed = await call<RunDTO>(app, 'GET', `/api/runs/${run.id}`)
+    expect(completed).toMatchObject({ status: 'completed', text: '已保存的回答' })
+    expect(persisted).toMatchObject(completed)
+  })
+
   it('accepts a run once, streams its progress, and saves the answer when it completes', async () => {
     const { app } = build()
     const ids = await turn()

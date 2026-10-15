@@ -500,14 +500,21 @@ export class ChatGPTConnection {
     const decoder = new TextDecoder('utf-8', { fatal: true })
     let buffer = '', output = '', size = 0, event = '', data: string[] = []
     let completed: AITurn | null = null
+    type OutputItem = { type: string; call_id?: string; name?: string; arguments?: string; content?: { type: string; text?: string }[] }
+    // Some live Responses streams send complete items only in output_item.done,
+    // with an empty terminal output array. Retain them, but never execute before completed.
+    const finishedItems = new Map<number, OutputItem>()
     const consume = (): boolean => {
       if (!data.length) { event = ''; return false }
       const raw = data.join('\n'); data = []
       if (raw === '[DONE]') throw new ChatGPTError('ChatGPT 响应未完成，未采用任何部分修改，请重试。')
-      let record: { type?: string; delta?: unknown; response?: { error?: unknown; status?: string; output?: { type: string; call_id?: string; name?: string; arguments?: string; content?: { type: string; text?: string }[] }[] }; error?: unknown; code?: unknown }
+      let record: { type?: string; delta?: unknown; output_index?: number; item?: OutputItem; response?: { error?: unknown; status?: string; output?: OutputItem[] }; error?: unknown; code?: unknown }
       try { record = JSON.parse(raw) } catch { throw new ChatGPTError('ChatGPT 响应格式无效，未采用任何部分修改。') }
       const type = record.type ?? event; event = ''
-      if (type === 'response.output_text.delta') {
+      if (type === 'response.output_item.done') {
+        if (!Number.isSafeInteger(record.output_index) || record.output_index! < 0 || !record.item || typeof record.item.type !== 'string') throw new ChatGPTError('ChatGPT 输出条目不完整，未执行操作。')
+        finishedItems.set(record.output_index!, record.item)
+      } else if (type === 'response.output_text.delta') {
         if (typeof record.delta !== 'string') throw new ChatGPTError('ChatGPT 响应格式无效。')
         output += record.delta
         onDelta?.(record.delta)
@@ -516,7 +523,7 @@ export class ChatGPTConnection {
       } else if (type === 'response.incomplete') throw new ChatGPTError('ChatGPT 修改结果不完整，未采用任何部分修改，请缩短选区后重试。')
       else if (type === 'response.completed') {
         if (record.response?.status && record.response.status !== 'completed') throw new ChatGPTError('ChatGPT 修改结果不完整，未采用任何部分修改。')
-        const items = record.response?.output
+        const items = record.response?.output?.length ? record.response.output : [...finishedItems.entries()].sort(([a], [b]) => a - b).map(([, item]) => item)
         const calls: AICall[] = (items ?? []).filter(item => item.type === 'function_call').map(item => {
           if (typeof item.call_id !== 'string' || typeof item.name !== 'string' || typeof item.arguments !== 'string') throw new ChatGPTError('ChatGPT 工具调用不完整，未执行操作。')
           return { id: item.call_id, type: 'function', function: { name: item.name, arguments: item.arguments } }

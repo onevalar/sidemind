@@ -108,7 +108,9 @@ describe('article editing with the shared Agent', () => {
     expect([reopened.selectionStart, reopened.selectionEnd, reopened.selectionDirection]).toEqual([start, end, 'backward'])
     await act(async () => { fireEvent.keyDown(reopened, { key: 's', ctrlKey: true }) })
     expect(disk.content).toBe(draft)
-    await act(async () => { fireEvent.click(screen.getByRole('button', { name: '撤销上次保存' })) })
+    fireEvent.keyDown(screen.getByRole('button', { name: '文章更多操作' }), { key: 'Enter' })
+    fireEvent.click(await screen.findByRole('menuitem', { name: '撤销上次保存' }))
+    await waitFor(() => expect(disk.content).toBe(original))
     expect(disk.content).toBe(original)
   })
 
@@ -119,19 +121,19 @@ describe('article editing with the shared Agent', () => {
     fireEvent.click(toggle)
     expect(screen.queryByRole('button', { name: '定位到：Not a section' })).toBe(null)
     fireEvent.click(screen.getByRole('button', { name: '定位到：Target' }))
-    expect(editor.selectionStart).toBe(editor.value.indexOf('### Target'))
+    await waitFor(() => expect(editor.selectionStart).toBe(editor.value.indexOf('### Target')))
+    expect(document.activeElement).toBe(editor)
     const draft = nativeText(saved).replace('Introduction.', 'New expanded introduction.').replace('### Target', '### Revised target')
     fireEvent.change(editor, { target: { value: draft } })
     expect(screen.queryByRole('button', { name: '定位到：Target' })).toBe(null)
-    fireEvent.keyDown(window, { key: 'Escape' })
-    expect(document.activeElement).toBe(toggle)
     fireEvent.click(toggle)
     fireEvent.click(screen.getByRole('button', { name: '定位到：Revised target' }))
-    expect(editor.selectionStart).toBe(draft.indexOf('### Revised target'))
+    await waitFor(() => expect(editor.selectionStart).toBe(draft.indexOf('### Revised target')))
     expect(editor.value).toBe(draft)
     expect(disk.content).toBe(saved)
-    fireEvent.click(screen.getByRole('button', { name: '关闭目录' }))
-    expect(document.activeElement).toBe(toggle)
+    fireEvent.click(toggle)
+    fireEvent.keyDown(screen.getByRole('dialog', { name: '本文目录' }), { key: 'Escape' })
+    await waitFor(() => expect(document.activeElement).toBe(toggle))
   })
 
   it('provides the original CRLF selected text as an Agent reference without changing the file', async () => {
@@ -142,4 +144,80 @@ describe('article editing with the shared Agent', () => {
     expect(selection.current()).toBe(selected)
     expect(disk.content).toBe(original)
   })
+})
+
+
+describe('reading, writing and exploring a note', () => {
+  it('previews the latest unsaved source, keeps reading non-editable, and restores source selection', async () => {
+    const editor = await open() as HTMLTextAreaElement
+    const draft = '# Revised note\n\nA paragraph to read and explore.\n'
+    fireEvent.change(editor, { target: { value: draft } })
+    const start = draft.indexOf('paragraph')
+    editor.setSelectionRange(start, start + 9, 'backward'); fireEvent.select(editor)
+    fireEvent.click(screen.getByRole('button', { name: '阅读' }))
+    const preview = screen.getByRole('article', { name: '文章阅读预览' })
+    expect(within(preview).getByRole('heading', { name: 'Revised note' })).toBeTruthy()
+    expect(screen.queryByRole('textbox', { name: '文章正文' })).toBe(null)
+    expect(screen.queryByRole('textbox', { name: 'Markdown 正文' })).toBe(null)
+    expect(api.saveContent).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: '源码' }))
+    const returned = screen.getByRole('textbox', { name: 'Markdown 正文' }) as HTMLTextAreaElement
+    expect(returned.value).toBe(draft)
+    expect([returned.selectionStart, returned.selectionEnd, returned.selectionDirection]).toEqual([start, start + 9, 'backward'])
+  })
+
+  it('offers exploration only for a real selection and passes exact CRLF source text without saving', async () => {
+    const explore = vi.fn()
+    render(<NoteWorkspace name="Note.md" beforeLeave={{ current: async () => true }} theme="light" onExplore={explore} onOpenNote={() => {}} onBack={() => {}}/>)
+    await screen.findByRole('textbox', { name: '文章正文' })
+    await waitFor(() => expect(screen.queryByText('正在准备编辑器…')).toBe(null))
+    expect(screen.queryByRole('region', { name: '选区探索' })).toBe(null)
+    fireEvent.click(screen.getByRole('button', { name: '源码' }))
+    const editor = screen.getByRole('textbox', { name: 'Markdown 正文' }) as HTMLTextAreaElement
+    const start = editor.value.indexOf(nativeText(selected))
+    editor.setSelectionRange(start, start + nativeText(selected).length); fireEvent.select(editor)
+    fireEvent.click(screen.getByRole('button', { name: '探索选区' }))
+    expect(explore).toHaveBeenCalledExactlyOnceWith(selected)
+    expect(api.saveContent).not.toHaveBeenCalled()
+    editor.setSelectionRange(start, start); fireEvent.select(editor)
+    expect(screen.queryByRole('region', { name: '选区探索' })).toBe(null)
+  })
+
+  it('captures a reading selection for exploration and clears it when returning to writing', async () => {
+    const explore = vi.fn(), selection = { current: () => undefined as string | undefined }
+    render(<NoteWorkspace name="Note.md" beforeLeave={{ current: async () => true }} agentSelection={selection} theme="light" onExplore={explore} onOpenNote={() => {}} onBack={() => {}}/>)
+    await screen.findByRole('textbox', { name: '文章正文' })
+    await waitFor(() => expect(screen.queryByText('正在准备编辑器…')).toBe(null))
+    fireEvent.click(screen.getByRole('button', { name: '阅读' }))
+    const preview = screen.getByRole('article', { name: '文章阅读预览' })
+    const text = within(preview).getByText('Before stays.').firstChild!
+    const range = document.createRange(); range.selectNodeContents(text)
+    window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range)
+    fireEvent.mouseUp(preview)
+    expect(selection.current()).toBe('Before stays.')
+    fireEvent.click(screen.getByRole('button', { name: '探索选区' }))
+    expect(explore).toHaveBeenCalledExactlyOnceWith('Before stays.')
+    fireEvent.click(screen.getByRole('button', { name: '写作' }))
+    expect(screen.queryByRole('region', { name: '选区探索' })).toBe(null)
+    expect(api.saveContent).not.toHaveBeenCalled()
+  })
+})
+
+
+it('maps a real rich-text paragraph selection to original text without synthetic heading markers', async () => {
+  disk.content = '# 阅读\n\n## 从问题出发\n\n先确定自己想理解什么，再寻找材料中的证据。继续阅读。\n'
+  const selectedQuote = '先确定自己想理解什么，再寻找材料中的证据。'
+  const agentSelection = { current: () => undefined as string | undefined }, explore = vi.fn()
+  render(<NoteWorkspace name="Note.md" beforeLeave={{ current: async () => true }} agentSelection={agentSelection} theme="light" onExplore={explore} onOpenNote={() => {}} onBack={() => {}}/>)
+  const editor = await screen.findByRole('textbox', { name: '文章正文' })
+  await waitFor(() => expect(screen.queryByText('正在准备编辑器…')).toBe(null))
+  const text = editor.querySelector('p')!.firstChild!
+  const range = document.createRange(); range.setStart(text, 0); range.setEnd(text, selectedQuote.length)
+  editor.focus()
+  window.getSelection()!.removeAllRanges(); window.getSelection()!.addRange(range)
+  fireEvent(document, new Event('selectionchange'))
+  await waitFor(() => expect(agentSelection.current()).toBe(selectedQuote))
+  fireEvent.click(screen.getByRole('button', { name: '探索选区' }))
+  expect(explore).toHaveBeenCalledExactlyOnceWith(selectedQuote)
+  expect(api.saveContent).not.toHaveBeenCalled()
 })

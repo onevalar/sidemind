@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState, type MutableRefObject } from 
 import { applyNodeChanges, NodeResizeControl, ReactFlow, type Node, type NodeProps, type ReactFlowInstance, type Viewport } from '@xyflow/react'
 import type { CanvasFrame, CanvasLayout, NotePosition, NoteSummary } from '../shared/types'
 import { api, subscribeEvents } from './api'
-import { Button, Card, ContextMenu, Dialog, EmptyState, Icon, IconButton, Input } from './ui'
+import { Button, Card, ContextMenu, Dialog, DropdownMenu, EmptyState, Icon, IconButton, Input } from './ui'
 import { composing } from './ime'
+import './canvas-workspace.css'
 
 type ArticleNode = Node<{ note: NoteSummary; frameTitle?: string; chosen: boolean; selectionCount: number; choose: (extend?: boolean, preserve?: boolean) => void; open: () => void; preview: () => void; group: () => void }, 'article'>
 type FrameNode = Node<{ frame: CanvasFrame; chosen: boolean; minimum: { width: number; height: number }; choose: () => void; edit: () => void; resize: (width: number, height: number) => void }, 'frame'>
@@ -56,9 +57,9 @@ function FrameCard({ data }: NodeProps<FrameNode>) {
 }
 const nodeTypes = { article: ArticleCard, frame: FrameCard }
 
-export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOpen, onPreview, onCreate, beforeLeave, focus }: {
+export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOpen, onPreview, onCreate, onSearch, beforeLeave, focus }: {
   notes: NoteSummary[]; theme: 'light' | 'dark'; viewport: Viewport; onViewport: (viewport: Viewport) => void
-  folder: string; onOpen: (name: string) => void; onPreview: (name: string) => void; onCreate: () => void
+  folder: string; onOpen: (name: string) => void; onPreview: (name: string) => void; onCreate: () => void; onSearch?: () => void
   beforeLeave: MutableRefObject<() => Promise<boolean>>
   /** Notes the Agent pointed at: selected and brought into view once they are on the canvas. */
   focus?: { names: string[]; key: number } | null
@@ -74,6 +75,9 @@ export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOp
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<{ id: string; title: string } | null>(null)
   const [reloadOpen, setReloadOpen] = useState(false)
+  const [helpOpen, setHelpOpen] = useState(false)
+  const [zoom, setZoom] = useState(viewport.zoom)
+  const canvasRoot = useRef<HTMLDivElement>(null)
   const pending = useRef(new Map<string, { position: NotePosition; version: number }>())
   const pendingVersion = useRef<number | null>(null)
   const queue = useRef<Promise<boolean>>(Promise.resolve(true))
@@ -134,7 +138,7 @@ export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOp
     apply([...frames, ...articles])
     const available = chosen.filter(id => notes.some(note => note.name === id) || frames.some(frame => frame.id === id))
     if (available.length !== chosen.length) setChosen(available)
-  }, [notes, layout, chosen, onOpen, apply])
+  }, [notes, layout, chosen, onOpen, onPreview, apply])
   useEffect(() => {
     beforeLeave.current = async () => { await queue.current; return pendingVersion.current === null }
     return () => { beforeLeave.current = async () => true }
@@ -216,10 +220,58 @@ export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOp
     const parent = node.parentId ? nodeRef.current.find(parent => parent.id === node.parentId) : null
     return parent ? { x: parent.position.x + node.position.x, y: parent.position.y + node.position.y } : node.position
   }
+  function fitSelection() {
+    if (!chosen.length) return
+    void flow.current?.fitView({ nodes: chosen.map(id => ({ id })), padding: 0.35, maxZoom: 1.2, duration: 250 })
+  }
+  function clearSelection() {
+    setChosen([])
+    canvasRoot.current?.focus({ preventScroll: true })
+  }
+  function arrangeSelection() {
+    if (!ready || selectedNotes.length < 2) return
+    const current = layoutRef.current
+    const positions = { ...Object.fromEntries(notes.map(note => [note.name, note.position])), ...current.positions }
+    const moved: Record<string, NotePosition> = {}
+    // Arrange within each existing region, never silently regroup documents.
+    const groups = new Map<string, string[]>()
+    for (const name of selectedNotes) {
+      const region = current.frames.find(frame => frame.members.includes(name))?.id ?? ''
+      groups.set(region, [...(groups.get(region) ?? []), name])
+    }
+    for (const [region, members] of groups) {
+      if (members.length < 2) continue
+      members.sort((a, b) => positions[a]!.y - positions[b]!.y || positions[a]!.x - positions[b]!.x || a.localeCompare(b))
+      const left = Math.min(...members.map(name => positions[name]!.x)), top = Math.min(...members.map(name => positions[name]!.y))
+      const columns = Math.ceil(Math.sqrt(members.length))
+      const occupied = notes.filter(note => !members.includes(note.name) && (current.frames.find(frame => frame.members.includes(note.name))?.id ?? '') === region).map(note => positions[note.name]!)
+      let cell = 0
+      for (const name of members) {
+        let position: NotePosition
+        do {
+          position = { x: left + cell % columns * 312, y: top + Math.floor(cell / columns) * 224 }
+          cell++
+        } while (occupied.some(other => Math.abs(other.x - position.x) < 296 && Math.abs(other.y - position.y) < 208))
+        moved[name] = position
+      }
+    }
+    if (!Object.keys(moved).length) return
+    Object.assign(positions, moved)
+    const frames = current.frames.map(frame => frame.members.some(name => name in moved) ? fitFrame(frame, positions) : frame)
+    persist({ frames, positions }, moved)
+  }
+  const selectedNotes = chosen.filter(name => notes.some(note => note.name === name))
+  const selectedTitle = selectedNotes.length === 1 ? notes.find(note => note.name === selectedNotes[0])?.title : undefined
+  const canArrange = new Set(selectedNotes.map(name => layout.frames.find(frame => frame.members.includes(name))?.id)).size < selectedNotes.length
   const active = chosen.at(-1)
   const selectedFrame = layout.frames.find(frame => frameNodeId(frame.id) === active)
 
-  return <div className="canvas-wrap" onKeyDownCapture={event => {
+  return <div ref={canvasRoot} className="canvas-wrap canvas-workspace" tabIndex={-1} aria-label="文章画布" onKeyDownCapture={event => {
+    const target = event.target as HTMLElement
+    if (!event.defaultPrevented && !composing(event) && !target.closest('input,textarea,[contenteditable="true"],[role="menu"],[role="dialog"]')) {
+      if (event.key === 'Escape' && chosen.length) { event.preventDefault(); event.stopPropagation(); clearSelection(); return }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'a') { event.preventDefault(); setChosen(notes.map(note => note.name)); return }
+    }
     if (event.defaultPrevented || composing(event) || event.repeat || event.ctrlKey || event.metaKey || event.altKey || !active || !(event.target as HTMLElement).closest('.article-card,.frame-handle')) return
     if (!selectedFrame && (event.key === ' ' || event.key === 'Enter')) {
       event.preventDefault(); event.stopPropagation()
@@ -241,21 +293,57 @@ export function LibraryCanvas({ notes, folder, theme, viewport, onViewport, onOp
     <div className="canvas">
       <ReactFlow nodes={nodes} nodeTypes={nodeTypes} colorMode={theme} defaultViewport={viewport} nodesDraggable={ready} onInit={instance => { flow.current = instance }}
         proOptions={{ hideAttribution: true }}
-        onMoveEnd={(_, view) => onViewport(view)} onNodesChange={changes => apply(applyNodeChanges(changes, nodeRef.current))}
+        onMoveEnd={(_, view) => { setZoom(view.zoom); onViewport(view) }} onNodesChange={changes => apply(applyNodeChanges(changes, nodeRef.current))}
         onNodeDragStart={(_, node) => setChosen(current => current.includes(node.id) ? current : [node.id])} onNodeDragStop={(_, node, dragged) => {
           if (node.type === 'frame') moveFrame(node.data.frame.id, node.position); else moveArticles(Object.fromEntries(dragged.filter(node => node.type === 'article').map(node => [node.id, absolutePosition(node)])))
         }}
         onPaneClick={() => setChosen([])} nodesConnectable={false} nodesFocusable={false} elementsSelectable={false}
         deleteKeyCode={null} zoomOnDoubleClick={false} minZoom={.2} maxZoom={2} panOnScroll>
       </ReactFlow>
-      <div className="canvas-controls nodrag nopan" role="group" aria-label="画布视图">
-        <IconButton icon="plus" label="放大画布" onPress={() => { void flow.current?.zoomIn() }}/>
-        <IconButton icon="minus" label="缩小画布" onPress={() => { void flow.current?.zoomOut() }}/>
-        <IconButton icon="fit" label="查看全部文章" onPress={() => { void flow.current?.fitView() }}/>
+      <div className="canvas-controls canvas-workspace-controls nodrag nopan" role="group" aria-label="画布工具">
+        <div className="canvas-view-actions" role="group" aria-label="画布视图">
+          <IconButton icon="minus" label="缩小画布" onPress={() => { void flow.current?.zoomOut() }}/>
+          <DropdownMenu label="画布视图" align="start" trigger={<Button size="sm" variant="ghost" aria-label={`画布视图，缩放 ${Math.round(zoom * 100)}%`}>{Math.round(zoom * 100)}%<Icon name="down" size={14}/></Button>} items={[
+            { label: '查看全部文章', icon: <Icon name="fit" size={16}/>, disabled: !notes.length && !layout.frames.length, onSelect: () => { void flow.current?.fitView({ padding: 0.2, duration: 250 }) } },
+            { label: '恢复 100% 缩放', onSelect: () => { void flow.current?.zoomTo(1, { duration: 250 }) } },
+            { label: '选择全部文章', separatorBefore: true, disabled: !notes.length, onSelect: () => setChosen(notes.map(note => note.name)) },
+            { label: '画布操作指南', onSelect: () => setHelpOpen(true) },
+          ]}/>
+          <IconButton icon="plus" label="放大画布" onPress={() => { void flow.current?.zoomIn() }}/>
+          <IconButton icon="fit" label="查看全部文章" isDisabled={!notes.length && !layout.frames.length} onPress={() => { void flow.current?.fitView({ padding: 0.2, duration: 250 }) }}/>
+          {onSearch && <IconButton icon="search" label="搜索文章" onPress={onSearch}/>}
+        </div>
+        {chosen.length ? <div className="canvas-selection-actions" role="group" aria-label="所选内容操作">
+          <span className="canvas-selection-label" title={selectedFrame?.title ?? selectedTitle} aria-live="polite">{selectedFrame ? selectedFrame.title : selectedNotes.length === 1 ? selectedTitle : `已选 ${selectedNotes.length} 篇`}</span>
+          {selectedNotes.length === 1 && <>
+            <Button size="sm" variant="ghost" onPress={() => onPreview(selectedNotes[0]!)}>预览</Button>
+            <Button size="sm" variant="secondary" onPress={() => onOpen(selectedNotes[0]!)}>编辑</Button>
+          </>}
+          {selectedFrame && <Button size="sm" variant="secondary" onPress={() => editFrame(selectedFrame)}>编辑文档区</Button>}
+          <DropdownMenu label="整理" items={[
+            { label: '定位所选内容', icon: <Icon name="fit" size={16}/>, onSelect: fitSelection },
+            ...(selectedNotes.length ? [
+              { label: '创建文档区', icon: <Icon name="group" size={16}/>, disabled: !ready, onSelect: () => createFrame(selectedNotes) },
+              { label: '整齐排列所选文章', icon: <Icon name="grid" size={16}/>, disabled: !ready || !canArrange, onSelect: arrangeSelection },
+            ] : []),
+            { label: '取消选择', separatorBefore: true, onSelect: clearSelection },
+          ]}/>
+          <IconButton icon="close" label="取消选择" onPress={clearSelection}/>
+        </div> : <Button size="sm" variant="ghost" className="canvas-guidance" onPress={() => setHelpOpen(true)}>单击选择 · 双击编辑</Button>}
       </div>
     </div>
-    {ready && !notes.length && !layout.frames.length && <div className="canvas-empty canvas-empty-overlay"><EmptyState title="为想法留一个位置" description="创建文章，自由摆放。" icon={<Icon name="grid" size={24}/>} action={<Button onPress={onCreate}><Icon name="plus"/>创建第一篇文章</Button>}/></div>}
+    <div className="canvas-save-state" role="status" aria-live="polite">{error ? ready ? '布局尚未保存' : '布局载入失败' : saving ? '正在保存布局…' : ready ? '布局已保存' : '正在载入布局…'}</div>
+    {ready && !notes.length && !layout.frames.length && <div className="canvas-empty canvas-empty-overlay"><EmptyState title="为想法留一个位置" description="创建文章后，预览、编辑，再将相关内容整理到文档区。" icon={<Icon name="grid" size={24}/>} action={<Button onPress={onCreate}><Icon name="plus"/>创建第一篇文章</Button>}/></div>}
     {error && <div className="banner" role="alert"><span>{error}</span><div className="toolbar"><Button size="sm" variant="outline" isDisabled={saving} onPress={() => pendingVersion.current !== null ? persist(layoutRef.current, {}) : void loadAction.current()}>重试</Button>{pendingVersion.current !== null && <Button size="sm" variant="ghost" isDisabled={saving} onPress={() => setReloadOpen(true)}>重新载入</Button>}</div></div>}
+    <Dialog title="画布操作指南" open={helpOpen} onClose={() => setHelpOpen(false)} footer={<Button onPress={() => setHelpOpen(false)}>知道了</Button>}>
+      <dl className="canvas-shortcuts">
+        <div><dt>浏览与写作</dt><dd>单击选择文章；双击或 Enter 打开编辑；空格预览。</dd></div>
+        <div><dt>选择多篇</dt><dd>按住 Shift 单击或右键追加选择；⌘ / Ctrl + A 选择全部；Esc 取消选择。</dd></div>
+        <div><dt>整理与移动</dt><dd>拖动文章或用方向键移动；通过「整理」创建文档区，或按网格排列所选文章。排列保留现有分组。</dd></div>
+        <div><dt>文档区</dt><dd>拖动标题可整组移动。文章拖入加入，拖出脱离；解散文档区会保留文章。</dd></div>
+        <div><dt>定位与视图</dt><dd>滚动平移画布；通过缩放菜单查看全部，或通过「整理」定位所选内容。</dd></div>
+      </dl>
+    </Dialog>
     <Dialog title="编辑文档区" open={!!form} onClose={() => setForm(null)} footer={<>
       <Button variant="ghost" onPress={() => { if (!form) return; const current = layoutRef.current; persist({ ...current, frames: current.frames.filter(frame => frame.id !== form.id) }, {}); setForm(null); setChosen([]) }}>解散文档区</Button>
       <Button variant="ghost" onPress={() => setForm(null)}>取消</Button><Button type="submit" form="theme-frame-form" isDisabled={!form?.title.trim()}>保存名称</Button>

@@ -146,7 +146,9 @@ describe('note Agent through the real HTTP and file interfaces', () => {
     const app = createApp(store, new EventBus(), { aiSettings: ai, aiTransport: async (_, init) => {
       const body = JSON.parse(String(init!.body))
       expect(body.tools).toBeUndefined()
-      expect(String(init!.body)).not.toContain('学刁')
+      // A rejected model-authored call may repeat its own arguments in history.
+      // Check only data supplied by the application, not the model's invented call.
+      expect(JSON.stringify(body.messages.filter((message: { role: string }) => message.role !== 'assistant'))).not.toContain('学刁')
       expect(String(init!.body)).not.toContain('Secret.md')
       if (++requests === 1) return reply('你好！你想聊些什么？')
       if (requests === 2) { expect(body.messages.some((message: { content: string }) => message.content === '你好！你想聊些什么？')).toBe(true); return reply(null, [call('edit_note', { name: 'Physics/A.md', version: 'invented', edits: [{ oldText: '学刁', newText: '学习' }] })]) }
@@ -157,7 +159,9 @@ describe('note Agent through the real HTTP and file interfaces', () => {
     expect(events).toContainEqual({ type: 'message', text: '你好！你想聊些什么？' })
     const session = events.find(event => event.type === 'session')!
     if (session.type !== 'session') throw new Error()
-    await send(app, { kind: 'chat', folder: '' }, '继续聊', session.id)
+    const continued = await send(app, { kind: 'chat', folder: '' }, '继续聊', session.id)
+    expect(continued).toContainEqual({ type: 'message', text: '纯聊天不会修改笔记。' })
+    expect(requests).toBe(3)
     expect((await store.load('Physics/A.md')).content).toBe(before)
     expect(await fs.readdir(path.join(store.root, '.canvasnote', 'cache'))).not.toContain('changesets')
   })
@@ -211,6 +215,8 @@ describe('note Agent through the real HTTP and file interfaces', () => {
         case 3: version = result.version; return reply(null, [call('rewrite_note', { name: 'Physics/A.md', version, content: '# Truncated\n' })])
         case 4: expect(result.error).toContain('尚未读取全文'); return reply(null, [call('edit_note', { name: 'Physics/A.md', version, edits: [{ oldText: '重复词', newText: '只改第二次' }] })])
         case 5: expect(result.error).toContain('出现多次'); return reply(null, [call('edit_note', { name: 'Physics/A.md', version, edits: [{ oldText: '重复词', newText: '只改第二次', occurrence: 2 }] })])
+        case 6: expect(result.error).toContain('尚未读取'); return reply(null, [call('read_note', { name: 'Physics/A.md' })])
+        case 7: return reply(null, [call('edit_note', { name: 'Physics/A.md', version: result.version, edits: [{ oldText: '重复词', newText: '只改第二次', occurrence: 2 }] })])
         default: return reply('第二处已修改。')
       }
     } })

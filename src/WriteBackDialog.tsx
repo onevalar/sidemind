@@ -29,7 +29,7 @@ export function WriteBackDialog({ subject, onClose, onSaved }: { subject: WriteB
   const cited = many ? [] : turn.sourceIds.filter(id => sources[id])
   const [mode, setMode] = useState<'verbatim' | 'organized'>(many ? 'organized' : 'verbatim')
   const [organized, setOrganized] = useState('')
-  const [kind, setKind] = useState<CaptureTarget['kind']>('append')
+  const [kind, setKind] = useState<CaptureTarget['kind']>(subject.notes.length ? 'append' : 'new')
   const [note, setNote] = useState(subject.defaultNote ?? subject.notes[0]?.name ?? '')
   const [sourceId, setSourceId] = useState(cited[0] ?? '')
   const [preview, setPreview] = useState<CapturePreview | null>(null)

@@ -437,6 +437,28 @@ describe('ChatGPT Responses inference', () => {
     expect(body.instructions).not.toContain('Rewrite')
   })
 
+  it('accepts completed stream items when the live terminal response has an empty output array', async () => {
+    const output = [
+      { type: 'reasoning', id: 'r1', summary: [], encrypted_content: 'synthetic-reasoning' },
+      { type: 'function_call', id: 'fc1', call_id: 'read1', name: 'read_note', arguments: '{"name":"Fixture.md"}' },
+    ]
+    fake.inference = () => streamed(output.map((item, output_index) => event('response.output_item.done', { item, output_index })).join('') + event('response.completed', { response: { status: 'completed', output: [] } }))
+    const turn = await connection.chat([{ role: 'user', content: 'Read the fixture.' }], [], new AbortController().signal)
+    expect(turn.calls).toEqual([{ id: 'read1', type: 'function', function: { name: 'read_note', arguments: '{"name":"Fixture.md"}' } }])
+    expect(turn.responseOutput).toEqual(output)
+    fake.inference = () => streamed(event('response.output_item.done', { output_index: 0, item: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Finished.' }] } }) + event('response.completed', { response: { status: 'completed', output: [] } }))
+    expect((await connection.chat([{ role: 'user', content: 'Continue.' }, { role: 'assistant', content: null, responseOutput: turn.responseOutput }, { role: 'tool', tool_call_id: 'read1', content: 'Fixture content' }], [], new AbortController().signal)).text).toBe('Finished.')
+    expect(JSON.parse(String(fake.responses[1]!.body)).input).toContainEqual(output[0])
+  })
+
+  it('does not execute a finished stream tool item without a successful terminal response', async () => {
+    const item = { type: 'function_call', call_id: 'write1', name: 'delete_notes', arguments: '{"names":["Fixture.md"]}' }
+    for (const terminal of ['', event('response.incomplete'), event('response.completed', { response: { status: 'incomplete', output: [] } })]) {
+      fake.inference = () => streamed(event('response.output_item.done', { output_index: 0, item }) + terminal)
+      await expect(connection.chat([{ role: 'user', content: 'A task.' }], [], new AbortController().signal)).rejects.toThrow(/未完成|不完整/)
+    }
+  })
+
   it.each([
     ['quota failure', event('response.failed', { response: { error: { code: 'subscription_sharing_usage_limit_exceeded', message: 'secret-access-oaiapp_one' } } }), 'settings/usage'],
     ['usage unavailable', event('response.failed', { response: { error: { code: 'subscription_sharing_usage_unavailable' } } }), '暂不可用'],

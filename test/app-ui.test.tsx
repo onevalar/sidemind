@@ -2,11 +2,12 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { App } from '../src/App'
+import { AgentPanel } from '../src/AgentPanel'
 import { api } from '../src/api'
 import type { AgentRunDTO } from '../shared/types'
 
 vi.mock('../src/api', () => ({
-  api: { listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), search: vi.fn(), openWorkspaceFolder: vi.fn(), conversation: vi.fn(), changeSets: vi.fn(), agent: vi.fn(), stopAgentRun: vi.fn(), followAgent: vi.fn(), agentRun: vi.fn(), undoChangeSet: vi.fn(), acknowledgeAgentRun: vi.fn(), repoStatus: vi.fn(), push: vi.fn() },
+  api: { discussions: vi.fn(), listNotes: vi.fn(), listFolders: vi.fn(), settings: vi.fn(), createFolder: vi.fn(), createNote: vi.fn(), search: vi.fn(), openWorkspaceFolder: vi.fn(), conversation: vi.fn(), changeSets: vi.fn(), agent: vi.fn(), stopAgentRun: vi.fn(), followAgent: vi.fn(), agentRun: vi.fn(), undoChangeSet: vi.fn(), acknowledgeAgentRun: vi.fn(), repoStatus: vi.fn(), push: vi.fn() },
   subscribeEvents: () => () => {},
 }))
 vi.mock('../src/LibraryCanvas', () => ({ LibraryCanvas: () => <div>文章画布</div> }))
@@ -17,6 +18,7 @@ beforeEach(() => {
   vi.stubGlobal('ResizeObserver', class { observe() {} unobserve() {} disconnect() {} })
   vi.stubGlobal('IntersectionObserver', class { observe() {} unobserve() {} disconnect() {} })
   HTMLElement.prototype.scrollIntoView = vi.fn()
+  vi.mocked(api.discussions).mockResolvedValue([])
   vi.mocked(api.listNotes).mockResolvedValue([])
   vi.mocked(api.listFolders).mockResolvedValue([''])
   vi.mocked(api.conversation).mockResolvedValue(null)
@@ -244,6 +246,134 @@ const configured = () => {
   vi.mocked(api.settings).mockResolvedValue({ notesDirectory: '/test/notes', dataDirectory: '/test', summary: none, embedding: none, ai: { configured: true, keySaved: true, model: 'test-model', baseUrl: 'https://example.test/v1', source: 'saved' }, chatgpt: { configured: false, accounts: [], activeAccountId: null, model: '', loginStatus: 'idle' } })
 }
 
+it('stops before sending an in-flight adjustment in the same session and preserves IME input', async () => {
+  configured()
+  let finish!: (run: AgentRunDTO) => void
+  vi.mocked(api.agent).mockImplementationOnce(async (_, emit, __, hooks) => {
+    emit({ type: 'session', id: 'original-session' })
+    hooks?.onRun?.(running)
+    return new Promise(resolve => { finish = resolve })
+  }).mockImplementationOnce(async (_, emit) => { emit({ type: 'message', text: '已经按调整继续。' }); return { ...running, status: 'completed' } })
+  vi.mocked(api.stopAgentRun).mockResolvedValue(running) // An acknowledgement is not completion.
+  render(<App/>); await screen.findByText('文章画布')
+  const input = screen.getByRole('textbox', { name: 'AI 消息' }) as HTMLTextAreaElement
+  await act(async () => { fireEvent.change(input, { target: { value: '更新两篇笔记，保留负责人' } }); fireEvent.keyDown(input, { key: 'Enter' }) })
+  fireEvent.change(input, { target: { value: '时间改成周一，其他不变' } })
+  expect(screen.getByRole('button', { name: '停止并发送调整' })).toBeTruthy()
+  fireEvent.keyDown(input, { key: 'Enter', isComposing: true })
+  fireEvent.keyDown(input, { key: 'Enter', shiftKey: true })
+  expect(api.stopAgentRun).not.toHaveBeenCalled()
+  await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }); fireEvent.keyDown(input, { key: 'Enter' }) })
+  expect(api.stopAgentRun).toHaveBeenCalledTimes(1)
+  expect(api.agent).toHaveBeenCalledTimes(1)
+  expect(input.value).toBe('时间改成周一，其他不变')
+  await act(async () => { finish({ ...running, status: 'cancelled' }) })
+  await screen.findByText('已经按调整继续。')
+  expect(api.agent).toHaveBeenCalledTimes(2)
+  expect(vi.mocked(api.agent).mock.calls[1]![0]).toEqual({ scope: running.scope, session: 'original-session', message: '时间改成周一，其他不变' })
+  expect(input.readOnly).toBe(false)
+})
+
+it('keeps the adjustment draft when stopping fails and does not start another task', async () => {
+  configured()
+  let finish!: (run: AgentRunDTO) => void
+  vi.mocked(api.agent).mockImplementation(async (_, emit, __, hooks) => {
+    emit({ type: 'session', id: 'original-session' }); hooks?.onRun?.(running)
+    return new Promise(resolve => { finish = resolve })
+  })
+  vi.mocked(api.stopAgentRun).mockRejectedValue(new Error('连接中断'))
+  render(<App/>); await screen.findByText('文章画布')
+  const input = screen.getByRole('textbox', { name: 'AI 消息' }) as HTMLTextAreaElement
+  await act(async () => { fireEvent.change(input, { target: { value: '整理发布准备' } }); fireEvent.keyDown(input, { key: 'Enter' }) })
+  fireEvent.change(input, { target: { value: '只调整时间，其他不变' } })
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: '停止并发送调整' })) })
+  expect((await screen.findByRole('alert')).textContent).toContain('调整尚未发送：连接中断')
+  expect(input.value).toBe('只调整时间，其他不变')
+  expect(input.readOnly).toBe(false)
+  expect(api.agent).toHaveBeenCalledTimes(1)
+  await act(async () => { finish({ ...running, status: 'completed' }) })
+})
+
+it('does not send another workspace draft as an adjustment to the running conversation', async () => {
+  configured(); vi.mocked(api.listFolders).mockResolvedValue(['', 'Work'])
+  let finish!: (run: AgentRunDTO) => void
+  vi.mocked(api.agent).mockImplementation(async (_, emit, __, hooks) => {
+    emit({ type: 'session', id: 'original-session' }); hooks?.onRun?.(running)
+    return new Promise(resolve => { finish = resolve })
+  })
+  render(<App/>); await screen.findByText('文章画布')
+  const input = screen.getByRole('textbox', { name: 'AI 消息' }) as HTMLTextAreaElement
+  await act(async () => { fireEvent.change(input, { target: { value: '整理当前笔记' } }); fireEvent.keyDown(input, { key: 'Enter' }) })
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Work' })) })
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Work' }).getAttribute('aria-current')).toBe('page'))
+  fireEvent.change(input, { target: { value: '这是另一个文件夹的问题' } })
+  expect(screen.queryByRole('button', { name: '停止并发送调整' })).toBe(null)
+  fireEvent.keyDown(input, { key: 'Enter' })
+  expect(api.stopAgentRun).not.toHaveBeenCalled()
+  expect(api.agent).toHaveBeenCalledTimes(1)
+  expect(input.value).toBe('这是另一个文件夹的问题')
+  await act(async () => { finish({ ...running, status: 'completed' }) })
+})
+
+it('sends the captured message and preserves a newer draft typed during the save before sending', async () => {
+  let saved!: (ok: boolean) => void
+  const beforeSend = { current: () => new Promise<boolean>(resolve => { saved = resolve }) }
+  const selection = { current: () => '发送时的原文选区' }
+  vi.mocked(api.agent).mockImplementation(async (_, emit) => { emit({ type: 'session', id: 'c-save' }); return { ...running, status: 'completed' } })
+  render(<AgentPanel folder="" name="当前文章.md" model="test-model" beforeSend={beforeSend} selection={selection} onConfigure={() => {}} onClose={() => {}} onOpenNote={() => {}}/>)
+  const input = screen.getByRole('textbox', { name: 'AI 消息' }) as HTMLTextAreaElement
+  fireEvent.change(input, { target: { value: '先发送这条任务' } })
+  fireEvent.keyDown(input, { key: 'Enter' })
+  fireEvent.change(input, { target: { value: '保留这条下一轮草稿' } })
+  selection.current = () => '稍后来自另一篇文章的选区'
+  expect(api.agent).not.toHaveBeenCalled()
+  await act(async () => { saved(true) })
+  expect(vi.mocked(api.agent).mock.calls[0]![0].message).toBe('先发送这条任务')
+  expect(vi.mocked(api.agent).mock.calls[0]![0].selection).toBe('发送时的原文选区')
+  expect(input.value).toBe('保留这条下一轮草稿')
+})
+
+it('lets Stop cancel a pending adjustment while the old task is still stopping', async () => {
+  configured()
+  let finish!: (run: AgentRunDTO) => void
+  vi.mocked(api.agent).mockImplementation(async (_, emit, __, hooks) => {
+    emit({ type: 'session', id: 'original-session' }); hooks?.onRun?.(running)
+    return new Promise(resolve => { finish = resolve })
+  })
+  vi.mocked(api.stopAgentRun).mockResolvedValue(running)
+  render(<App/>); await screen.findByText('文章画布')
+  const input = screen.getByRole('textbox', { name: 'AI 消息' }) as HTMLTextAreaElement
+  await act(async () => { fireEvent.change(input, { target: { value: '整理资料' } }); fireEvent.keyDown(input, { key: 'Enter' }) })
+  fireEvent.change(input, { target: { value: '时间改为周一' } })
+  await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }) })
+  fireEvent.keyDown(input, { key: 'Escape' })
+  await act(async () => { finish({ ...running, status: 'cancelled' }) })
+  expect(api.agent).toHaveBeenCalledTimes(1)
+  expect(input.value).toBe('时间改为周一')
+  expect(input.readOnly).toBe(false)
+})
+
+it.each(['unmount', 'escape'] as const)('does not resume an adjustment after %s when the stop acknowledgement arrives after the terminal event', async action => {
+  configured()
+  let finish!: (run: AgentRunDTO) => void, acknowledge!: (run: AgentRunDTO) => void
+  vi.mocked(api.agent).mockImplementation(async (_, emit, __, hooks) => {
+    emit({ type: 'session', id: 'original-session' }); hooks?.onRun?.(running)
+    return new Promise(resolve => { finish = resolve })
+  })
+  vi.mocked(api.stopAgentRun).mockImplementation(() => new Promise(resolve => { acknowledge = resolve }))
+  const app = render(<App/>); await screen.findByText('文章画布')
+  const input = screen.getByRole('textbox', { name: 'AI 消息' })
+  await act(async () => { fireEvent.change(input, { target: { value: '整理资料' } }); fireEvent.keyDown(input, { key: 'Enter' }) })
+  fireEvent.change(input, { target: { value: '时间改为周一' } })
+  await act(async () => { fireEvent.keyDown(input, { key: 'Enter' }) })
+  await act(async () => { finish({ ...running, status: 'cancelled' }) })
+  // watch has already cleared request.current; stopping and dismissal still need to work.
+  if (action === 'unmount') app.unmount()
+  else fireEvent.keyDown(input, { key: 'Escape' })
+  await act(async () => { acknowledge({ ...running, status: 'cancelled' }) })
+  expect(api.agent).toHaveBeenCalledTimes(1)
+})
+
 it('follows a request that was still running when the page opened, without repeating the messages it already wrote', async () => {
   configured()
   vi.mocked(api.conversation).mockResolvedValue({ id: 'c1', scope: running.scope, updatedAt: 1, messages: [{ role: 'user' as const, text: '整理一下' }, { role: 'assistant' as const, text: '已读取两篇。' }], changes: [], proposals: [], plan: [], activeRun: running })
@@ -332,4 +462,24 @@ it('does not open the highlighted search result when Enter only confirms an inpu
   await new Promise(resolve => setTimeout(resolve, 30))
   expect(screen.queryByRole('region', { name: '文章编辑' })).toBe(null)
   expect(screen.getByRole('combobox')).toBeTruthy()
+})
+
+
+it('switches workspaces with the dropdown and puts chat navigation in the shared sidebar', async () => {
+  render(<App/>)
+  const switcher = await screen.findByRole('button', { name: '切换工作区：笔记' })
+  fireEvent.keyDown(switcher, { key: 'ArrowDown' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: '对话' }))
+  const chatSwitcher = await screen.findByRole('button', { name: '切换工作区：对话' })
+  const sidebar = screen.getByRole('complementary', { name: '工作区导航' })
+  expect(within(sidebar).getByRole('navigation', { name: '对话列表' })).toBeTruthy()
+  expect(screen.queryByRole('navigation', { name: '文件夹' })).toBe(null)
+  expect(screen.queryByRole('button', { name: '新建文章' })).toBe(null)
+  fireEvent.change(screen.getByRole('textbox', { name: '你的问题' }), { target: { value: '切换后保留' } })
+  fireEvent.keyDown(chatSwitcher, { key: 'ArrowDown' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: '笔记' }))
+  expect(await screen.findByRole('navigation', { name: '文件夹' })).toBeTruthy()
+  fireEvent.keyDown(screen.getByRole('button', { name: '切换工作区：笔记' }), { key: 'ArrowDown' })
+  fireEvent.click(await screen.findByRole('menuitem', { name: '对话' }))
+  expect((await screen.findByRole('textbox', { name: '你的问题' }) as HTMLTextAreaElement).value).toBe('切换后保留')
 })

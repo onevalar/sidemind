@@ -35,12 +35,20 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
   const update = () => redraw(value => value + 1)
   // `request` only detaches this page from a run (closing or leaving never stops it); `runId` is what Stop acts on.
   const request = useRef<AbortController | null>(null)
+  const mounted = useRef(true)
   const runId = useRef<string | null>(null)
+  const following = useRef<{ target: Conversation; scope: AgentScope; controller: AbortController; promise: Promise<AgentRunDTO | null> } | null>(null)
+  const redirecting = useRef(false)
+  const cancelAdjustment = useRef(false)
+  const [interrupting, setInterrupting] = useState(false)
   const [busy, setBusy] = useState(false)
   const [activity, setActivity] = useState('正在思考…')
   const [acting, setActing] = useState<string | null>(null)
   const [viewing, setViewing] = useState<{ title: string; subtitle: string; diffs: { name: string; before: string | null; after: string | null }[] } | null>(null)
-  useEffect(() => () => request.current?.abort(), [])  // detach: the run keeps going on the server
+  useEffect(() => {
+    mounted.current = true
+    return () => { mounted.current = false; request.current?.abort() } // detach: the run keeps going on the server
+  }, [])
 
   const apply = (target: Conversation, event: AgentEvent) => {
     if (event.type === 'session') target.session = event.id
@@ -55,19 +63,25 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
     update()
   }
   /** Listen to a run until it ends. The run itself is never cancelled from here. */
-  const watch = async (target: Conversation, controller: AbortController, listen: () => Promise<AgentRunDTO | null>) => {
-    try {
-      const final = await listen()
-      // A stop the user asked for is a normal outcome; an interruption is not.
-      if (final?.status === 'cancelled' && final.error) target.notice = final.error
-      else if (final?.status === 'recovery_required') upsert(target.recovery, final)
-      else if (final?.status === 'interrupted' && final.error) target.error = final.error
-    } catch (error) {
-      if (!controller.signal.aborted) target.error = (error as Error).message
-    } finally {
-      target.streaming = ''; update()
-      if (request.current === controller) { request.current = null; runId.current = null; setBusy(false) }
-    }
+  const watch = (target: Conversation, controller: AbortController, listen: () => Promise<AgentRunDTO | null>, runScope: AgentScope) => {
+    const promise = (async () => {
+      try {
+        const final = await listen()
+        // A stop the user asked for is a normal outcome; an interruption is not.
+        if (final?.status === 'cancelled' && final.error) target.notice = final.error
+        else if (final?.status === 'recovery_required') upsert(target.recovery, final)
+        else if (final?.status === 'interrupted' && final.error) target.error = final.error
+        return final
+      } catch (error) {
+        if (!controller.signal.aborted) target.error = (error as Error).message
+        return null
+      } finally {
+        target.streaming = ''; update()
+        if (request.current === controller) { request.current = null; runId.current = null; setBusy(false) }
+      }
+    })()
+    following.current = { target, scope: runScope, controller, promise }
+    return promise
   }
 
   // Restore the latest conversation of this scope (survives reloads and restarts), then keep undo state fresh.
@@ -89,7 +103,7 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
             if (state.activeRun && !request.current) {
               const controller = new AbortController(), id = state.activeRun.id
               request.current = controller; runId.current = id; setBusy(true); setActivity('任务仍在后台运行…')
-              void watch(current, controller, () => api.followAgent(id, event => apply(current, event), controller.signal))
+              void watch(current, controller, () => api.followAgent(id, event => apply(current, event), controller.signal), scope)
             }
           }
           update()
@@ -107,20 +121,47 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
     return () => { active = false; unsubscribe() }
   }, [key])
 
-  const ask = async () => {
-    if (!model || !conversation.input.trim() || request.current || acting) return
-    const controller = new AbortController(), target = conversation
+  const ask = async (target = conversation, runScope = scope, correction?: string) => {
+    const draft = target.input, message = (correction ?? draft).trim()
+    if (!mounted.current || !model || !message || request.current || acting) return
+    const selected = correction === undefined && runScope.kind === 'note' ? selection.current() : undefined
+    const controller = new AbortController()
     request.current = controller; setBusy(true); setActivity('正在准备…'); target.error = ''; target.notice = ''; target.restored = true; update()
     try {
       // Flush the current draft first; file tools must never work from an older autosaved version.
-      if (scope.kind !== 'chat' && !await beforeSend.current()) throw new Error('请先处理未保存的修改，再交给助手。')
+      if (runScope.kind !== 'chat' && !await beforeSend.current()) throw new Error('请先处理未保存的修改，再交给助手。')
       controller.signal.throwIfAborted()
-      const message = target.input.trim(), selected = scope.kind === 'note' ? selection.current() : undefined
-      target.messages.push({ id: target.messages.length, role: 'user', text: message }); target.input = ''; target.plan = []; setActivity('正在思考…'); update()
-      await watch(target, controller, () => api.agent({ scope, session: target.session, message, ...(selected ? { selection: selected } : {}) }, event => { if (!controller.signal.aborted) apply(target, event) }, controller.signal, { onRun: run => { runId.current = run.id } }))
+      target.messages.push({ id: target.messages.length, role: 'user', text: message })
+      if (target.input === draft) target.input = ''
+      target.plan = []; setActivity('正在思考…'); update()
+      await watch(target, controller, () => api.agent({ scope: runScope, session: target.session, message, ...(selected ? { selection: selected } : {}) }, event => { if (!controller.signal.aborted) apply(target, event) }, controller.signal, { onRun: run => { runId.current = run.id } }), runScope)
     } catch (error) {
       if (!controller.signal.aborted) target.error = (error as Error).message
     } finally { target.streaming = ''; update(); if (request.current === controller) { request.current = null; runId.current = null; setBusy(false) } }
+  }
+
+  const interruptAndAsk = async () => {
+    const active = following.current, id = runId.current, message = conversation.input.trim()
+    if (redirecting.current || !active || active.target !== conversation || !id || !message) return
+    redirecting.current = true; cancelAdjustment.current = false; setInterrupting(true); conversation.error = ''; setActivity('正在停止，随后发送调整…'); update()
+    try {
+      await api.stopAgentRun(id)
+      // The stop acknowledgement may still say running. Wait for the original
+      // stream's durable terminal record before starting another write-capable run.
+      const terminal = await active.promise
+      if (cancelAdjustment.current || !mounted.current) return
+      if (!terminal || active.controller.signal.aborted || !['cancelled', 'completed', 'waiting_confirmation', 'failed'].includes(terminal.status)) throw new Error('未能确认原任务已停止，请检查任务状态后再发送。')
+      if (!active.target.session) throw new Error('无法恢复原对话，调整内容已保留。')
+      void ask(active.target, active.scope, message)
+    } catch (error) { active.target.error = '调整尚未发送：' + (error as Error).message; update() }
+    finally { redirecting.current = false; setInterrupting(false) }
+  }
+
+  const stop = () => {
+    const target = following.current?.target ?? conversation
+    if (redirecting.current) { cancelAdjustment.current = true; target.notice = '已取消待发送的调整，内容保留在输入框。'; update() }
+    const id = runId.current
+    if (id) void api.stopAgentRun(id).catch(error => { target.error = '无法停止：' + (error as Error).message; update() })
   }
 
   const run = async (id: string, action: () => Promise<void>, failure: string) => {
@@ -154,13 +195,14 @@ export function AgentPanel({ folder, name, model, beforeSend, selection, onConfi
   const folderLabel = folder || '笔记文件夹'
   const pending = conversation.proposals.filter(proposal => proposal.status === 'pending')
   const settled = conversation.proposals.filter(proposal => proposal.status !== 'pending')
-  const working = !!acting || busy
+  const working = !!acting || busy || interrupting
   return <aside className="ai-panel" aria-label="AI 助手">
     <AiChat title="AI 助手" model={model} onConfigure={onConfigure} onClose={onClose} locked={working}
       onNew={() => { conversations.current.set(key, { ...blank(), restored: true }); update() }}
       context={<div className="agent-composer-context" title={scope.kind === 'chat' ? '不读取或修改笔记' : `以${scope.kind === 'note' ? '文章：' + scope.name : '文件夹：' + folderLabel}为上下文，可查阅整个笔记库`}><Select label="对话范围" value={mode} disabled={working} onValueChange={value => setMode(value as typeof mode)} options={[{ value: 'context', label: name ? '文章 · ' + fileName(name) : '文件夹 · ' + folderLabel }, ...(name ? [{ value: 'folder', label: '文件夹 · ' + folderLabel }] : []), { value: 'chat', label: '纯聊天 · 不读取笔记' }]}/></div>}
-      messages={conversation.messages} streaming={conversation.streaming} value={conversation.input} onValueChange={value => { conversation.input = value; update() }} busy={busy} activity={activity} disabled={!model || !!acting}
-      onSend={() => void ask()} onStop={() => { const id = runId.current; if (id) void api.stopAgentRun(id).catch(error => { conversation.error = '无法停止：' + (error as Error).message; update() }) }} onOpenNote={onOpenNote}
+      messages={conversation.messages} streaming={conversation.streaming} value={conversation.input} onValueChange={value => { conversation.input = value; update() }} busy={busy || interrupting} activity={activity} disabled={!model || !!acting || interrupting} readOnly={interrupting}
+      onInterruptSend={runId.current && following.current?.target === conversation ? () => void interruptAndAsk() : undefined}
+      onSend={() => void ask()} onStop={stop} onOpenNote={onOpenNote}
       emptyTitle={scope.kind === 'chat' ? '开始聊天' : scope.kind === 'note' ? '处理当前文章' : '整理文件夹笔记'} emptyText={scope.kind === 'chat' ? '直接输入问题，不读取或修改笔记。' : scope.kind === 'note' ? '可以讨论内容、检查改动或修正错别字。' : '可以概括笔记、查找关联或整理画布。'}
       suggestions={scope.kind === 'chat' ? [{ label: '打个招呼', prompt: '你好，我们随便聊聊吧。' }] : scope.kind === 'note' ? [{ label: '讨论内容', prompt: '读一下这篇文章，和我讨论其中值得进一步思考的问题。' }, { label: '查看改动', prompt: '自上次同步以来，这篇文章改了哪些地方？改动对结论有什么影响？' }, { label: '修正错别字', prompt: '直接修正这篇文章中的错别字，保留其他内容和格式，并告诉我改了哪里。' }] : [{ label: '概括笔记', prompt: '看看这个文件夹的文章和记忆，介绍主要主题和它们之间的联系。' }, { label: '整理画布', prompt: '读一下这个文件夹的文章，按主题把画布整理成几个文档区。' }, { label: '查找关联', prompt: '找出这个文件夹里适合放在一起讨论的文章，读相关内容后解释它们的联系。' }]}>
       {!!conversation.plan.length && <ol className="agent-plan" aria-label="任务计划">{conversation.plan.map((step, index) => <li key={index} data-status={step.status}><Icon name={step.status === 'done' ? 'check' : step.status === 'active' ? 'arrow' : 'clock'} size={13}/><span>{step.text}</span></li>)}</ol>}

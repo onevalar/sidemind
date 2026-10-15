@@ -1,9 +1,10 @@
 import { useEffect, useImperativeHandle, useRef, useState, type Ref } from 'react'
 import { Crepe } from '@milkdown/crepe'
-import { editorViewCtx, serializerCtx } from '@milkdown/kit/core'
+import { editorViewCtx } from '@milkdown/kit/core'
 import { Plugin, TextSelection } from '@milkdown/kit/prose/state'
 import { $prose, replaceAll, replaceRange } from '@milkdown/kit/utils'
 import { linkedNoteName } from './note-links'
+import { richSelectionSource } from './rich-selection'
 import '@milkdown/crepe/theme/common/style.css'
 import '@milkdown/crepe/theme/classic.css'
 
@@ -59,7 +60,7 @@ export function RichEditor({ value, onChange, onSelection, name, onOpenNote, edi
       }
       return true
     }
-    crepe.editor.use($prose(ctx => new Plugin({
+    crepe.editor.use($prose(() => new Plugin({
       props: {
         attributes: { role: 'textbox', 'aria-label': '文章正文', 'aria-multiline': 'true', spellcheck: 'false' },
         handleDOMEvents: {
@@ -76,7 +77,8 @@ export function RichEditor({ value, onChange, onSelection, name, onOpenNote, edi
         const { doc, selection } = view.state
         if (selection.empty) { latest.current.onSelection(null); return }
         const { from, to } = selection
-        const text = source(ctx.get(serializerCtx)(doc.cut(from, to)))
+        const visible = doc.textBetween(from, to, '\n', '\n')
+        const text = richSelectionSource(accepted.current, visible) ?? source(visible)
         latest.current.onSelection({ text, apply: replacement => {
           if (!active || !ready || !view.state.doc.eq(doc)) return null
           applying = true
