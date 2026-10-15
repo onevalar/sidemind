@@ -1,0 +1,19 @@
+/* Supporting task information stays in the message flow. Arc owns controls. */
+.agent-feedback-disclosure { display: grid; justify-items: start; gap: 8px; min-width: 0; }
+.agent-feedback-content { min-width: 0; width: 100%; }
+.agent-feedback-chevron { display: inline-flex; }
+.agent-feedback-chevron[data-open="true"] { transform: rotate(180deg); }
+.agent-feedback-results { margin-top: 10px; }
+.agent-feedback-change { display: grid; gap: 10px; min-width: 0; padding: 4px 0; }
+.agent-feedback-change + .agent-feedback-change { margin-top: 16px; }
+.agent-feedback-summary { display: grid; gap: 4px; }
+.agent-feedback-summary > p { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; margin: 0; color: var(--text-secondary); overflow-wrap: anywhere; }
+.agent-feedback-files, .agent-feedback-plan { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.agent-feedback-files > li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.agent-feedback-files > li > span { flex: none; color: var(--text-muted); }
+.agent-feedback-filename { display: block; max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-feedback-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.agent-feedback-plan > li { display: flex; align-items: flex-start; gap: 8px; color: var(--text-secondary); }
+.agent-feedback-plan > li > svg { margin-top: 4px; flex: none; }
+.agent-feedback-plan > li[data-status="done"] { color: var(--text-muted); }
+.agent-feedback-plan > li[data-status="active"] { color: var(--foreground); }

@@ -1,0 +1,14 @@
+.global-agent-tasks { min-width: 0; width: 100%; margin-top: auto; }
+.global-agent-tasks + .sidebar-footer { margin-top: 4px; }
+.task-shortcut { width: 100%; min-width: 0; height: auto; }
+.task-shortcut [data-slot="button-label"], .task-shortcut [data-slot="button-label"] > span, .task-shortcut [data-slot="button-label"] > span > span { width: 100% !important; min-width: 0; }
+.task-shortcut-content { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 2px; text-align: left; }
+.task-shortcut-content > span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.agent-tasks-dialog .task-list { display: flex; flex-direction: column; gap: 24px; }
+.task-list-item { display: grid; gap: 8px; min-width: 0; }
+.task-list-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.task-list-heading strong { min-width: 0; overflow-wrap: anywhere; }
+.task-list-heading > span { flex: none; }
+.task-request, .task-result { margin: 0; overflow-wrap: anywhere; }
+.task-current-step { display: flex; align-items: center; gap: 6px; overflow: hidden; }
+.task-list-actions { display: flex; flex-wrap: wrap; gap: 8px; }
