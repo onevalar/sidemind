@@ -1,14 +1,12 @@
 services:
   sidemind-api:
-    cwd: web
     command: npm run dev:server
     port: 3001
     health: /api/notes
     env:
-      SIDEMIND_DATA_DIR: ../.amp/preview-data
-      SIDEMIND_CONFIG_DIR: ../.amp/preview-config
+      SIDEMIND_DATA_DIR: .amp/preview-data
+      SIDEMIND_CONFIG_DIR: .amp/preview-config
   sidemind-web:
-    cwd: web
     command: npm run dev:web -- --host 127.0.0.1 --port "$PORT" --strictPort
     port: 5173
     health: /api/notes

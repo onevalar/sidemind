@@ -1,8 +1,14 @@
 .DS_Store
 .vscode/
+node_modules/
+dist/
+workspace/
+*.log
+test/baseline/.chatgit-src/
 
 # Local orb preview data and generated portal metadata.
 .amp/preview-notes/
 .amp/preview-data/
 .amp/preview-config/
 **/.amp/portals/
+

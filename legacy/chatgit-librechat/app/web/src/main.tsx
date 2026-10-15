@@ -1,8 +1,0 @@
-import { StrictMode } from "react";
-import { createRoot } from "react-dom/client";
-import "@/components/arc/foundation.css";
-import "./app.css";
-import { App } from "./App";
-
-document.documentElement.dataset.accent = "blue";
-createRoot(document.getElementById("root")!).render(<StrictMode><App /></StrictMode>);

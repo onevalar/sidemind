@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-cd -- "$repo_root/web"
+cd -- "$repo_root"
 
 # Node.js and npm are provided by the orb; reject incompatible versions rather
 # than silently installing dependencies that cannot build or run the tests.
